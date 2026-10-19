@@ -50,9 +50,11 @@ Technical basis: [idempotent API design](https://aws.amazon.com/builders-library
 
 ### 2.4 High-Volume Webhook Processing & Real-Time Tracking Updates
 
-**Problem:** At scale, tracking can produce millions of events over time. Webhooks or polling may deliver duplicated, delayed, or out-of-order updates—for example, `DELIVERED` arrives before an older `IN_TRANSIT` event.
+**Problem:** Tracking traffic is bursty rather than evenly distributed. During the **morning depot scan and dispatch peak**, many parcels may be scanned as received, loaded, or out for delivery within a short window, producing a concentrated burst of carrier updates. Webhooks or polling can also deliver duplicated, delayed, or out-of-order events—for example, `DELIVERED` arrives before an older `IN_TRANSIT` event.
 
-- **Event-driven ingestion:** use **Kafka or RabbitMQ** when throughput and buffering needs justify a broker. Acknowledge incoming webhooks only after durable acceptance; decouple ingestion from database updates with controlled consumer concurrency and failed-event recovery.
+**Illustrative capacity estimate:** **100,000 active shipments × 10 updates/day = 1 million events/day**, averaging approximately **12 events/second**. If morning scans generate **100,000 events in 5 minutes**, ingestion reaches approximately **333 events/second—29× the daily average**. This is a sizing example, not measured ShipTime traffic; carrier batching or retries can make short bursts sharper.
+
+- **Event-driven ingestion:** use **Kafka or RabbitMQ** to buffer scan-peak bursts and decouple webhook acceptance from database writes. Acknowledge webhooks only after durable acceptance; scale consumers against queue lag and processing throughput while bounding concurrency to protect the database. Include failed-event recovery.
 - **Idempotent consumers:** expect redelivery. Deduplicate using carrier event IDs or a documented event identity, and commit processing before acknowledging queue messages. A broker does not eliminate duplicate business effects.
 - **State-aware projection:** preserve event history and derive current status using event time and valid transitions. A late `IN_TRANSIT` update should not overwrite `DELIVERED`; returns, exceptions, corrections, and multi-package shipments require explicit rules.
 
