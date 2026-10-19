@@ -16,7 +16,7 @@ ShipTime connects businesses and ecommerce stores with multiple shipping carrier
 
 ## 2. Key System Technical Characteristics & Difficulties
 
-*Scenarios and numbers below are illustrative engineering assumptions, not measurements of ShipTime's production systems. These are proposed solutions; the demo implements only part of the rate module.*
+*Scenarios and numbers below are illustrative engineering assumptions, not measurements of ShipTime's production systems. These are possible technical approaches; the demo implements only part of the rate module.*
 
 ### 2.1 High Fan-Out Rate Engine (P99 Latency & Timeout Control)
 
@@ -46,7 +46,7 @@ Technical basis: [Resilience4j circuit breaker behavior](https://resilience4j.re
 - **Booking-state management:** distinguish `PENDING`, `CONFIRMED`, `FAILED`, and `UNKNOWN` outcomes. Persist the booking attempt before the outbound call, and retain enough context to investigate interrupted requests.
 - **Outcome reconciliation:** resolve uncertain bookings using carrier-supported idempotency tokens, booking references, or lookup before retrying. Local deduplication alone cannot guarantee exactly-once remote booking. Keep unresolved cases recoverable through background checks or operator intervention, with shipment and charge records linked for investigation.
 
-Technical basis: [idempotent API design](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/) · [timeouts do not prove side effects failed](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/). ShipTime's [cancellation and refund rules](https://support.shiptime.com/en/support/solutions/articles/42000053479/) confirm the business lifecycle; the recovery design above is proposed.
+Technical basis: [idempotent API design](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/) · [timeouts do not prove side effects failed](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/). ShipTime's [cancellation and refund rules](https://support.shiptime.com/en/support/solutions/articles/42000053479/) confirm the business lifecycle; the recovery design above is an illustrative approach.
 
 ### 2.4 High-Volume Webhook Processing & Real-Time Tracking Updates
 
@@ -60,11 +60,11 @@ Technical basis: [idempotent API design](https://aws.amazon.com/builders-library
 
 Technical basis: [RabbitMQ reliability, acknowledgements, and redelivery](https://www.rabbitmq.com/docs/reliability). Actual carrier delivery guarantees and event identities must be verified per integration.
 
-## 3. Proposed System Architecture
+## 3. A Possible System Architecture
 
-Proposed architecture inferred from public product capabilities; only the rate aggregation module is implemented. Click the diagram to view it full-size.
+One possible system architecture inferred from ShipTime’s public product information, not a description of its internal systems. Only the rate aggregation module is implemented. Click the diagram to view it full-size.
 
-[![Proposed multi-carrier shipping platform architecture](docs/design/platform-architecture.svg)](docs/design/platform-architecture.svg)
+[![Possible multi-carrier shipping platform architecture](docs/design/platform-architecture.svg)](docs/design/platform-architecture.svg)
 
 ## 4. Implementation Focus: Rate Comparison
 
