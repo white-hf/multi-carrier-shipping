@@ -1,0 +1,63 @@
+server:
+  address: 127.0.0.1
+  port: 8080
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: 64
+    accept-count: 32
+    max-connections: 128
+spring:
+  mvc:
+    servlet:
+      load-on-startup: 1
+  application:
+    name: multi-courier-aggregation-service
+  main:
+    web-application-type: servlet
+shipping:
+  engine:
+    global-timeout-ms: 600
+    max-concurrent-requests: 16
+    carriers:
+      fedex:
+        base-url: ${FEDEX_BASE_URL:http://127.0.0.1:8080/api/mock/fedex}
+        timeout-ms: 250
+        concurrency: 8
+      ups:
+        base-url: ${UPS_BASE_URL:http://127.0.0.1:8080/api/mock/ups}
+        timeout-ms: 300
+        concurrency: 8
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        failureRateThreshold: 50
+        slowCallRateThreshold: 50
+        slowCallDurationThreshold: 200ms
+        slidingWindowSize: 20
+        minimumNumberOfCalls: 10
+        waitDurationInOpenState: 10s
+        ignoreExceptions:
+          - java.lang.InterruptedException
+  bulkhead:
+    configs:
+      default:
+        maxConcurrentCalls: 8
+        maxWaitDuration: 0
+management:
+  server:
+    address: 127.0.0.1
+    port: 9091
+  endpoints:
+    web:
+      exposure:
+        include: health, prometheus
+  metrics:
+    distribution:
+      percentiles-histogram:
+        shipping.aggregation.latency: true
+        shipping.carrier.transport.latency: true
+logging:
+  pattern:
+    level: '%5p [requestId=%X{requestId}]'

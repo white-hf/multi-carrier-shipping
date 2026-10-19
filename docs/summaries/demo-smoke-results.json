@@ -1,0 +1,109 @@
+[
+  {
+    "scenario": "normal",
+    "http": 200,
+    "response": {
+      "success": true,
+      "message": "Success",
+      "data": {
+        "requestId": "6d7315d2-a223-4f0a-b88c-7fcc7eb1eb38",
+        "status": "COMPLETE",
+        "successfulQuotes": [
+          {
+            "carrierId": "ups",
+            "carrierName": "UPS",
+            "serviceLevel": "Ground",
+            "rate": 16.2,
+            "currency": "CAD",
+            "estimatedDeliveryDays": 3
+          },
+          {
+            "carrierId": "fedex",
+            "carrierName": "FedEx",
+            "serviceLevel": "Economy",
+            "rate": 17.0,
+            "currency": "CAD",
+            "estimatedDeliveryDays": 4
+          },
+          {
+            "carrierId": "fedex",
+            "carrierName": "FedEx",
+            "serviceLevel": "Priority",
+            "rate": 18.5,
+            "currency": "CAD",
+            "estimatedDeliveryDays": 2
+          }
+        ],
+        "carrierOutcomes": [
+          {
+            "carrierId": "fedex",
+            "code": "SUCCESS"
+          },
+          {
+            "carrierId": "ups",
+            "code": "SUCCESS"
+          }
+        ],
+        "totalExecutionTimeMs": 238
+      }
+    }
+  },
+  {
+    "scenario": "partial",
+    "http": 200,
+    "response": {
+      "success": true,
+      "message": "Success",
+      "data": {
+        "requestId": "5d897f51-6945-49c4-8ae1-504cad58badd",
+        "status": "PARTIAL",
+        "successfulQuotes": [
+          {
+            "carrierId": "ups",
+            "carrierName": "UPS",
+            "serviceLevel": "Ground",
+            "rate": 16.2,
+            "currency": "CAD",
+            "estimatedDeliveryDays": 3
+          }
+        ],
+        "carrierOutcomes": [
+          {
+            "carrierId": "fedex",
+            "code": "TIMEOUT"
+          },
+          {
+            "carrierId": "ups",
+            "code": "SUCCESS"
+          }
+        ],
+        "totalExecutionTimeMs": 256
+      }
+    }
+  },
+  {
+    "scenario": "failure",
+    "http": 502,
+    "response": {
+      "success": false,
+      "errorCode": "COMPARISON_FAILED",
+      "message": "No carrier query succeeded.",
+      "data": {
+        "requestId": "21d63ded-d904-436f-9c11-f827bc1c6186",
+        "status": "FAILED",
+        "successfulQuotes": [],
+        "carrierOutcomes": [
+          {
+            "carrierId": "fedex",
+            "code": "UPSTREAM_ERROR"
+          },
+          {
+            "carrierId": "ups",
+            "code": "UPSTREAM_ERROR"
+          }
+        ],
+        "totalExecutionTimeMs": 239
+      }
+    }
+  }
+]
