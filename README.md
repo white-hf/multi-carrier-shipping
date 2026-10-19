@@ -60,19 +60,16 @@ Technical basis: [RabbitMQ reliability, acknowledgements, and redelivery](https:
 
 ## 3. Proposed System Architecture
 
-```mermaid
-flowchart TB
-    Client[Merchant Portal / Ecommerce Store] --> API[Application API]
-    API --> Rate[Rate Comparison]
-    API --> Ship[Shipment & Labels]
-    API --> Track[Tracking]
-    Rate --> Adapters[Carrier Adapters]
-    Ship --> Adapters
-    Track --> Adapters
-    Adapters --> Carriers[Carrier APIs: FedEx / UPS / Others]
-```
+A proposed platform architecture inferred from public business capabilities. Microservices, client channels, databases, and infrastructure choices below are **design assumptions**, not confirmed ShipTime internals. Only rate aggregation is implemented in this repository.
 
-These are logical module boundaries; they can share one application deployment. This is a proposed design based on public product information, not ShipTime's internal architecture.
+[![Proposed multi-carrier shipping platform architecture](docs/design/platform-architecture.svg)](docs/design/platform-architecture.svg)
+
+[Open full-size diagram](docs/design/platform-architecture.svg) · [Architecture boundaries and rationale](docs/design/architecture.md)
+
+- **Gateway and business services:** web/app/API clients enter through shared authentication, access controls, idempotency-key policies, and trace propagation. Rate, shipment/labels, tracking, orders, and accounts/billing form independently scalable service boundaries. Durable booking idempotency remains in the shipment domain.
+- **Two-way integrations:** courier and ecommerce adapters isolate outbound API calls. Provider-authenticated webhook handlers normalize incoming updates before publishing to separate tracking and commerce queues/topics.
+- **Asynchronous processing and data ownership:** domain consumers deduplicate events and update their own business schemas/databases before acknowledging messages. Tracking and label data are isolated; separate physical database servers are optional. Failed events use bounded retries and dead-letter handling.
+- **Observability alongside business traffic:** instrumented components emit metrics, logs, and distributed traces through a separate telemetry pipeline. Trace context crosses HTTP and message boundaries; the illustrated tools are proposed examples.
 
 ## 4. Implementation Focus: Rate Comparison
 
