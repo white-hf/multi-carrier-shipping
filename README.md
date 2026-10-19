@@ -97,13 +97,41 @@ classDiagram
     CarrierAdapter <|.. UpsCarrierAdapter
 ```
 
-**Stack:** Java 17, Spring MVC, bounded per-carrier worker pools, and WebClient with dedicated connection pools. The adapters use local mock endpoints; no production carrier schema or credentials are included.
+## 5. Run & Results
 
-**Run:** `./mvnw spring-boot:run -Dspring-boot.run.profiles=demo` · **Tests:** `./mvnw test`
+**Requirements:** JDK 17. Run from the repository root; the Maven wrapper downloads its dependencies. The demo uses local mock couriers.
 
-**Verified:** Java 17 build, 14 passing tests, and packaged demo smoke checks.
+```sh
+./mvnw test
+./mvnw spring-boot:run -Dspring-boot.run.profiles=demo
+```
 
-[Demo commands, response contract, and limitations](docs/runbooks/demo.md) · [Validation status](docs/summaries/java17.md)
+In another terminal, request a comparison:
+
+```sh
+curl -sS http://127.0.0.1:8080/api/shipping/quotes \
+  -H 'Content-Type: application/json' \
+  -d '{"originPostalCode":"L6K 3V3","destinationPostalCode":"M5V 2T6","weightKg":1,"lengthCm":10,"widthCm":10,"heightCm":10}'
+```
+
+**Verified results:** all **14 tests pass**. Packaged demo checks produced:
+
+| Scenario | HTTP / Status | Result |
+| --- | --- | --- |
+| Both couriers available | `200 / COMPLETE` | Three quotes sorted by price: CAD 16.20, 17.00, 18.50 |
+| FedEx times out | `200 / PARTIAL` | UPS quote retained; FedEx marked `TIMEOUT` |
+| Both couriers fail | `502 / FAILED` | Explicit comparison failure; no quotes |
+
+To reproduce the timeout scenario, stop the application and restart it with:
+
+```sh
+./mvnw spring-boot:run -Dspring-boot.run.profiles=demo \
+  -Dspring-boot.run.arguments="--shipping.mock.fedex-mode=slow"
+```
+
+Metrics: `http://127.0.0.1:9091/actuator/prometheus`.
+
+[More demo scenarios](docs/runbooks/demo.md) · [Recorded responses](docs/summaries/demo-smoke-results.json) · [Validation evidence](docs/summaries/java17.md)
 
 ---
 
