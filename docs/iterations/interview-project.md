@@ -17,4 +17,4 @@ See the [implementation iteration](java17.md), [validation evidence](../summarie
 
 ## Scope boundaries
 
-Carrier contracts are simulated. Real carrier integration, account pricing, shipment booking, and tracking processing are not implemented. Historical project stories require candidate confirmation. This repository is a local engineering demonstration, not a production shipping service.
+Carrier contracts are simulated. Real carrier integration, account pricing, and tracking processing are not implemented. Shipment booking is implemented as a local SQLite-backed simulation. Historical project stories require candidate confirmation. This repository is a local engineering demonstration, not a production shipping service.

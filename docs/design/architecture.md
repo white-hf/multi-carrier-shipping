@@ -1,6 +1,6 @@
 # Proposed platform architecture
 
-This is a platform design inferred from ShipTime's public product capabilities, not a claim about its internal architecture. Client channels, microservice deployment, database technology, and observability products are proposed choices. Only the rate aggregation demo is implemented in this repository.
+This is a platform design inferred from ShipTime's public product capabilities, not a claim about its internal architecture. Client channels, microservice deployment, database technology, and observability products are proposed choices. Rate aggregation and SQLite-backed shipment booking are implemented as local demos.
 
 ## Platform view
 
@@ -19,7 +19,7 @@ This is a platform design inferred from ShipTime's public product capabilities, 
 
 ## Implemented versus proposed
 
-The Java 17 demo implements one rate API, concurrent aggregation, simulated courier adapters, per-carrier resilience/isolation, and Micrometer/AOP monitoring. The gateway, independently deployed microservices, databases, broker, webhook consumers, ecommerce adapters, object store, and OpenTelemetry/log/trace backends shown here are design context and are not shipped infrastructure.
+The Java 17 demo implements rate aggregation and a SQLite-backed booking API with independent simulated carrier state and inquiry recovery. Rate transport metrics use AOP; booking metrics use an observer port. The gateway, independently deployed microservices, production domain databases, broker, webhook consumers, ecommerce adapters, object store, and OpenTelemetry/log/trace backends remain design context.
 
 ## References
 

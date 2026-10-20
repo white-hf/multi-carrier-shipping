@@ -16,7 +16,7 @@ ShipTime connects businesses and ecommerce stores with multiple shipping carrier
 
 ## 2. Key System Technical Characteristics & Difficulties
 
-*Scenarios and numbers below are illustrative engineering assumptions, not measurements of ShipTime's production systems. These are possible technical approaches; the demo implements only part of the rate module.*
+*Scenarios and numbers below are illustrative engineering assumptions, not measurements of ShipTime's production systems. These are possible technical approaches; the demo implements rate comparison and a local shipment-booking workflow.*
 
 ### 2.1 High Fan-Out Rate Engine (P99 Latency & Timeout Control)
 
@@ -32,7 +32,7 @@ Technical basis: [timeouts and retry amplification](https://aws.amazon.com/build
 
 **Problem:** Carrier APIs differ in protocols (**REST / SOAP**), payload formats (**JSON / XML**), authentication, units, service definitions, charge breakdowns, and error semantics.
 
-- **Adapter pattern:** isolate each carrier behind `CarrierAdapter`, mapping requests and responses to a canonical domain model. Normalize units and preserve currency, pricing context, and known charge components so quotes are meaningfully comparable.
+- **Adapter pattern:** isolate each carrier behind `CarrierRatePort`, mapping requests and responses to a canonical domain model. Normalize units and preserve currency, pricing context, and known charge components so quotes are meaningfully comparable.
 - **Circuit breakers:** use a per-carrier breaker, such as **Resilience4j**, to reject calls after configured failure/slow-call thresholds and minimum sample counts are reached; permit limited recovery probes in the half-open state. Bulkheads separately limit concurrency.
 - **Contract tests:** verify translation and failure handling against representative payloads and sandbox contracts. Bound retries for safe transient failures by the remaining request budget, with backoff and jitter when appropriate.
 
@@ -62,7 +62,7 @@ Technical basis: [RabbitMQ reliability, acknowledgements, and redelivery](https:
 
 ## 3. A Possible System Architecture
 
-One possible system architecture inferred from ShipTime’s public product information, not a description of its internal systems. Only the rate aggregation module is implemented. Click the diagram to view it full-size.
+One possible system architecture inferred from ShipTime’s public product information, not a description of its internal systems. Rate aggregation and shipment booking are implemented as local demos. Click the diagram to view it full-size.
 
 [![Possible multi-carrier shipping platform architecture](docs/design/platform-architecture.svg)](docs/design/platform-architecture.svg)
 
@@ -74,30 +74,39 @@ The module implements the following core techniques:
 
 - **Concurrent aggregation — Java 17:** bounded per-carrier `ThreadPoolExecutor` instances and `ExecutorCompletionService` implement fan-out / scatter-gather, with immediate overload rejection.
 - **Deadline control & graceful degradation:** monotonic global and per-carrier deadlines, transport timeouts, and cooperative task cancellation bound waiting time while preserving available quotes.
-- **Carrier abstraction — Adapter pattern:** a common `CarrierAdapter` interface isolates carrier-specific protocols and payloads from aggregation logic.
+- **Carrier abstraction — Adapter pattern:** a common `CarrierRatePort` interface isolates carrier-specific protocols and payloads from aggregation logic.
 - **Circuit breakers — Resilience4j:** independent per-carrier breakers reject calls when failure or slow-call thresholds are reached; half-open probes test recovery.
 - **Bulkhead & connection isolation:** per-carrier semaphore bulkheads, bounded workers, and dedicated Reactor Netty connection pools prevent one failing courier from exhausting others' capacity. Local admission rejection is kept outside breaker failure accounting.
-- **Monitoring — Spring AOP, Micrometer & Prometheus:** `@MonitorCarrierApi` and `@Around` advice separate transport timing and error classification from adapter logic. Micrometer exposes latency histograms and capacity/outcome metrics through Prometheus. Aggregation metrics are currently recorded in the engine.
+- **Monitoring — Spring AOP, Micrometer & Prometheus:** `@MonitorCarrierApi` and `@Around` advice separate transport timing and error classification from adapter logic. Micrometer exposes latency histograms and capacity/outcome metrics through Prometheus. `QuoteObserver` keeps aggregation metrics outside the engine; recording failures do not change comparison outcomes.
 
 The class structure below shows the core implementation boundaries.
 
 ```mermaid
 classDiagram
-    class ShippingAggregationController
+    class QuoteController
     class HighFanOutAggregationEngine
-    class CarrierAdapter {
+    class CarrierRatePort {
         <<interface>>
         +fetchQuotes(request, timeoutMs) List~CarrierQuote~
     }
-    class FedExCarrierAdapter
-    class UpsCarrierAdapter
-    ShippingAggregationController --> HighFanOutAggregationEngine
-    HighFanOutAggregationEngine --> CarrierAdapter
-    CarrierAdapter <|.. FedExCarrierAdapter
-    CarrierAdapter <|.. UpsCarrierAdapter
+    class FedExRateAdapter
+    class UpsRateAdapter
+    QuoteController --> HighFanOutAggregationEngine
+    HighFanOutAggregationEngine --> CarrierRatePort
+    CarrierRatePort <|.. FedExRateAdapter
+    CarrierRatePort <|.. UpsRateAdapter
 ```
 
-## 5. Run & Results
+## 5. Implementation Focus: Shipment Booking
+
+- **Durable idempotency:** SQLite unique owner/key claims and normalized request fingerprints prevent duplicate initial submissions and reject changed intent.
+- **Short atomic writes:** Spring JDBC commits the claim before calling the carrier; no database transaction spans the HTTP request.
+- **Recovery without blind retries:** stable carrier references, inquiry-only reconciliation, and version/token-fenced updates recover uncertain outcomes across restarts.
+- **Maintainable boundaries:** separate API, application, domain, persistence, and carrier packages; metrics use a failure-isolated observer port.
+
+[Shared code organization](docs/design/code-organization.md) · [Booking design](docs/design/booking-sqlite.md) · [Run the booking demo](docs/runbooks/booking-demo.md)
+
+## 6. Run & Results
 
 **Requirements:** JDK 17. Run from the repository root; the Maven wrapper downloads its dependencies. The demo uses local mock couriers.
 
@@ -114,7 +123,7 @@ curl -sS http://127.0.0.1:8080/api/shipping/quotes \
   -d '{"originPostalCode":"L6K 3V3","destinationPostalCode":"M5V 2T6","weightKg":1,"lengthCm":10,"widthCm":10,"heightCm":10}'
 ```
 
-**Verified results:** all **14 tests pass**. Packaged demo checks produced:
+**Verified results:** all **38 tests pass**. Packaged demo checks produced:
 
 | Scenario | HTTP / Status | Result |
 | --- | --- | --- |
@@ -131,7 +140,7 @@ To reproduce the timeout scenario, stop the application and restart it with:
 
 Metrics: `http://127.0.0.1:9091/actuator/prometheus`.
 
-[More demo scenarios](docs/runbooks/demo.md) · [Recorded responses](docs/summaries/demo-smoke-results.json) · [Validation evidence](docs/summaries/java17.md)
+[Booking API and restart recovery](docs/runbooks/booking-demo.md) · [Rate demo scenarios](docs/runbooks/demo.md) · [Recorded responses](docs/summaries/demo-smoke-results.json) · [Refactor validation](docs/summaries/structure-refactor.md) · [Booking validation](docs/summaries/booking-sqlite.md) · [Rate validation](docs/summaries/java17.md)
 
 ---
 

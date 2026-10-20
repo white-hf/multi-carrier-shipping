@@ -1,6 +1,6 @@
 # Java 17 demo
 
-Requirements: JDK 17. The included Maven wrapper downloads Maven 3.9.8 and project dependencies on first use. The Java 17 build, all 14 tests, and packaged demo smoke checks have passed on this Mac.
+Requirements: JDK 17. The included Maven wrapper downloads Maven 3.9.8 and project dependencies on first use. The Java 17 build, all 38 tests, and packaged demo smoke checks have passed on this Mac.
 
 ```sh
 ./mvnw test
@@ -48,6 +48,6 @@ Aggregate latency histograms support P99 calculation in Prometheus. Carrier outc
 
 ## Limits
 
-One domestic Canadian parcel with explicit decimal kg/cm measurements and comparable CAD estimates. Postal validation checks shape, not deliverability. No account pricing, FX, tax calculation, billing, booking, or tracking implementation. Server-side fixtures may continue sleeping after the HTTP caller disconnects; cancellation limits local work, not remote side effects. A misbehaving blocking adapter can ignore interruption, but its bounded workers prevent unbounded thread growth and it cannot occupy another carrier's pool.
+One domestic Canadian parcel with explicit decimal kg/cm measurements and comparable CAD estimates. Postal validation checks shape, not deliverability. No account pricing, FX, tax calculation, billing, or tracking implementation. Shipment booking is a separate [SQLite demo](booking-demo.md). Server-side fixtures may continue sleeping after the HTTP caller disconnects; cancellation limits local work, not remote side effects. A misbehaving blocking adapter can ignore interruption, but its bounded workers prevent unbounded thread growth and it cannot occupy another carrier's pool.
 
 The original Spring Boot 3.2.3 dependency baseline is retained. No vulnerability scan or production-readiness certification has been performed. Current fixes and test coverage are documented in the validation summary.

@@ -10,3 +10,9 @@ target/
 .env
 .env.*
 !.env.example
+
+# Local booking and simulated-carrier persistence
+/data/
+*.db
+*.db-wal
+*.db-shm

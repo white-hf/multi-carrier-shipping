@@ -1,0 +1,8 @@
+shipping:
+  booking:
+    enabled: true
+    database-path: ${BOOKING_DB_PATH:./data/bookings.db}
+    carrier-database-path: ${DEMO_CARRIER_DB_PATH:./data/demo-carrier.db}
+    carrier-base-url: ${BOOKING_CARRIER_URL:http://127.0.0.1:8080/api/mock/bookings}
+    reconciliation-enabled: true
+    reconciliation-interval-ms: 1000
