@@ -27,7 +27,7 @@ com.enterprise.shipping
 
 ## Boundaries
 
-Controllers map validated input to application commands. Application services coordinate workflows through ports. Domain records and states contain no Spring, HTTP-client, or database dependencies. Infrastructure implements carrier, storage, and observer ports; configuration wires dependencies and owns pool shutdown. Tests mirror the feature packages.
+Controllers map validated input to application commands. Application services coordinate workflows through ports. The booking aggregate and domain value types contain no Spring, HTTP-client, or database dependencies. Infrastructure implements carrier, storage, and observer ports; configuration wires dependencies and owns pool shutdown. Tests mirror the feature packages.
 
 Neither feature imports the other. Shared code imports neither feature. Quote infrastructure has no persistence package because it currently needs no database.
 
@@ -46,6 +46,10 @@ The HTTP factory creates independent resources. FedEx quotes, UPS quotes, and bo
 `CarrierRatePort` and `CarrierBookingPort` remain separate capability contracts. Quote deadlines/partial results and booking claims/reconciliation remain independent workflows. Booking canonical serialization and response snapshots stay local to booking.
 
 `QuoteObserver` and `BookingObserver` separate application events from Micrometer. Their implementations preserve existing metric names and isolate recording failures. The quote worker gauge retains its supplier for the registry lifetime.
+
+## Booking domain behavior
+
+`ShipmentBooking` owns receipt validation and lifecycle transitions. Application services invoke its behavior instead of assigning statuses or constructing arbitrary outcomes. `BookingRecord` is a storage-port snapshot, mapping persisted state back to the aggregate while keeping lease/version metadata outside the domain. [Domain model and class diagram](booking-sqlite.md#domain-model).
 
 ## Compatibility
 

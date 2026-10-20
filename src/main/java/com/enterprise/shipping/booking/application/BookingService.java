@@ -43,10 +43,9 @@ public class BookingService {
         long now = clock.millis();
         String id = UUID.randomUUID().toString();
         // Persist the exact carrier/reference/intent before any network operation.
-        BookingRecord candidate = new BookingRecord(id, owner, key, hash, json.write(command),
-                command.carrierId(), "booking-" + id, BookingStatus.PENDING,
-                null, null, null, null, null, now, now, now + properties.leaseMs(), 0,
-                UUID.randomUUID().toString(), now + properties.leaseMs(), 0);
+        ShipmentBooking booking = ShipmentBooking.pending(new BookingId(id), command.carrierId(), "booking-" + id);
+        BookingRecord candidate = BookingRecord.claim(booking, owner, key, hash, json.write(command), now,
+                UUID.randomUUID().toString(), now + properties.leaseMs());
         if (!store.insertClaim(candidate)) {
             // A conflict is a replay path, regardless of whether the winner is pending or in inquiry.
             BookingRecord winner = store.find(owner, key)
@@ -57,23 +56,22 @@ public class BookingService {
         log.info("Booking claimed bookingId={} carrier={} status={}", id, command.carrierId(), candidate.status());
 
         long start = System.nanoTime();
-        CarrierReceipt receipt;
         try {
-            receipt = carrier.submit(candidate.customerReference(), command);
-            validateReceipt(candidate, receipt);
+            booking.confirm(carrier.submit(booking.customerReference(), command));
         } catch (CarrierBookingPort.Rejected rejected) {
-            return finish(candidate, BookingStatus.FAILED, null, "CARRIER_REJECTED", start);
+            booking.reject(RejectionReason.CARRIER_REJECTED);
+            return finish(candidate, booking, start);
         } catch (RuntimeException uncertain) {
             // A timeout/transport fault cannot establish whether the carrier accepted the booking.
             log.warn("Booking outcome uncertain bookingId={} carrier={} type={}", id, command.carrierId(),
                     uncertain.getClass().getSimpleName());
-            store.defer(candidate, BookingStatus.PENDING_INQUIRY, "CARRIER_OUTCOME_UNKNOWN",
-                    clock.millis() + properties.inquiryBaseDelayMs(), clock.millis());
-            observer.outcome("submit", BookingStatus.PENDING_INQUIRY, System.nanoTime() - start);
+            booking.markOutcomeUnknown();
+            store.defer(candidate, booking, clock.millis() + properties.inquiryBaseDelayMs(), clock.millis());
+            observer.outcome("submit", booking.status(), System.nanoTime() - start);
             return get(owner, id);
         }
         // Persistence is deliberately outside the carrier catch: a failed save is not a carrier rejection.
-        return finish(candidate, BookingStatus.CONFIRMED, receipt, null, start);
+        return finish(candidate, booking, start);
     }
 
     public BookingResponse get(BookingOwner owner, String id) {
@@ -93,35 +91,24 @@ public class BookingService {
         return response(booking);
     }
 
-    private BookingResponse finish(BookingRecord owned, BookingStatus status, CarrierReceipt receipt,
-                                   String errorCode, long start) {
-        BookingResponse response = new BookingResponse(owned.bookingId(), status, owned.carrierId(),
-                owned.customerReference(), receipt == null ? null : receipt.carrierBookingId(),
-                receipt == null ? null : receipt.trackingNumber(), receipt == null ? null : receipt.labelUrl(), errorCode);
-        boolean updated = store.complete(owned, status, receipt, errorCode, json.write(response), clock.millis());
+    private BookingResponse finish(BookingRecord owned, ShipmentBooking booking, long start) {
+        BookingResponse response = BookingResponse.from(booking);
+        boolean updated = store.complete(owned, booking, json.write(response), clock.millis());
         if (!updated) {
             log.info("Booking completion fenced bookingId={}", owned.bookingId());
             return get(owned.owner(), owned.bookingId());
         }
-        observer.outcome("submit", status, System.nanoTime() - start);
-        log.info("Booking completed bookingId={} status={}", owned.bookingId(), status);
+        observer.outcome("submit", booking.status(), System.nanoTime() - start);
+        log.info("Booking completed bookingId={} status={}", owned.bookingId(), booking.status());
         return response;
     }
 
-    private BookingResponse response(BookingRecord booking) {
+    private BookingResponse response(BookingRecord record) {
+        ShipmentBooking booking = record.restoreBooking();
         if (booking.status().isTerminal()) {
-            if (booking.responseJson() == null) throw new IllegalStateException("Terminal response snapshot missing");
-            return json.readResponse(booking.responseJson());
+            if (record.responseJson() == null) throw new IllegalStateException("Terminal response snapshot missing");
+            return json.readResponse(record.responseJson());
         }
-        return booking.currentResponse();
-    }
-
-    static void validateReceipt(BookingRecord booking, CarrierReceipt receipt) {
-        if (receipt == null || !booking.customerReference().equals(receipt.customerReference())
-                || receipt.carrierBookingId() == null || receipt.carrierBookingId().isBlank()
-                || receipt.trackingNumber() == null || receipt.trackingNumber().isBlank()
-                || receipt.labelUrl() == null || receipt.labelUrl().isBlank()) {
-            throw new CarrierBookingPort.UnknownOutcome(new IllegalStateException("Invalid carrier receipt"));
-        }
+        return BookingResponse.from(booking);
     }
 }

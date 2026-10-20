@@ -1,6 +1,6 @@
 # Java 17 demo
 
-Requirements: JDK 17. The included Maven wrapper downloads Maven 3.9.8 and project dependencies on first use. The Java 17 build, all 38 tests, and packaged demo smoke checks have passed on this Mac.
+Requirements: JDK 17. The included Maven wrapper downloads Maven 3.9.8 and project dependencies on first use. The Java 17 build, all 63 tests, and packaged demo smoke checks have passed on this Mac.
 
 ```sh
 ./mvnw test

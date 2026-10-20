@@ -2,6 +2,7 @@ package com.enterprise.shipping.booking.infrastructure.persistence;
 
 import com.enterprise.shipping.booking.domain.*;
 import com.enterprise.shipping.booking.port.BookingStore;
+import com.enterprise.shipping.booking.port.BookingRecord;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
@@ -43,8 +44,10 @@ public final class JdbcBookingStore implements BookingStore {
                 booking.leaseToken(), booking.leaseExpiresAt())) == 1;
     }
 
-    @Override public boolean complete(BookingRecord owned, BookingStatus status, CarrierReceipt receipt,
-                                      String errorCode, String responseJson, long now) {
+    @Override public boolean complete(BookingRecord owned, ShipmentBooking booking, String responseJson, long now) {
+        owned.requireIdentityOf(booking);
+        BookingStatus status = booking.status();
+        CarrierReceipt receipt = booking.receipt();
         if (!status.isTerminal()) throw new IllegalArgumentException("Terminal status required");
         // Outcome and replay snapshot become visible atomically; stale owners cannot overwrite either.
         return database(() -> jdbc.update("""
@@ -53,17 +56,19 @@ public final class JdbcBookingStore implements BookingStore {
                 WHERE booking_id=? AND version=? AND lease_token=? AND status IN ('PENDING','PENDING_INQUIRY')
                 """, status.name(), receipt == null ? null : receipt.carrierBookingId(),
                 receipt == null ? null : receipt.trackingNumber(), receipt == null ? null : receipt.labelUrl(),
-                responseJson, errorCode, now, owned.bookingId(), owned.version(), owned.leaseToken())) == 1;
+                responseJson, booking.errorCode(), now, owned.bookingId(), owned.version(), owned.leaseToken())) == 1;
     }
 
-    @Override public boolean defer(BookingRecord owned, BookingStatus status, String code, long due, long now) {
+    @Override public boolean defer(BookingRecord owned, ShipmentBooking booking, long due, long now) {
+        owned.requireIdentityOf(booking);
+        BookingStatus status = booking.status();
         if (status != BookingStatus.PENDING_INQUIRY && status != BookingStatus.MANUAL_REVIEW)
             throw new IllegalArgumentException("Recovery status required");
         return database(() -> jdbc.update("""
                 UPDATE shipment_bookings SET status=?, error_code=?, next_inquiry_at=?, updated_at=?,
                     lease_token=NULL, lease_expires_at=0, version=version+1
                 WHERE booking_id=? AND version=? AND lease_token=? AND status IN ('PENDING','PENDING_INQUIRY')
-                """, status.name(), code, due, now, owned.bookingId(), owned.version(), owned.leaseToken())) == 1;
+                """, status.name(), booking.errorCode(), due, now, owned.bookingId(), owned.version(), owned.leaseToken())) == 1;
     }
 
     @Override public List<BookingRecord> findDue(long now, int limit) {

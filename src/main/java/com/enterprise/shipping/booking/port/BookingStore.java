@@ -9,9 +9,8 @@ public interface BookingStore {
     Optional<BookingRecord> find(BookingOwner owner, String idempotencyKey);
     Optional<BookingRecord> findById(BookingOwner owner, String bookingId);
     boolean insertClaim(BookingRecord candidate);
-    boolean complete(BookingRecord owned, BookingStatus status, CarrierReceipt receipt,
-                     String errorCode, String responseJson, long now);
-    boolean defer(BookingRecord owned, BookingStatus status, String errorCode, long nextInquiryAt, long now);
+    boolean complete(BookingRecord owned, ShipmentBooking booking, String responseJson, long now);
+    boolean defer(BookingRecord owned, ShipmentBooking booking, long nextInquiryAt, long now);
     List<BookingRecord> findDue(long now, int limit);
     Optional<BookingRecord> acquireInquiryLease(BookingRecord candidate, String token, long now, long expiresAt);
 }

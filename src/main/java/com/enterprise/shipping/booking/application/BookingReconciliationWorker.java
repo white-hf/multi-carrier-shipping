@@ -40,40 +40,36 @@ public class BookingReconciliationWorker {
 
     private void inquire(BookingRecord owned) {
         long start = System.nanoTime();
-        CarrierReceipt receipt = null;
+        ShipmentBooking booking = owned.restoreBooking();
         try {
-            var result = carrier.inquire(owned.customerReference());
-            if (result.isPresent()) {
-                BookingService.validateReceipt(owned, result.get());
-                receipt = result.get();
-            }
+            var result = carrier.inquire(booking.customerReference());
+            if (result.isPresent()) booking.confirm(result.get());
+            else booking.markOutcomeUnknown();
         } catch (RuntimeException error) {
-            // Inquiry is read-only; bounded retry is safe even if its response is lost.
+            // Malformed evidence and read-only transport failures leave the outcome uncertain.
+            booking.markOutcomeUnknown();
             log.warn("Booking inquiry unavailable bookingId={} attempt={} type={}",
                     owned.bookingId(), owned.inquiryAttempts(), error.getClass().getSimpleName());
         }
-        if (receipt != null) {
-            BookingResponse response = new BookingResponse(owned.bookingId(), BookingStatus.CONFIRMED,
-                    owned.carrierId(), owned.customerReference(), receipt.carrierBookingId(),
-                    receipt.trackingNumber(), receipt.labelUrl(), null);
-            boolean completed = store.complete(owned, BookingStatus.CONFIRMED, receipt, null,
-                    json.write(response), clock.millis());
+        if (booking.status() == BookingStatus.CONFIRMED) {
+            BookingResponse response = BookingResponse.from(booking);
+            // Persistence errors must not be reclassified as unknown carrier outcomes.
+            boolean completed = store.complete(owned, booking, json.write(response), clock.millis());
             if (completed) {
-                observer.outcome("inquiry", BookingStatus.CONFIRMED, System.nanoTime() - start);
+                observer.outcome("inquiry", booking.status(), System.nanoTime() - start);
                 log.info("Booking reconciled bookingId={} attempt={}", owned.bookingId(), owned.inquiryAttempts());
             }
             return;
         }
         boolean exhausted = owned.inquiryAttempts() >= properties.inquiryMaxAttempts();
-        BookingStatus status = exhausted ? BookingStatus.MANUAL_REVIEW : BookingStatus.PENDING_INQUIRY;
+        if (exhausted) booking.requireManualReview();
         long delay = Math.min(properties.inquiryMaxDelayMs(),
                 properties.inquiryBaseDelayMs() * (1L << Math.min(owned.inquiryAttempts() - 1, 20)));
-        boolean updated = store.defer(owned, status, exhausted ? "INQUIRY_EXHAUSTED" : "CARRIER_OUTCOME_UNKNOWN",
-                clock.millis() + delay, clock.millis());
+        boolean updated = store.defer(owned, booking, clock.millis() + delay, clock.millis());
         if (updated) {
-            observer.outcome("inquiry", status, System.nanoTime() - start);
+            observer.outcome("inquiry", booking.status(), System.nanoTime() - start);
             log.warn("Booking inquiry unresolved bookingId={} status={} attempt={}",
-                    owned.bookingId(), status, owned.inquiryAttempts());
+                    owned.bookingId(), booking.status(), owned.inquiryAttempts());
         }
     }
 }

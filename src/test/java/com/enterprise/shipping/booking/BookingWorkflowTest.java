@@ -208,9 +208,15 @@ class BookingWorkflowTest {
         var receipt = remote.accept(stale.customerReference(), command(BookingCommand.DemoScenario.NORMAL));
         var snapshot = new BookingResponse(stale.bookingId(), BookingStatus.CONFIRMED, stale.carrierId(),
                 stale.customerReference(), receipt.carrierBookingId(), receipt.trackingNumber(), receipt.labelUrl(), null);
-        assertThat(store.complete(leased, BookingStatus.CONFIRMED, receipt, null, json.write(snapshot), clock.millis())).isTrue();
-        assertThat(store.defer(stale, BookingStatus.PENDING_INQUIRY, "STALE", clock.millis(), clock.millis())).isFalse();
-        assertThat(store.complete(stale, BookingStatus.FAILED, null, "STALE", "{}", clock.millis())).isFalse();
+        var confirmed = leased.restoreBooking();
+        confirmed.confirm(receipt);
+        assertThat(store.complete(leased, confirmed, json.write(snapshot), clock.millis())).isTrue();
+        var uncertain = stale.restoreBooking();
+        uncertain.markOutcomeUnknown();
+        assertThat(store.defer(stale, uncertain, clock.millis(), clock.millis())).isFalse();
+        var rejected = stale.restoreBooking();
+        rejected.reject(RejectionReason.CARRIER_REJECTED);
+        assertThat(store.complete(stale, rejected, json.write(BookingResponse.from(rejected)), clock.millis())).isFalse();
         assertThat(service.get(owner, stale.bookingId())).isEqualTo(snapshot);
     }
 
@@ -229,7 +235,7 @@ class BookingWorkflowTest {
     @Test void persistenceFailureAfterAcceptanceDoesNotTriggerAnotherSubmission() {
         BookingStore failing = spy(store);
         doThrow(new BookingException(BookingException.Code.STORE_UNAVAILABLE)).when(failing)
-                .complete(any(), any(), any(), any(), any(), anyLong());
+                .complete(any(), any(), any(), anyLong());
         assertThatThrownBy(() -> service(failing).create(owner, "save-failure", command(BookingCommand.DemoScenario.NORMAL)))
                 .isInstanceOf(BookingException.class);
         var pending = store.find(owner, "save-failure").orElseThrow();
@@ -262,6 +268,30 @@ class BookingWorkflowTest {
         assertThat(carrier.submissions).hasValue(1);
     }
 
+    @Test void invalidSubmissionReceiptRemainsRecoverableWithoutAnotherSubmission() {
+        carrier.invalidSubmission = true;
+        var intent = command(BookingCommand.DemoScenario.NORMAL);
+        var first = service.create(owner, "invalid-submit", intent);
+        assertThat(first.status()).isEqualTo(BookingStatus.PENDING_INQUIRY);
+        assertThat(first.errorCode()).isEqualTo("CARRIER_OUTCOME_UNKNOWN");
+        assertThat(first.carrierBookingId()).isNull();
+        assertThat(service.create(owner, "invalid-submit", intent)).isEqualTo(first);
+        clock.advance(100);
+        worker().reconcileBatch();
+        assertThat(service.get(owner, first.bookingId()).status()).isEqualTo(BookingStatus.CONFIRMED);
+        assertThat(carrier.submissions).hasValue(1);
+        assertThat(remote.submissionCount(first.customerReference())).isEqualTo(1);
+    }
+
+    @Test void aggregateCannotBePersistedUnderAnotherStorageIdentity() {
+        var owned = seed("identity-guard", command(BookingCommand.DemoScenario.NORMAL));
+        var other = ShipmentBooking.pending(new BookingId("other-booking"), "fedex", owned.customerReference());
+        other.markOutcomeUnknown();
+        assertThatThrownBy(() -> store.defer(owned, other, clock.millis(), clock.millis()))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(store.find(owner, "identity-guard").orElseThrow().status()).isEqualTo(BookingStatus.PENDING);
+    }
+
     @Test void invalidInquiryReceiptCannotConfirmBooking() {
         BookingRecord stale = seed("invalid-receipt", command(BookingCommand.DemoScenario.NORMAL));
         carrier.invalidInquiry = true;
@@ -285,13 +315,14 @@ class BookingWorkflowTest {
         final SqliteDemoCarrier remote;
         final AtomicInteger submissions = new AtomicInteger(), inquiries = new AtomicInteger();
         boolean invalidInquiry;
+        boolean invalidSubmission;
         RecordingCarrier(SqliteDemoCarrier remote) { this.remote = remote; }
         public CarrierReceipt submit(String reference, BookingCommand command) {
             submissions.incrementAndGet();
             if (command.demoScenario() == BookingCommand.DemoScenario.REJECTED) throw new Rejected();
             var receipt = remote.accept(reference, command);
             if (command.demoScenario() == BookingCommand.DemoScenario.TIMEOUT_AFTER_ACCEPT) throw new UnknownOutcome(new TimeoutException());
-            return receipt;
+            return invalidSubmission ? new CarrierReceipt("wrong-reference", "id", "tracking", "label") : receipt;
         }
         public Optional<CarrierReceipt> inquire(String reference) {
             inquiries.incrementAndGet();

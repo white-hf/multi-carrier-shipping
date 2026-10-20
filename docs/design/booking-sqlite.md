@@ -10,8 +10,8 @@ A local Java 17 / Spring MVC demo with two independent file-backed SQLite databa
 | --- | --- |
 | `booking.api` | Validation, trusted demo owner, HTTP status and safe error mapping |
 | `booking.application` | Claim/replay orchestration, response snapshots, inquiry worker and scheduler |
-| `booking.domain` | Immutable intent, state, owner, receipt, and response records |
-| `booking.port` | Persistence, external carrier, and telemetry contracts |
+| `booking.domain` | `ShipmentBooking` aggregate, lifecycle rules, identity, and immutable value/result records |
+| `booking.port` | Persistence, external carrier, telemetry contracts, and `BookingRecord` storage snapshot |
 | `booking.infrastructure.persistence` | SQLite/Hikari setup, schema initialization, atomic SQL and lease fencing |
 | `booking.infrastructure.carrier` | HTTP submission/inquiry, deadlines, and disabled automatic write retries |
 | `booking.infrastructure.monitoring` | Failure-isolated Micrometer observer; application code does not depend on metrics APIs |
@@ -19,6 +19,39 @@ A local Java 17 / Spring MVC demo with two independent file-backed SQLite databa
 | `booking.config` | Validated settings and explicit dependency composition |
 
 See [shared code organization](code-organization.md) for quote/booking reuse and dependency rules.
+
+## Domain model
+
+`ShipmentBooking` is the aggregate root. Its identity, carrier, and reference cannot change. `confirm`, `reject`, `markOutcomeUnknown`, and `requireManualReview` own lifecycle transitions; there are no public state setters. Confirmation requires matching, complete carrier evidence. Invalid evidence leaves state unchanged. Unknown outcomes cannot be rejected as failures; confirmed, failed, and manual-review states reject further automated transitions.
+
+`BookingId` is an identity value object. `CarrierReceipt` and `ShipmentParcel` remain immutable values; records are appropriate for these roles. `BookingResponse` is a read projection. The quote module keeps a lightweight model because fan-out coordination does not require a mutable aggregate.
+
+```mermaid
+classDiagram
+    class ShipmentBooking {
+        +confirm(CarrierReceipt)
+        +reject(RejectionReason)
+        +markOutcomeUnknown()
+        +requireManualReview()
+    }
+    class BookingId
+    class CarrierReceipt
+    class BookingService
+    class BookingReconciliationWorker
+    class BookingStore {
+        <<interface>>
+    }
+    ShipmentBooking *-- BookingId
+    ShipmentBooking o-- CarrierReceipt
+    BookingService --> ShipmentBooking
+    BookingReconciliationWorker --> ShipmentBooking
+    BookingService --> BookingStore
+    BookingReconciliationWorker --> BookingStore
+```
+
+Application services still coordinate claim ownership, network calls, retry scheduling, and persistence. `BookingRecord` belongs to the storage port and rehydrates the aggregate; serialized requests, leases, versions, and scheduling metadata are not aggregate fields. Persistence accepts an aggregate outcome and atomically saves its state plus the response snapshot. The adapter checks identity and retains the existing version/token fence.
+
+An in-memory aggregate is request-local and cannot enforce distributed uniqueness. Winning the database claim remains the only authorization for initial submission; constructing or restoring an aggregate grants no permission to submit. SQLite uniqueness and conditional writes remain essential. Restored state is validated, with no schema or JSON migration.
 
 ## Flow
 

@@ -102,7 +102,7 @@ classDiagram
 - **Durable idempotency:** SQLite unique owner/key claims and normalized request fingerprints prevent duplicate initial submissions and reject changed intent.
 - **Short atomic writes:** Spring JDBC commits the claim before calling the carrier; no database transaction spans the HTTP request.
 - **Recovery without blind retries:** stable carrier references, inquiry-only reconciliation, and version/token-fenced updates recover uncertain outcomes across restarts.
-- **Maintainable boundaries:** separate API, application, domain, persistence, and carrier packages; metrics use a failure-isolated observer port.
+- **Domain behavior:** `ShipmentBooking` owns receipt validation and lifecycle transitions; application services coordinate carrier calls and persistence. Metrics use a failure-isolated observer port.
 
 [Shared code organization](docs/design/code-organization.md) · [Booking design](docs/design/booking-sqlite.md) · [Run the booking demo](docs/runbooks/booking-demo.md)
 
@@ -123,7 +123,7 @@ curl -sS http://127.0.0.1:8080/api/shipping/quotes \
   -d '{"originPostalCode":"L6K 3V3","destinationPostalCode":"M5V 2T6","weightKg":1,"lengthCm":10,"widthCm":10,"heightCm":10}'
 ```
 
-**Verified results:** all **38 tests pass**. Packaged demo checks produced:
+**Verified results:** all **63 tests pass**. Packaged demo checks produced:
 
 | Scenario | HTTP / Status | Result |
 | --- | --- | --- |
@@ -140,7 +140,7 @@ To reproduce the timeout scenario, stop the application and restart it with:
 
 Metrics: `http://127.0.0.1:9091/actuator/prometheus`.
 
-[Booking API and restart recovery](docs/runbooks/booking-demo.md) · [Rate demo scenarios](docs/runbooks/demo.md) · [Recorded responses](docs/summaries/demo-smoke-results.json) · [Refactor validation](docs/summaries/structure-refactor.md) · [Booking validation](docs/summaries/booking-sqlite.md) · [Rate validation](docs/summaries/java17.md)
+[Booking API and restart recovery](docs/runbooks/booking-demo.md) · [Rate demo scenarios](docs/runbooks/demo.md) · [Recorded responses](docs/summaries/demo-smoke-results.json) · [Domain validation](docs/summaries/booking-domain.md) · [Refactor validation](docs/summaries/structure-refactor.md) · [Booking validation](docs/summaries/booking-sqlite.md) · [Rate validation](docs/summaries/java17.md)
 
 ---
 
