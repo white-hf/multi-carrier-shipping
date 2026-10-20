@@ -1,4 +1,4 @@
-package com.enterprise.shipping.booking.infrastructure.carrier;
+package com.enterprise.shipping.demo.booking;
 
 import com.enterprise.shipping.booking.domain.BookingCommand;
 import com.enterprise.shipping.booking.domain.CarrierReceipt;
@@ -12,11 +12,11 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /** HTTP port adapter; no automatic retry of a side-effecting submission. */
-public final class HttpCarrierBookingAdapter implements CarrierBookingPort {
+public final class DemoHttpBookingAdapter implements CarrierBookingPort {
     public record Submission(@NotBlank @Size(max = 64) String customerReference, @NotNull BookingCommand command) {}
     private final WebClient client;
     private final Duration timeout;
-    public HttpCarrierBookingAdapter(WebClient client, Duration timeout) { this.client = client; this.timeout = timeout; }
+    public DemoHttpBookingAdapter(WebClient client, Duration timeout) { this.client = client; this.timeout = timeout; }
 
     @Override public CarrierReceipt submit(String reference, BookingCommand command) {
         try {

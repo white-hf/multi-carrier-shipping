@@ -6,27 +6,33 @@ import com.enterprise.shipping.shared.api.ApiResponse;
 import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Profile;
+import com.enterprise.shipping.booking.port.BookingOwnerProvider;
+import com.enterprise.shipping.shared.domain.ShippingMarketPolicy;
+import java.security.Principal;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-/** Local demo only. Production must replace the fixed owner with authenticated tenant context. */
+/** Maps booking operations to HTTP; ownership comes from a trusted provider. */
 @RestController
-@Profile("demo")
 @ConditionalOnProperty(name = "shipping.booking.enabled", havingValue = "true")
 @RequestMapping("/api/shipping/bookings")
 public class BookingController {
     private static final String RETRY_AFTER_SECONDS = "1";
     private final BookingService service;
-    private final BookingOwner owner;
-    public BookingController(BookingService service, BookingOwner owner) { this.service = service; this.owner = owner; }
+    private final BookingOwnerProvider owners;
+    private final ShippingMarketPolicy market;
+    public BookingController(BookingService service, BookingOwnerProvider owners, ShippingMarketPolicy market) {
+        this.service = service;
+        this.owners = owners;
+        this.market = market;
+    }
 
     @PostMapping
     public ResponseEntity<ApiResponse<BookingResponse>> create(
             @RequestHeader(value = "Idempotency-Key", required = true) String key,
-            @Valid @RequestBody CreateBookingRequest request) {
-        BookingResponse response = service.create(owner, key, request.toCommand());
+            @Valid @RequestBody CreateBookingRequest request, Principal principal) {
+        BookingResponse response = service.create(owners.ownerFor(principal), key, request.toCommand(market.defaultCountry()));
         HttpStatus status;
         if (response.status() == BookingStatus.CONFIRMED) status = HttpStatus.CREATED;
         else if (response.status() == BookingStatus.FAILED) status = HttpStatus.UNPROCESSABLE_ENTITY;
@@ -39,7 +45,7 @@ public class BookingController {
     }
 
     @GetMapping("/{bookingId}")
-    public ApiResponse<BookingResponse> get(@PathVariable String bookingId) {
-        return ApiResponse.success(service.get(owner, bookingId));
+    public ApiResponse<BookingResponse> get(@PathVariable String bookingId, Principal principal) {
+        return ApiResponse.success(service.get(owners.ownerFor(principal), bookingId));
     }
 }

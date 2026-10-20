@@ -89,12 +89,12 @@ classDiagram
         <<interface>>
         +fetchQuotes(request, timeoutMs) List~CarrierQuote~
     }
-    class FedExRateAdapter
-    class UpsRateAdapter
+    class DemoFedExRateAdapter
+    class DemoUpsRateAdapter
     QuoteController --> HighFanOutAggregationEngine
     HighFanOutAggregationEngine --> CarrierRatePort
-    CarrierRatePort <|.. FedExRateAdapter
-    CarrierRatePort <|.. UpsRateAdapter
+    CarrierRatePort <|.. DemoFedExRateAdapter
+    CarrierRatePort <|.. DemoUpsRateAdapter
 ```
 
 ## 5. Implementation Focus: Shipment Booking
@@ -104,11 +104,11 @@ classDiagram
 - **Recovery without blind retries:** stable carrier references, inquiry-only reconciliation, and version/token-fenced updates recover uncertain outcomes across restarts.
 - **Domain behavior:** `ShipmentBooking` owns receipt validation and lifecycle transitions; application services coordinate carrier calls and persistence. Metrics use a failure-isolated observer port.
 
-[Shared code organization](docs/design/code-organization.md) · [Booking design](docs/design/booking-sqlite.md) · [Run the booking demo](docs/runbooks/booking-demo.md)
+[Core and demo boundaries](docs/design/runtime-boundaries.md) · [Shared code organization](docs/design/code-organization.md) · [Booking design](docs/design/booking-sqlite.md) · [Run the booking demo](docs/runbooks/booking-demo.md)
 
 ## 6. Run & Results
 
-**Requirements:** JDK 17. Run from the repository root; the Maven wrapper downloads its dependencies. The demo uses local mock couriers.
+**Requirements:** JDK 17. The demo profile supplies simulated couriers and a fixed local owner; core workflows depend on ports. Market rules, currency, carrier availability, and server-side fault modes come from configuration.
 
 ```sh
 ./mvnw test
@@ -120,10 +120,10 @@ In another terminal, request a comparison:
 ```sh
 curl -sS http://127.0.0.1:8080/api/shipping/quotes \
   -H 'Content-Type: application/json' \
-  -d '{"originPostalCode":"L6K 3V3","destinationPostalCode":"M5V 2T6","weightKg":1,"lengthCm":10,"widthCm":10,"heightCm":10}'
+  -d '{"originPostalCode":"L6K 3V3","destinationPostalCode":"M5V 2T6","weight":1,"weightUnit":"KG","dimensionUnit":"CM","length":10,"width":10,"height":10}'
 ```
 
-**Verified results:** all **63 tests pass**. Packaged demo checks produced:
+**Verified results:** all **76 tests pass**. Packaged demo checks produced:
 
 | Scenario | HTTP / Status | Result |
 | --- | --- | --- |
@@ -135,12 +135,12 @@ To reproduce the timeout scenario, stop the application and restart it with:
 
 ```sh
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=demo \
-  -Dspring-boot.run.arguments="--shipping.mock.fedex-mode=slow"
+  -Dspring-boot.run.arguments="--demo.quote-carriers.fedex-mode=slow"
 ```
 
 Metrics: `http://127.0.0.1:9091/actuator/prometheus`.
 
-[Booking API and restart recovery](docs/runbooks/booking-demo.md) · [Rate demo scenarios](docs/runbooks/demo.md) · [Recorded responses](docs/summaries/demo-smoke-results.json) · [Domain validation](docs/summaries/booking-domain.md) · [Refactor validation](docs/summaries/structure-refactor.md) · [Booking validation](docs/summaries/booking-sqlite.md) · [Rate validation](docs/summaries/java17.md)
+[Booking API and restart recovery](docs/runbooks/booking-demo.md) · [Rate demo scenarios](docs/runbooks/demo.md) · [Recorded responses](docs/summaries/demo-smoke-results.json) · [Boundary validation](docs/summaries/runtime-boundaries.md) · [Domain validation](docs/summaries/booking-domain.md) · [Refactor validation](docs/summaries/structure-refactor.md) · [Booking validation](docs/summaries/booking-sqlite.md) · [Rate validation](docs/summaries/java17.md)
 
 ---
 

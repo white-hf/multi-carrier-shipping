@@ -8,6 +8,7 @@ import com.enterprise.shipping.booking.domain.*;
 import com.enterprise.shipping.booking.infrastructure.monitoring.MicrometerBookingObserver;
 import com.enterprise.shipping.booking.infrastructure.persistence.*;
 import com.enterprise.shipping.booking.port.*;
+import com.enterprise.shipping.demo.booking.DemoBookingProperties.Mode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -49,25 +50,29 @@ class BookingWorkflowTest {
     @AfterEach void close() { database.close(); remoteDatabase.close(); }
     void openDatabases() {
         database = SqliteDataSources.open(properties.databasePath(), "test-booking", 4, 50, "booking/schema-v1.sql");
-        remoteDatabase = SqliteDataSources.open(properties.carrierDatabasePath(), "test-carrier", 4, 50, "booking/carrier-schema-v1.sql");
+        remoteDatabase = SqliteDataSources.open(directory.resolve("carrier.db").toString(), "test-carrier", 4, 50, "demo/carrier-schema-v1.sql");
         jdbc = new JdbcTemplate(database);
         store = new JdbcBookingStore(jdbc);
         remote = new SqliteDemoCarrier(new JdbcTemplate(remoteDatabase), json, new ObjectMapper());
         carrier = new RecordingCarrier(remote);
     }
     static BookingProperties properties(Path directory) {
-        return new BookingProperties(directory.resolve("bookings.db").toString(), directory.resolve("carrier.db").toString(),
-                "http://127.0.0.1", "merchant-a", 500, 15000, 50, 4, 10, 1000, 3, 16);
+        return properties(directory, Set.of("fedex", "ups"));
+    }
+    static BookingProperties properties(Path directory, Set<String> enabledCarriers) {
+        return new BookingProperties(directory.resolve("bookings.db").toString(),
+                500, 15000, 50, 4, 10, 1000, 3, 16, enabledCarriers);
     }
     BookingService service(BookingStore repository) {
-        return new BookingService(repository, carrier, json, properties, clock, observer);
+        return new BookingService(repository, carrier, json, properties, clock, observer,
+                com.enterprise.shipping.support.TestMarket.canadian());
     }
     BookingReconciliationWorker worker() {
         return new BookingReconciliationWorker(store, carrier, json, properties, clock, observer);
     }
-    static BookingCommand command(BookingCommand.DemoScenario scenario) {
+    static BookingCommand command() {
         return new BookingCommand("order-1", "fedex", "Priority", new ShipmentParcel(
-                "L6K 3V3", "M5V 2T6", BigDecimal.ONE, BigDecimal.TEN, BigDecimal.TEN, BigDecimal.TEN), scenario);
+                "L6K 3V3", "M5V 2T6", BigDecimal.ONE, BigDecimal.TEN, BigDecimal.TEN, BigDecimal.TEN, "CA", "CA"));
     }
     BookingRecord seed(String key, BookingCommand command) {
         long now = clock.millis();
@@ -77,31 +82,6 @@ class BookingWorkflowTest {
                 now, now, now, 0, "initial-owner", now - 1, 0);
         assertThat(store.insertClaim(record)).isTrue();
         return record;
-    }
-
-    @Test void legacyFingerprintAndStoredClaimRemainReplayable() throws Exception {
-        // Fixtures were captured from the compiled implementation before the package refactor.
-        String legacyJson;
-        String legacyHash;
-        try (var input = getClass().getResourceAsStream("/booking/legacy-request.json")) {
-            legacyJson = new String(java.util.Objects.requireNonNull(input).readAllBytes(),
-                    java.nio.charset.StandardCharsets.UTF_8).strip();
-        }
-        try (var input = getClass().getResourceAsStream("/booking/legacy-request.sha256")) {
-            legacyHash = new String(java.util.Objects.requireNonNull(input).readAllBytes(),
-                    java.nio.charset.StandardCharsets.UTF_8).strip();
-        }
-        var intent = command(BookingCommand.DemoScenario.NORMAL);
-        assertThat(json.write(intent)).isEqualTo(legacyJson);
-        assertThat(json.hash(intent)).isEqualTo(legacyHash);
-        String id = UUID.randomUUID().toString();
-        long now = clock.millis();
-        var legacy = new BookingRecord(id, owner, "legacy-key", legacyHash, legacyJson, "fedex",
-                "booking-" + id, BookingStatus.PENDING, null, null, null, null, null,
-                now, now, now, 0, "legacy-owner", now - 1, 0);
-        assertThat(store.insertClaim(legacy)).isTrue();
-        assertThat(service.create(owner, "legacy-key", intent).bookingId()).isEqualTo(id);
-        assertThat(carrier.submissions).hasValue(0);
     }
 
     @Test void concurrentInsertRaceProducesOneInitialSubmission() throws Exception {
@@ -120,7 +100,7 @@ class BookingWorkflowTest {
         ExecutorService executor = Executors.newFixedThreadPool(callers);
         try {
             List<Callable<BookingResponse>> tasks = new ArrayList<>();
-            for (int index = 0; index < callers; index++) tasks.add(() -> concurrent.create(owner, "same-key", command(BookingCommand.DemoScenario.NORMAL)));
+            for (int index = 0; index < callers; index++) tasks.add(() -> concurrent.create(owner, "same-key", command()));
             var results = executor.invokeAll(tasks);
             Set<String> ids = new HashSet<>();
             for (var result : results) ids.add(result.get(5, TimeUnit.SECONDS).bookingId());
@@ -131,25 +111,25 @@ class BookingWorkflowTest {
     }
 
     @Test void repeatedSuccessReplaysSavedResponseAndChangedIntentConflicts() {
-        var command = command(BookingCommand.DemoScenario.NORMAL);
+        var command = command();
         var first = service.create(owner, "retry-key", command);
         assertThat(first.status()).isEqualTo(BookingStatus.CONFIRMED);
         assertThat(service.create(owner, "retry-key", command)).isEqualTo(first);
-        var changed = new BookingCommand("different-order", command.carrierId(), command.serviceLevel(), command.parcel(), command.demoScenario());
+        var changed = new BookingCommand("different-order", command.carrierId(), command.serviceLevel(), command.parcel());
         assertThatThrownBy(() -> service.create(owner, "retry-key", changed))
                 .isInstanceOfSatisfying(BookingException.class, e -> assertThat(e.code()).isEqualTo(BookingException.Code.IDEMPOTENCY_CONFLICT));
         assertThat(carrier.submissions).hasValue(1);
     }
 
     @Test void normalizedEquivalentPayloadHasSameFingerprint() {
-        var original = command(BookingCommand.DemoScenario.NORMAL);
+        var original = command();
         var equivalent = new BookingCommand(" order-1 ", "FEDEX", "priority", new ShipmentParcel(
-                "l6k3v3", "m5v2t6", new BigDecimal("1.00"), new BigDecimal("10.0"), BigDecimal.TEN, BigDecimal.TEN), null);
+                "l6k3v3", "m5v2t6", new BigDecimal("1.00"), new BigDecimal("10.0"), BigDecimal.TEN, BigDecimal.TEN, "CA", "CA"));
         assertThat(json.hash(equivalent)).isEqualTo(json.hash(original));
     }
 
     @Test void ownerAndOpaqueKeyComparisonAreIsolated() {
-        var command = command(BookingCommand.DemoScenario.NORMAL);
+        var command = command();
         var first = service.create(owner, "Key-A", command);
         var second = service.create(owner, "key-a", command);
         var otherOwner = new BookingOwner("MERCHANT", "merchant-b");
@@ -160,7 +140,8 @@ class BookingWorkflowTest {
     }
 
     @Test void timeoutAfterAcceptReplaysUncertaintyAndReconcilesWithoutResubmit() {
-        var command = command(BookingCommand.DemoScenario.TIMEOUT_AFTER_ACCEPT);
+        carrier.mode = Mode.TIMEOUT_AFTER_ACCEPT;
+        var command = command();
         var first = service.create(owner, "timeout-key", command);
         assertThat(first.status()).isEqualTo(BookingStatus.PENDING_INQUIRY);
         assertThat(service.create(owner, "timeout-key", command).status()).isEqualTo(BookingStatus.PENDING_INQUIRY);
@@ -172,7 +153,8 @@ class BookingWorkflowTest {
     }
 
     @Test void separateDatabaseReopenPreservesUncertainBookingAndCarrierReceipt() {
-        var first = service.create(owner, "restart-key", command(BookingCommand.DemoScenario.TIMEOUT_AFTER_ACCEPT));
+        carrier.mode = Mode.TIMEOUT_AFTER_ACCEPT;
+        var first = service.create(owner, "restart-key", command());
         database.close(); remoteDatabase.close();
         openDatabases();
         service = service(store);
@@ -185,7 +167,7 @@ class BookingWorkflowTest {
     }
 
     @Test void stalePendingAfterCrashCanRecoverAnAlreadyAcceptedBooking() {
-        var command = command(BookingCommand.DemoScenario.NORMAL);
+        var command = command();
         BookingRecord stale = seed("crash-key", command);
         remote.accept(stale.customerReference(), command);
         worker().reconcileBatch();
@@ -194,7 +176,7 @@ class BookingWorkflowTest {
     }
 
     @Test void notFoundIsNeverPermissionToResubmitAndEventuallyNeedsManualReview() {
-        BookingRecord stale = seed("never-submitted", command(BookingCommand.DemoScenario.NORMAL));
+        BookingRecord stale = seed("never-submitted", command());
         for (int attempt = 0; attempt < 3; attempt++) { worker().reconcileBatch(); clock.advance(2000); }
         assertThat(service.get(owner, stale.bookingId()).status()).isEqualTo(BookingStatus.MANUAL_REVIEW);
         worker().reconcileBatch();
@@ -203,9 +185,9 @@ class BookingWorkflowTest {
     }
 
     @Test void staleTokenCannotOverwriteWorkerConfirmation() {
-        BookingRecord stale = seed("fenced-key", command(BookingCommand.DemoScenario.NORMAL));
+        BookingRecord stale = seed("fenced-key", command());
         var leased = store.acquireInquiryLease(stale, "worker-token", clock.millis(), clock.millis() + 1000).orElseThrow();
-        var receipt = remote.accept(stale.customerReference(), command(BookingCommand.DemoScenario.NORMAL));
+        var receipt = remote.accept(stale.customerReference(), command());
         var snapshot = new BookingResponse(stale.bookingId(), BookingStatus.CONFIRMED, stale.carrierId(),
                 stale.customerReference(), receipt.carrierBookingId(), receipt.trackingNumber(), receipt.labelUrl(), null);
         var confirmed = leased.restoreBooking();
@@ -221,7 +203,7 @@ class BookingWorkflowTest {
     }
 
     @Test void competingWorkersAcquireOnlyOneLease() throws Exception {
-        BookingRecord stale = seed("worker-race", command(BookingCommand.DemoScenario.NORMAL));
+        BookingRecord stale = seed("worker-race", command());
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             CountDownLatch start = new CountDownLatch(1);
@@ -236,11 +218,11 @@ class BookingWorkflowTest {
         BookingStore failing = spy(store);
         doThrow(new BookingException(BookingException.Code.STORE_UNAVAILABLE)).when(failing)
                 .complete(any(), any(), any(), anyLong());
-        assertThatThrownBy(() -> service(failing).create(owner, "save-failure", command(BookingCommand.DemoScenario.NORMAL)))
+        assertThatThrownBy(() -> service(failing).create(owner, "save-failure", command()))
                 .isInstanceOf(BookingException.class);
         var pending = store.find(owner, "save-failure").orElseThrow();
         assertThat(pending.status()).isEqualTo(BookingStatus.PENDING);
-        assertThat(service.create(owner, "save-failure", command(BookingCommand.DemoScenario.NORMAL)).status()).isEqualTo(BookingStatus.PENDING);
+        assertThat(service.create(owner, "save-failure", command()).status()).isEqualTo(BookingStatus.PENDING);
         clock.advance(properties.leaseMs() + 1);
         worker().reconcileBatch();
         assertThat(service.get(owner, pending.bookingId()).status()).isEqualTo(BookingStatus.CONFIRMED);
@@ -252,25 +234,44 @@ class BookingWorkflowTest {
             connection.setAutoCommit(false);
             try (var statement = connection.createStatement()) {
                 statement.executeUpdate("UPDATE shipment_bookings SET updated_at=updated_at WHERE 1=0");
-                assertThatThrownBy(() -> service.create(owner, "locked", command(BookingCommand.DemoScenario.NORMAL)))
+                assertThatThrownBy(() -> service.create(owner, "locked", command()))
                         .isInstanceOfSatisfying(BookingException.class, e -> assertThat(e.code()).isEqualTo(BookingException.Code.STORE_UNAVAILABLE));
                 assertThat(carrier.submissions).hasValue(0);
             } finally { connection.rollback(); }
         }
-        assertThat(service.create(owner, "locked", command(BookingCommand.DemoScenario.NORMAL)).status()).isEqualTo(BookingStatus.CONFIRMED);
+        assertThat(service.create(owner, "locked", command()).status()).isEqualTo(BookingStatus.CONFIRMED);
     }
 
     @Test void definitiveRejectionIsTerminalAndReplayed() {
-        var command = command(BookingCommand.DemoScenario.REJECTED);
+        carrier.mode = Mode.REJECTED;
+        var command = command();
         var first = service.create(owner, "reject", command);
         assertThat(first.status()).isEqualTo(BookingStatus.FAILED);
         assertThat(service.create(owner, "reject", command)).isEqualTo(first);
         assertThat(carrier.submissions).hasValue(1);
     }
 
+    @Test void disablingCarrierBlocksNewBookingsButPreservesReplayAndRecovery() {
+        carrier.mode = Mode.TIMEOUT_AFTER_ACCEPT;
+        var intent = command();
+        var first = service.create(owner, "before-disabled", intent);
+        var disabledProperties = properties(directory, Set.of("ups"));
+        var restricted = new BookingService(store, carrier, json, disabledProperties, clock, observer,
+                com.enterprise.shipping.support.TestMarket.canadian());
+        assertThat(restricted.create(owner, "before-disabled", intent)).isEqualTo(first);
+        assertThatThrownBy(() -> restricted.create(owner, "after-disabled", intent))
+                .isInstanceOfSatisfying(BookingException.class,
+                        error -> assertThat(error.code()).isEqualTo(BookingException.Code.UNSUPPORTED_CARRIER));
+        assertThat(store.find(owner, "after-disabled")).isEmpty();
+        clock.advance(100);
+        new BookingReconciliationWorker(store, carrier, json, disabledProperties, clock, observer).reconcileBatch();
+        assertThat(restricted.create(owner, "before-disabled", intent).status()).isEqualTo(BookingStatus.CONFIRMED);
+        assertThat(carrier.submissions).hasValue(1);
+    }
+
     @Test void invalidSubmissionReceiptRemainsRecoverableWithoutAnotherSubmission() {
         carrier.invalidSubmission = true;
-        var intent = command(BookingCommand.DemoScenario.NORMAL);
+        var intent = command();
         var first = service.create(owner, "invalid-submit", intent);
         assertThat(first.status()).isEqualTo(BookingStatus.PENDING_INQUIRY);
         assertThat(first.errorCode()).isEqualTo("CARRIER_OUTCOME_UNKNOWN");
@@ -284,7 +285,7 @@ class BookingWorkflowTest {
     }
 
     @Test void aggregateCannotBePersistedUnderAnotherStorageIdentity() {
-        var owned = seed("identity-guard", command(BookingCommand.DemoScenario.NORMAL));
+        var owned = seed("identity-guard", command());
         var other = ShipmentBooking.pending(new BookingId("other-booking"), "fedex", owned.customerReference());
         other.markOutcomeUnknown();
         assertThatThrownBy(() -> store.defer(owned, other, clock.millis(), clock.millis()))
@@ -293,7 +294,7 @@ class BookingWorkflowTest {
     }
 
     @Test void invalidInquiryReceiptCannotConfirmBooking() {
-        BookingRecord stale = seed("invalid-receipt", command(BookingCommand.DemoScenario.NORMAL));
+        BookingRecord stale = seed("invalid-receipt", command());
         carrier.invalidInquiry = true;
         worker().reconcileBatch();
         assertThat(service.get(owner, stale.bookingId()).status()).isEqualTo(BookingStatus.PENDING_INQUIRY);
@@ -306,22 +307,23 @@ class BookingWorkflowTest {
         doThrow(new IllegalStateException("metrics unavailable"))
                 .when(registry).counter(anyString(), anyString(), anyString(), anyString(), anyString());
         var isolated = new BookingService(store, carrier, json, properties, clock,
-                new MicrometerBookingObserver(registry));
-        assertThat(isolated.create(owner, "metrics-failure", command(BookingCommand.DemoScenario.NORMAL)).status())
+                new MicrometerBookingObserver(registry), com.enterprise.shipping.support.TestMarket.canadian());
+        assertThat(isolated.create(owner, "metrics-failure", command()).status())
                 .isEqualTo(BookingStatus.CONFIRMED);
     }
 
     static class RecordingCarrier implements CarrierBookingPort {
         final SqliteDemoCarrier remote;
         final AtomicInteger submissions = new AtomicInteger(), inquiries = new AtomicInteger();
+        Mode mode = Mode.NORMAL;
         boolean invalidInquiry;
         boolean invalidSubmission;
         RecordingCarrier(SqliteDemoCarrier remote) { this.remote = remote; }
         public CarrierReceipt submit(String reference, BookingCommand command) {
             submissions.incrementAndGet();
-            if (command.demoScenario() == BookingCommand.DemoScenario.REJECTED) throw new Rejected();
+            if (mode == Mode.REJECTED) throw new Rejected();
             var receipt = remote.accept(reference, command);
-            if (command.demoScenario() == BookingCommand.DemoScenario.TIMEOUT_AFTER_ACCEPT) throw new UnknownOutcome(new TimeoutException());
+            if (mode == Mode.TIMEOUT_AFTER_ACCEPT) throw new UnknownOutcome(new TimeoutException());
             return invalidSubmission ? new CarrierReceipt("wrong-reference", "id", "tracking", "label") : receipt;
         }
         public Optional<CarrierReceipt> inquire(String reference) {

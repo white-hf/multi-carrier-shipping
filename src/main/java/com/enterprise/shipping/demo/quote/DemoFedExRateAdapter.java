@@ -1,4 +1,4 @@
-package com.enterprise.shipping.quote.infrastructure.carrier;
+package com.enterprise.shipping.demo.quote;
 
 import com.enterprise.shipping.quote.config.QuoteProperties;
 import com.enterprise.shipping.quote.port.CarrierRatePort;
@@ -17,17 +17,19 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
-/** Maps the simulated UPS contract to domain quotes; not a production carrier integration. */
+/** Maps the simulated FedEx contract to domain quotes; not a production carrier integration. */
 @Component
-public class UpsRateAdapter implements CarrierRatePort {
-    private static final String CARRIER_ID = "ups";
-    private static final String CARRIER_NAME = "UPS";
+@org.springframework.context.annotation.Profile("demo")
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name = "shipping.quote.enabled", havingValue = "true")
+public class DemoFedExRateAdapter implements CarrierRatePort {
+    private static final String CARRIER_ID = "fedex";
+    private static final String CARRIER_NAME = "FedEx";
 
     private final WebClient client;
     private final QuoteProperties properties;
 
-    public UpsRateAdapter(
-            @Qualifier("upsClient") WebClient client, QuoteProperties properties) {
+    public DemoFedExRateAdapter(
+            @Qualifier("fedexClient") WebClient client, QuoteProperties properties) {
         this.client = client;
         this.properties = properties;
     }
@@ -71,12 +73,12 @@ public class UpsRateAdapter implements CarrierRatePort {
         }
         return response.services().stream()
                 .map(service -> new CarrierQuote(CARRIER_ID, CARRIER_NAME,
-                        service.service(), service.chargeAmount(), service.currency(), service.deliveryDays()))
+                        service.serviceType(), service.totalRate(), service.currency(), service.transitDays()))
                 .toList();
     }
 
     // Transport records remain local to the adapter; the engine consumes only CarrierQuote.
-    public record RateResponse(List<UpsService> services) {}
+    public record RateResponse(List<FedExService> services) {}
 
-    public record UpsService(String service, BigDecimal chargeAmount, String currency, int deliveryDays) {}
+    public record FedExService(String serviceType, BigDecimal totalRate, String currency, int transitDays) {}
 }

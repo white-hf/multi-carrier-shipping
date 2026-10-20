@@ -7,7 +7,7 @@
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=demo
 ```
 
-No database server or Docker is needed. The first run creates `data/bookings.db` and `data/demo-carrier.db`. Retain both across restarts. The application and management endpoints remain loopback-only. The fixed local merchant is `demo-merchant`; this is not production authentication.
+The demo profile supplies a simulated HTTP carrier, a fixed local owner, and a separate carrier database. The core booking API, aggregate, and recovery worker use the same code outside this profile. Both local databases are created under `data/`; retain them across restarts.
 
 ## Create and replay
 
@@ -15,54 +15,79 @@ No database server or Docker is needed. The first run creates `data/bookings.db`
 curl -i http://127.0.0.1:8080/api/shipping/bookings \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: booking-example-001' \
-  -d '{"orderReference":"order-001","carrierId":"fedex","serviceLevel":"Priority","parcel":{"originPostalCode":"L6K 3V3","destinationPostalCode":"M5V 2T6","weightKg":1,"lengthCm":10,"widthCm":10,"heightCm":10},"demoScenario":"NORMAL"}'
+  -d '{"orderReference":"order-001","carrierId":"fedex","serviceLevel":"Priority","parcel":{"originPostalCode":"L6K 3V3","destinationPostalCode":"M5V 2T6","weight":1,"weightUnit":"KG","dimensionUnit":"CM","length":10,"width":10,"height":10,"originCountryCode":"CA","destinationCountryCode":"CA"}}'
 ```
 
-Expected: **201 / CONFIRMED**, stable booking ID and customer reference, carrier booking ID, tracking number, and a URL for a simulated text label. Repeat the same request/key to replay the same terminal response. Change `orderReference` under the same key to get **409 / IDEMPOTENCY_CONFLICT**. Use a new key for an intentionally different booking.
+Expected: **201 / CONFIRMED**, a booking ID, customer reference, simulated tracking number, and text-label URL. Repeat the same intent/key to replay the saved response; change the order reference under the same key to get **409 / IDEMPOTENCY_CONFLICT**. `Location` identifies the GET status endpoint.
 
-The `Location` header identifies the operation:
+Country codes may be omitted, resolving to `shipping.market.default-country` before hashing. Country-specific postal rules and comparison currency are configured under `shipping.market`. Postal validation checks shape, not deliverability.
+
+## Measurement units
+
+Both quote input and the booking parcel require `weightUnit` (`KG` or `LB`) and `dimensionUnit` (`CM` or `IN`). For example: `"weight":2,"weightUnit":"LB","length":10,"width":8,"height":4,"dimensionUnit":"IN"`. All three dimensions use the declared dimension unit. Missing/unknown units or nonpositive values return 400.
+
+Conversion uses exact decimal factors: 1 inch = 2.54 cm and 1 pound = 0.45359237 kg. Physical input limits are checked after conversion. Carrier ports and booking fingerprints use normalized kg/cm, so equivalent physical measurements replay the same intent.
+
+## Server-side fault injection
+
+Fault controls are configuration of the simulated carrier, never business request fields:
 
 ```sh
-curl -sS http://127.0.0.1:8080/api/shipping/bookings/BOOKING_ID
+DEMO_BOOKING_MODE=TIMEOUT_AFTER_ACCEPT ./mvnw spring-boot:run -Dspring-boot.run.profiles=demo
 ```
 
-## Response loss and reconciliation
+Create a booking with a new key using the same business payload. The carrier commits its own database, then delays its response beyond the deadline. Expected: **202 / PENDING_INQUIRY**, followed by confirmation through inquiry. Replaying the request never submits again.
 
-Send the create request with a new key and `"demoScenario":"TIMEOUT_AFTER_ACCEPT"`. The simulated carrier commits its booking to the independent carrier database, then delays the HTTP response beyond the deadline.
-
-Expected: **202 / PENDING_INQUIRY** with `Location` and `Retry-After`. Repeating the original request does not submit again. Poll the Location URL; the scheduled worker should discover the existing carrier receipt and return **CONFIRMED**. Responses may already be confirmed if reconciliation runs before a later retry is observed.
-
-For a controlled restart demonstration, start with the scheduler disabled:
+For a controlled restart, disable the scheduler for the first run:
 
 ```sh
-./mvnw spring-boot:run -Dspring-boot.run.profiles=demo \
+DEMO_BOOKING_MODE=TIMEOUT_AFTER_ACCEPT ./mvnw spring-boot:run -Dspring-boot.run.profiles=demo \
   -Dspring-boot.run.arguments="--shipping.booking.reconciliation-enabled=false"
 ```
 
-Create the timeout-after-accept operation, stop the app after its 202 response, then restart normally using the same two database files. Inquiry recovers the existing shipment without another submission. JSON example outcomes are recorded in the validation summary after smoke checks.
+After receiving 202, stop and restart normally with the same files. Inquiry discovers the existing carrier receipt. Changing the server's failure mode does not change the booking fingerprint.
 
-## Other scenarios
-
-| Scenario | Expected behavior |
+| Server mode | Behavior for a new booking |
 | --- | --- |
-| `NORMAL` | 201, confirmed text-label simulation |
-| `REJECTED` | 422, terminal FAILED; repeated request replays it |
-| `TIMEOUT_AFTER_ACCEPT` | 202, then confirmed by inquiry |
-| `UNAVAILABLE` | 202, inquiry backoff; eventually MANUAL_REVIEW, never automatic resubmission |
-| Missing `Idempotency-Key` header | 400 / INVALID_REQUEST; rejected during HTTP binding |
-| Blank/malformed key | 400 / INVALID_IDEMPOTENCY_KEY; no claim created |
-| Invalid parcel | 400 / INVALID_REQUEST; no claim created |
-| Reused key with changed intent | 409; existing operation unchanged |
-| SQLite unavailable/busy beyond timeout | 503; retry with the same key, since a carrier booking may already exist |
+| `NORMAL` | 201 / CONFIRMED |
+| `REJECTED` | 422 / FAILED, terminal replay |
+| `TIMEOUT_AFTER_ACCEPT` | 202, then confirmation by inquiry |
+| `UNAVAILABLE` | 202, bounded inquiry, eventually MANUAL_REVIEW |
 
-## Configuration and monitoring
+## Carrier configuration
 
-`BOOKING_DB_PATH`, `DEMO_CARRIER_DB_PATH`, and `BOOKING_CARRIER_URL` override paths/URL. If the app port changes, update the simulated carrier URL too. Recovery cadence, leases, maximum attempts, and database limits are under `shipping.booking` (see `BookingProperties`). Scheduler execution is sequential and batches are bounded.
-
-```sh
-curl -sS http://127.0.0.1:9091/actuator/prometheus
+```yaml
+shipping:
+  booking:
+    enabled-carriers: [fedex, ups]
 ```
 
-Look for `shipping_booking_claims`, `shipping_booking_conflicts`, `shipping_booking_outcomes`, and `shipping_booking_latency` metric families. Use booking IDs in logs to follow claim, replay, uncertain submission, inquiry, and confirmation.
+Change the list and restart to enable/disable new operations. IDs are normalized. Existing bookings remain replayable and recoverable when admission is disabled. Real carrier integrations implement `CarrierBookingPort`; the list alone does not implement their protocols.
 
-No real carrier API, payment, or postage is involved. Database files store submitted parcel data locally; use fictional inputs. No production throughput claim is made for SQLite.
+## Runtime configuration and ownership
+
+`BOOKING_DB_PATH` sets the application file. `DEMO_CARRIER_DB_PATH`, `BOOKING_CARRIER_URL`, and `DEMO_BOOKING_MODE` configure only the simulator. Its structured settings live under `demo.booking-carrier`. When changing the application port, also update the simulator URL and quote simulator base URLs.
+
+Outside the demo profile, explicitly enable booking, configure its database/market/carriers, and supply a real carrier port implementation. `PrincipalBookingOwnerProvider` requires a principal established by a servlet container or security integration. It never trusts an owner field/header. No authentication login/token-verification system is supplied by this repository; missing principals receive 401. The demo's fixed merchant is selected only by its profile.
+
+## Errors and development data
+
+| Input/outcome | Response |
+| --- | --- |
+| Missing required header | 400 / INVALID_REQUEST |
+| Blank or malformed key | 400 / INVALID_IDEMPOTENCY_KEY |
+| Unsupported carrier | 400 / UNSUPPORTED_CARRIER |
+| Invalid parcel, unsupported country, or unknown JSON field | 400 / INVALID_REQUEST |
+| Changed intent under an existing key | 409 / IDEMPOTENCY_CONFLICT |
+| Storage unavailable | 503; retry with the same key |
+
+Do not send simulator fields; unknown JSON fields are rejected. This project is under development and supports only its current intent format. If local databases were created by an earlier model, start with fresh file paths instead of migrating historical records:
+
+```sh
+BOOKING_DB_PATH=./data/current-bookings.db DEMO_CARRIER_DB_PATH=./data/current-carrier.db \
+  ./mvnw spring-boot:run -Dspring-boot.run.profiles=demo
+```
+
+## Monitoring
+
+Prometheus: `http://127.0.0.1:9091/actuator/prometheus`. Booking metrics cover claims, conflicts, outcomes, and latency; logs use booking IDs rather than raw keys or parcel data. SQLite is file-backed with bounded write contention. No real charge or valid postage is created.

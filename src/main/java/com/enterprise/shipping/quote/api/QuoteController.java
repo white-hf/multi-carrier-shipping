@@ -1,5 +1,7 @@
 package com.enterprise.shipping.quote.api;
 
+import com.enterprise.shipping.shared.domain.ShippingMarketPolicy;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import com.enterprise.shipping.quote.domain.QuoteCommand;
 import com.enterprise.shipping.quote.config.QuoteProperties;
 import com.enterprise.shipping.shared.api.ApiResponse;
@@ -19,23 +21,26 @@ import org.springframework.web.bind.annotation.RestController;
 /** Maps comparison outcomes to HTTP responses without exposing carrier exception details. */
 @RestController
 @RequestMapping("/api/shipping")
+@ConditionalOnProperty(name = "shipping.quote.enabled", havingValue = "true")
 public class QuoteController {
     private static final String COMPARISON_FAILED = "COMPARISON_FAILED";
 
     private final HighFanOutAggregationEngine engine;
     private final QuoteProperties properties;
+    private final ShippingMarketPolicy market;
 
     public QuoteController(
-            HighFanOutAggregationEngine engine, QuoteProperties properties) {
+            HighFanOutAggregationEngine engine, QuoteProperties properties, ShippingMarketPolicy market) {
         this.engine = engine;
         this.properties = properties;
+        this.market = market;
     }
 
     @PostMapping("/quotes")
     public ResponseEntity<ApiResponse<QuoteComparison>> getAggregatedShippingQuotes(
             @Valid @RequestBody ParcelRequest request) {
         QuoteComparison response =
-                engine.executeFanOutRates(new QuoteCommand(request.toDomain()), properties.getGlobalTimeoutMs());
+                engine.executeFanOutRates(new QuoteCommand(request.toDomain(market.defaultCountry())), properties.getGlobalTimeoutMs());
         if (response.status() == ComparisonStatus.FAILED) {
             return ResponseEntity.status(failureStatus(response))
                     .body(new ApiResponse<>(false, COMPARISON_FAILED,

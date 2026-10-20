@@ -1,7 +1,7 @@
 package com.enterprise.shipping.demo.booking;
 
-import com.enterprise.shipping.booking.infrastructure.carrier.HttpCarrierBookingAdapter.Submission;
-import com.enterprise.shipping.booking.domain.BookingCommand.DemoScenario;
+import com.enterprise.shipping.demo.booking.DemoHttpBookingAdapter.Submission;
+import com.enterprise.shipping.demo.booking.DemoBookingProperties.Mode;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,17 +20,21 @@ public class DemoBookingCarrierController {
     private static final Logger log = LoggerFactory.getLogger(DemoBookingCarrierController.class);
     private static final long RESPONSE_LOSS_DELAY_MS = 1500;
     private final SqliteDemoCarrier carrier;
-    public DemoBookingCarrierController(SqliteDemoCarrier carrier) { this.carrier = carrier; }
+    private final DemoBookingBehavior behavior;
+    public DemoBookingCarrierController(SqliteDemoCarrier carrier, DemoBookingBehavior behavior) {
+        this.carrier = carrier;
+        this.behavior = behavior;
+    }
 
     @PostMapping
     public ResponseEntity<?> submit(@Valid @RequestBody Submission request) throws InterruptedException {
-        DemoScenario scenario = request.command().demoScenario();
-        if (scenario == DemoScenario.REJECTED) return ResponseEntity.unprocessableEntity().build();
-        if (scenario == DemoScenario.UNAVAILABLE) return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
+        Mode scenario = behavior.mode();
+        if (scenario == Mode.REJECTED) return ResponseEntity.unprocessableEntity().build();
+        if (scenario == Mode.UNAVAILABLE) return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
         var receipt = carrier.accept(request.customerReference(), request.command());
         log.info("Simulated carrier accepted reference={}", request.customerReference());
         // Commit remote state first, then withhold the response beyond the caller's deadline.
-        if (scenario == DemoScenario.TIMEOUT_AFTER_ACCEPT) Thread.sleep(RESPONSE_LOSS_DELAY_MS);
+        if (scenario == Mode.TIMEOUT_AFTER_ACCEPT) Thread.sleep(RESPONSE_LOSS_DELAY_MS);
         return ResponseEntity.status(HttpStatus.CREATED).body(receipt);
     }
 

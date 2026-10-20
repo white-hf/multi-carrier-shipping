@@ -2,7 +2,7 @@ package com.enterprise.shipping.booking.domain;
 
 /** Safe operation-level failures; HTTP mapping belongs to the API layer. */
 public class BookingException extends RuntimeException {
-    public enum Code { IDEMPOTENCY_CONFLICT, BOOKING_NOT_FOUND, STORE_UNAVAILABLE, INVALID_IDEMPOTENCY_KEY }
+    public enum Code { IDEMPOTENCY_CONFLICT, BOOKING_NOT_FOUND, STORE_UNAVAILABLE, INVALID_IDEMPOTENCY_KEY, UNSUPPORTED_CARRIER, AUTHENTICATION_REQUIRED }
     private final Code code;
 
     public BookingException(Code code) {

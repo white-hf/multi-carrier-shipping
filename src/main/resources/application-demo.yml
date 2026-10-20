@@ -1,8 +1,34 @@
 shipping:
+  market:
+    default-country: CA
+    comparison-currency: CAD
+    postal-code-patterns:
+      CA: '[A-Z]\d[A-Z]\d[A-Z]\d'
+      US: '\d{5}(-\d{4})?'
+  quote:
+    enabled: true
   booking:
     enabled: true
+    enabled-carriers: [fedex, ups]
     database-path: ${BOOKING_DB_PATH:./data/bookings.db}
-    carrier-database-path: ${DEMO_CARRIER_DB_PATH:./data/demo-carrier.db}
-    carrier-base-url: ${BOOKING_CARRIER_URL:http://127.0.0.1:8080/api/mock/bookings}
     reconciliation-enabled: true
     reconciliation-interval-ms: 1000
+
+  engine:
+    global-timeout-ms: 600
+    max-concurrent-requests: 16
+    carriers:
+      fedex:
+        base-url: ${FEDEX_BASE_URL:http://127.0.0.1:8080/api/mock/fedex}
+        timeout-ms: 250
+        concurrency: 8
+      ups:
+        base-url: ${UPS_BASE_URL:http://127.0.0.1:8080/api/mock/ups}
+        timeout-ms: 300
+        concurrency: 8
+demo:
+  booking-carrier:
+    mode: ${DEMO_BOOKING_MODE:NORMAL}
+    database-path: ${DEMO_CARRIER_DB_PATH:./data/demo-carrier.db}
+    base-url: ${BOOKING_CARRIER_URL:http://127.0.0.1:8080/api/mock/bookings}
+    owner-id: demo-merchant

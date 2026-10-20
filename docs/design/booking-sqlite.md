@@ -2,20 +2,20 @@
 
 ## Scope
 
-A local Java 17 / Spring MVC demo with two independent file-backed SQLite databases: application booking state and simulated carrier state. Enabled only by the `demo` profile. The fixed merchant comes from server configuration, not client input. No real shipment, charge, slot reservation, or carrier contract is created.
+A local Java 17 / Spring MVC demo with two independent file-backed SQLite databases: application booking state and simulated carrier state. Business components are enabled through `shipping.booking.enabled`. The `demo` profile supplies the simulated carrier and fixed owner; outside it ownership requires an authenticated principal and a carrier port implementation. No real shipment, charge, slot reservation, or carrier contract is created.
 
 ## Code organization
 
 | Package | Responsibility |
 | --- | --- |
-| `booking.api` | Validation, trusted demo owner, HTTP status and safe error mapping |
+| `booking.api` | Input validation, trusted owner resolution, HTTP status and safe error mapping |
 | `booking.application` | Claim/replay orchestration, response snapshots, inquiry worker and scheduler |
 | `booking.domain` | `ShipmentBooking` aggregate, lifecycle rules, identity, and immutable value/result records |
 | `booking.port` | Persistence, external carrier, telemetry contracts, and `BookingRecord` storage snapshot |
 | `booking.infrastructure.persistence` | SQLite/Hikari setup, schema initialization, atomic SQL and lease fencing |
-| `booking.infrastructure.carrier` | HTTP submission/inquiry, deadlines, and disabled automatic write retries |
+| `booking.infrastructure.security` | Authenticated principal to owner mapping outside the demo profile |
 | `booking.infrastructure.monitoring` | Failure-isolated Micrometer observer; application code does not depend on metrics APIs |
-| `demo.booking` | Independent durable fake carrier and clearly marked text labels |
+| `demo.booking` | Simulated HTTP adapter, durable fake carrier, fault injection, fixed owner, and text labels |
 | `booking.config` | Validated settings and explicit dependency composition |
 
 See [shared code organization](code-organization.md) for quote/booking reuse and dependency rules.
@@ -55,7 +55,7 @@ An in-memory aggregate is request-local and cannot enforce distributed uniquenes
 
 ## Flow
 
-1. Normalize booking intent and calculate a SHA-256 fingerprint. Validate the owner-scoped opaque idempotency key.
+1. Normalize business intent, resolve country codes, validate the configured market, and calculate a SHA-256 fingerprint. Validate the owner-scoped opaque idempotency key.
 2. Fast lookup: identical intent returns current state or the persisted terminal response; different intent returns conflict.
 3. Insert the full intent, selected carrier, stable reference, and initial ownership lease using a targeted unique-key `ON CONFLICT ... DO NOTHING`. Only an inserted claim may make the initial submission. A losing request always follows the replay path, including `PENDING_INQUIRY`.
 4. The insert commits before the HTTP call. Each persistence mutation is one atomic auto-committed statement; the coordinator rejects calls from an outer database transaction (`Propagation.NEVER`). No nested `REQUIRES_NEW` transaction or self-injection is required.

@@ -1,5 +1,7 @@
 package com.enterprise.shipping.quote.application;
 
+import com.enterprise.shipping.shared.domain.ShippingMarketPolicy;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import com.enterprise.shipping.quote.port.CarrierRatePort;
 import com.enterprise.shipping.quote.config.QuoteProperties;
 import com.enterprise.shipping.quote.domain.*;
@@ -21,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Each carrier owns bounded workers; a slow dependency cannot consume another's capacity.
  */
 @Service
+@ConditionalOnProperty(name = "shipping.quote.enabled", havingValue = "true")
 public class HighFanOutAggregationEngine {
     private static final long WORKER_IDLE_TIMEOUT_SECONDS = 30;
 
@@ -30,14 +33,17 @@ public class HighFanOutAggregationEngine {
     private final CircuitBreakerRegistry breakers;
     private final BulkheadRegistry bulkheads;
     private final QuoteObserver observer;
+    private final ShippingMarketPolicy market;
     private final Semaphore admission;
 
     public HighFanOutAggregationEngine(List<CarrierRatePort> adapters, CircuitBreakerRegistry breakers,
-            BulkheadRegistry bulkheads, QuoteObserver observer, QuoteProperties properties) {
+            BulkheadRegistry bulkheads, QuoteObserver observer, QuoteProperties properties, ShippingMarketPolicy market) {
+        if (adapters.isEmpty()) throw new IllegalArgumentException("At least one rate adapter must be configured");
         this.adapters = List.copyOf(adapters);
         this.breakers = breakers;
         this.bulkheads = bulkheads;
         this.observer = observer;
+        this.market = market;
         this.admission = new Semaphore(properties.getMaxConcurrentRequests());
         for (CarrierRatePort adapter : adapters) {
             String id = adapter.getCarrierId();
@@ -59,6 +65,7 @@ public class HighFanOutAggregationEngine {
 
     /** Returns valid quotes plus explicit coverage; an empty successful query is not an outage. */
     public QuoteComparison executeFanOutRates(QuoteCommand request, long globalTimeoutMs) {
+        market.validate(request.parcel());
         if (globalTimeoutMs <= 0) throw new IllegalArgumentException("Positive timeout required");
         String requestId = UUID.randomUUID().toString();
         // Monotonic time is unaffected by clock synchronization and manual clock changes.
@@ -116,7 +123,7 @@ public class HighFanOutAggregationEngine {
             pending.keySet().forEach(future -> future.cancel(true));
             if (admitted) admission.release();
         }
-        // Quote validation enforces CAD before sorting, so numeric prices are comparable.
+        // Quote validation enforces one configured currency before sorting, so numeric prices are comparable.
         var quotes = results.stream().flatMap(r -> r.quotes().stream())
                 .sorted(Comparator.comparing(CarrierQuote::rate).thenComparing(CarrierQuote::carrierId)
                         .thenComparing(CarrierQuote::serviceLevel)).toList();
@@ -164,7 +171,7 @@ public class HighFanOutAggregationEngine {
     }
     private void validateQuotes(String id, List<CarrierQuote> quotes) {
         if (quotes == null || quotes.stream().anyMatch(q -> q == null || !id.equals(q.carrierId()) ||
-                q.rate() == null || q.rate().signum() < 0 || !"CAD".equals(q.currency()) ||
+                q.rate() == null || q.rate().signum() < 0 || !market.comparisonCurrency().equals(q.currency()) ||
                 q.serviceLevel() == null || q.serviceLevel().isBlank() || q.estimatedDeliveryDays() < 0))
             throw new CarrierFailureException(OutcomeCode.INVALID_RESPONSE);
     }

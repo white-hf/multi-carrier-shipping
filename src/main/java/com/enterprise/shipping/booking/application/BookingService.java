@@ -1,5 +1,6 @@
 package com.enterprise.shipping.booking.application;
 
+import com.enterprise.shipping.shared.domain.ShippingMarketPolicy;
 import com.enterprise.shipping.booking.config.BookingProperties;
 import com.enterprise.shipping.booking.domain.*;
 import com.enterprise.shipping.booking.port.*;
@@ -21,15 +22,18 @@ public class BookingService {
     private final BookingProperties properties;
     private final Clock clock;
     private final BookingObserver observer;
+    private final ShippingMarketPolicy market;
 
     public BookingService(BookingStore store, CarrierBookingPort carrier, BookingJson json,
-            BookingProperties properties, Clock clock, BookingObserver observer) {
+            BookingProperties properties, Clock clock, BookingObserver observer,
+            ShippingMarketPolicy market) {
         this.store = store;
         this.carrier = carrier;
         this.json = json;
         this.properties = properties;
         this.clock = clock;
         this.observer = observer;
+        this.market = market;
     }
 
     public BookingResponse create(BookingOwner owner, String key, BookingCommand command) {
@@ -39,6 +43,12 @@ public class BookingService {
         String hash = json.hash(command);
         var existing = store.find(owner, key);
         if (existing.isPresent()) return replay(existing.get(), hash);
+
+        market.validate(command.parcel());
+        // Admission policy applies only to new operations; disabled carriers must still replay saved bookings.
+        if (!properties.enabledCarriers().contains(command.carrierId())) {
+            throw new BookingException(BookingException.Code.UNSUPPORTED_CARRIER);
+        }
 
         long now = clock.millis();
         String id = UUID.randomUUID().toString();

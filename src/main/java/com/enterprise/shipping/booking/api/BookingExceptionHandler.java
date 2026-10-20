@@ -3,7 +3,6 @@ package com.enterprise.shipping.booking.api;
 import com.enterprise.shipping.booking.domain.BookingException;
 import com.enterprise.shipping.shared.api.ApiResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.context.annotation.Profile;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
@@ -12,7 +11,6 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
-@Profile("demo")
 @ConditionalOnProperty(name = "shipping.booking.enabled", havingValue = "true")
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class BookingExceptionHandler {
@@ -28,6 +26,14 @@ public class BookingExceptionHandler {
             case BOOKING_NOT_FOUND -> {
                 status = HttpStatus.NOT_FOUND;
                 message = "Booking not found.";
+            }
+            case AUTHENTICATION_REQUIRED -> {
+                status = HttpStatus.UNAUTHORIZED;
+                message = "Authentication is required.";
+            }
+            case UNSUPPORTED_CARRIER -> {
+                status = HttpStatus.BAD_REQUEST;
+                message = "Carrier is not enabled for new bookings.";
             }
             case INVALID_IDEMPOTENCY_KEY -> {
                 status = HttpStatus.BAD_REQUEST;

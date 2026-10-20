@@ -29,6 +29,10 @@ public class CommonExceptionHandler {
         return ResponseEntity.badRequest().body(ApiResponse.failure(
                 "INVALID_REQUEST", "Missing required header: " + exception.getHeaderName()));
     }
+    @ExceptionHandler(com.enterprise.shipping.shared.domain.InvalidParcelException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidParcel() {
+        return ResponseEntity.badRequest().body(ApiResponse.failure("INVALID_REQUEST", "Parcel does not satisfy market rules."));
+    }
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiResponse<Void>> malformed() {
         return ResponseEntity.badRequest().body(ApiResponse.failure("INVALID_REQUEST", "Malformed JSON request."));

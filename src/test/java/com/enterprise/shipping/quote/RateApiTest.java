@@ -19,13 +19,15 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 import static org.assertj.core.api.Assertions.*;
 
+@org.springframework.test.context.ActiveProfiles("demo")
 @AutoConfigureObservability
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "management.server.port=0", "shipping.engine.global-timeout-ms=1500",
+        "management.server.port=0", "shipping.booking.enabled=false", "shipping.engine.global-timeout-ms=1500",
         "shipping.engine.carriers.fedex.timeout-ms=1000", "shipping.engine.carriers.ups.timeout-ms=1000"})
 class RateApiTest {
-    static final String VALID = "{\"originPostalCode\":\"L6K 3V3\",\"destinationPostalCode\":\"M5V 2T6\",\"weightKg\":1,\"lengthCm\":10,\"widthCm\":10,\"heightCm\":10}";
+    static final String VALID = "{\"originPostalCode\":\"L6K 3V3\",\"destinationPostalCode\":\"M5V 2T6\",\"weight\":1,\"weightUnit\":\"KG\",\"dimensionUnit\":\"CM\",\"length\":10,\"width\":10,\"height\":10}";
     static final AtomicReference<String> fedex = new AtomicReference<>(), ups = new AtomicReference<>();
+    static final AtomicReference<String> fedexRequest = new AtomicReference<>();
     static final AtomicInteger calls = new AtomicInteger(), delay = new AtomicInteger();
     static final ExecutorService workers = Executors.newCachedThreadPool();
     static final HttpServer server;
@@ -35,6 +37,8 @@ class RateApiTest {
             server.setExecutor(workers);
             for (String id : new String[]{"fedex", "ups"}) server.createContext("/" + id + "/rates", exchange -> {
                 calls.incrementAndGet();
+                String submitted = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                if (id.equals("fedex")) fedexRequest.set(submitted);
                 if (id.equals("fedex")) try { Thread.sleep(delay.get()); } catch (InterruptedException ex) { Thread.currentThread().interrupt(); }
                 String body = (id.equals("fedex") ? fedex : ups).get();
                 byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
@@ -70,9 +74,29 @@ class RateApiTest {
         assertThat(response.getBody()).contains("COMPLETE");
         assertThat(response.getBody().indexOf("16.20")).isLessThan(response.getBody().indexOf("18.50"));
     }
+    @Test void imperialDimensionsAreNormalizedBeforeCarrierDispatch() {
+        var response = post(VALID.replace("\"dimensionUnit\":\"CM\"", "\"dimensionUnit\":\"IN\""));
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(fedexRequest.get()).contains("\"lengthCm\":25.4", "\"widthCm\":25.4", "\"heightCm\":25.4")
+                .doesNotContain("dimensionUnit");
+    }
+
+    @Test void missingUnknownUnitsAndConvertedOversizeAreRejectedBeforeDispatch() {
+        for (String body : new String[] {
+                VALID.replace(",\"dimensionUnit\":\"CM\"", ""),
+                VALID.replace(",\"weightUnit\":\"KG\"", ""),
+                VALID.replace("\"CM\"", "\"YARD\""),
+                VALID.replace("\"KG\"", "\"OZ\""),
+                VALID.replace("\"length\":10", "\"length\":500").replace("\"CM\"", "\"IN\""),
+                VALID.replace("\"weight\":1", "\"weight\":3000").replace("\"KG\"", "\"LB\"")}) {
+            assertThat(post(body).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        }
+        assertThat(calls).hasValue(0);
+    }
+
     @Test void invalidMeasurementsAndMalformedJsonReturn400WithoutCarrierCalls() {
-        for (String body : new String[]{VALID.replace("\"weightKg\":1", "\"weightKg\":0"),
-                VALID.replace("\"lengthCm\":10", "\"lengthCm\":-1"), VALID.replace("\"heightCm\":10", "\"heightCm\":null"), "{"}) {
+        for (String body : new String[]{VALID.replace("\"weight\":1", "\"weight\":0"),
+                VALID.replace("\"length\":10", "\"length\":-1"), VALID.replace("\"height\":10", "\"height\":null"), "{"}) {
             assertThat(post(body).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         }
         assertThat(calls).hasValue(0);
@@ -115,7 +139,7 @@ class RateApiTest {
         assertThat(metrics.find("reactor.netty.connection.provider.active.connections").gauges().stream().mapToDouble(g -> g.value()).sum()).isZero();
     }
     @Test void operationalEndpointsAndMocksHaveLocalDemoBoundary() {
-        assertThat(client.getForEntity("http://127.0.0.1:" + port + "/api/mock/fedex/rates", String.class).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(client.getForEntity("http://127.0.0.1:" + port + "/api/mock/fedex/rates", String.class).getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
         var management = new TestRestTemplate();
         String url = "http://127.0.0.1:" + environment.getProperty("local.management.port") + "/actuator/";
         assertThat(management.getForEntity(url + "metrics", String.class).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);

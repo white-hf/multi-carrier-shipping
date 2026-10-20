@@ -9,18 +9,19 @@ com.enterprise.shipping
 │   ├── application/
 │   ├── domain/
 │   ├── port/
-│   ├── infrastructure/{carrier,monitoring}/
+│   ├── infrastructure/monitoring/
 │   └── config/
 ├── booking/
 │   ├── api/
 │   ├── application/
 │   ├── domain/
 │   ├── port/
-│   ├── infrastructure/{carrier,persistence,monitoring}/
+│   ├── infrastructure/{persistence,monitoring,security}/
 │   └── config/
 ├── shared/
 │   ├── api/
 │   ├── domain/
+│   ├── config/
 │   └── infrastructure/{http,monitoring}/
 └── demo/{quote,booking}/
 ```
@@ -36,7 +37,8 @@ Neither feature imports the other. Shared code imports neither feature. Quote in
 | Component | Reused responsibility |
 | --- | --- |
 | `shared.api.ParcelRequest` | Validated parcel fields; quote input remains flat, booking input keeps its nested `parcel` |
-| `shared.domain.ShipmentParcel` | Immutable normalized postal codes, dimensions, and weight |
+| `shared.domain.ShipmentParcel` | Immutable normalized postal codes/countries and kg/cm measurements |
+| `DimensionUnit`, `WeightUnit` | Exact decimal conversion from CM/IN and KG/LB before hashing and carrier dispatch |
 | `shared.api.ApiResponse`, `CommonExceptionHandler` | Response envelope and generic safe HTTP errors |
 | `CarrierHttpClientFactory` | Bounded pool construction, deadlines, response-size limits, warmup |
 | Carrier monitoring annotation/aspect | Transport timings with failure-isolated recording |
@@ -51,8 +53,8 @@ The HTTP factory creates independent resources. FedEx quotes, UPS quotes, and bo
 
 `ShipmentBooking` owns receipt validation and lifecycle transitions. Application services invoke its behavior instead of assigning statuses or constructing arbitrary outcomes. `BookingRecord` is a storage-port snapshot, mapping persisted state back to the aggregate while keeping lease/version metadata outside the domain. [Domain model and class diagram](booking-sqlite.md#domain-model).
 
-## Compatibility
+## Runtime selection and compatibility
 
-Endpoint URLs, request/response JSON field names, response envelopes, database schemas, and configuration property names are preserved. Extracting `ShipmentParcel` preserves the exact previous booking normalization and canonical JSON; a fixture captured from the old compiled implementation checks its fingerprint and persisted-claim replay. Quote parcel values are normalized before carrier dispatch.
+Business controllers, services, and handlers are feature-gated, independently of the demo profile. Simulated protocol adapters, connection wiring, fault modes, carrier database, and fixed owner are under `demo`. Core code imports no demo package. [Runtime boundaries](runtime-boundaries.md).
 
-The demo scenario remains part of the booking command to preserve existing persisted fingerprints; removing it from stored intent would require an explicit compatibility strategy. Simulated endpoints and carrier storage are grouped under `demo` and remain profile-gated.
+Request intent contains only business fields. Optional country codes resolve from the configured default before hashing. Only the current development format is supported; no compatibility layer or automatic data migration is provided. Use fresh local demo database files after intent model changes. Incoming simulator fields are rejected rather than ignored. See [booking runbook](../runbooks/booking-demo.md).

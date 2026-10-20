@@ -1,5 +1,6 @@
 package com.enterprise.shipping.quote.config;
 
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -8,10 +9,11 @@ import org.springframework.validation.annotation.Validated;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Validated startup settings; application.yml supplies the demo's per-carrier limits. */
+/** Validated per-carrier runtime settings supplied by the active deployment configuration. */
 @Configuration
 @ConfigurationProperties(prefix = "shipping.engine")
 @Validated
+@ConditionalOnProperty(name = "shipping.quote.enabled", havingValue = "true")
 public class QuoteProperties {
     @Min(1) @Max(10000)
     private long globalTimeoutMs = 600;

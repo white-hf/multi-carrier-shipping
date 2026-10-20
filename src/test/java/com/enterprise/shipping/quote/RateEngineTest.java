@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.*;
 
 class RateEngineTest {
     static final QuoteCommand REQUEST = new QuoteCommand(new ShipmentParcel("L6K 3V3", "M5V 2T6", BigDecimal.ONE,
-            BigDecimal.TEN, BigDecimal.TEN, BigDecimal.TEN));
+            BigDecimal.TEN, BigDecimal.TEN, BigDecimal.TEN, "CA", "CA"));
     interface QuoteCall { List<CarrierQuote> call(long timeout) throws Exception; }
     static CarrierRatePort adapter(String id, long timeout, QuoteCall call) {
         return new CarrierRatePort() {
@@ -46,7 +46,7 @@ class RateEngineTest {
     static HighFanOutAggregationEngine engine(List<CarrierRatePort> adapters) {
         return new HighFanOutAggregationEngine(adapters, CircuitBreakerRegistry.ofDefaults(),
                 BulkheadRegistry.ofDefaults(), new MicrometerQuoteObserver(new SimpleMeterRegistry()),
-                properties(adapters.stream().map(CarrierRatePort::getCarrierId).toArray(String[]::new)));
+                properties(adapters.stream().map(CarrierRatePort::getCarrierId).toArray(String[]::new)), com.enterprise.shipping.support.TestMarket.canadian());
     }
     @Test void brokenMetricsCannotFailComparisonOrWorkerCreation() {
         var registry = org.mockito.Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
@@ -54,11 +54,25 @@ class RateEngineTest {
         var observer = new MicrometerQuoteObserver(registry);
         var engine = new HighFanOutAggregationEngine(
                 List.of(adapter("good", 1000, t -> List.of(quote("good", "10")))),
-                CircuitBreakerRegistry.ofDefaults(), BulkheadRegistry.ofDefaults(), observer, properties("good"));
+                CircuitBreakerRegistry.ofDefaults(), BulkheadRegistry.ofDefaults(), observer, properties("good"), com.enterprise.shipping.support.TestMarket.canadian());
         try {
             var result = engine.executeFanOutRates(REQUEST, 1000);
             assertThat(result.status()).isEqualTo(ComparisonStatus.COMPLETE);
             assertThat(result.successfulQuotes()).hasSize(1);
+        } finally { engine.close(); }
+    }
+
+    @Test void comparisonCurrencyComesFromMarketPolicy() {
+        var market = new com.enterprise.shipping.shared.domain.ShippingMarketPolicy("CA", "USD",
+                java.util.Map.of("CA", "[A-Z]\\d[A-Z]\\d[A-Z]\\d"));
+        var engine = new HighFanOutAggregationEngine(List.of(adapter("usd", 1000,
+                t -> List.of(new CarrierQuote("usd", "USD carrier", "Ground", BigDecimal.ONE, "USD", 1)))),
+                CircuitBreakerRegistry.ofDefaults(), BulkheadRegistry.ofDefaults(),
+                new MicrometerQuoteObserver(new SimpleMeterRegistry()), properties("usd"), market);
+        try {
+            var result = engine.executeFanOutRates(REQUEST, 1000);
+            assertThat(result.status()).isEqualTo(ComparisonStatus.COMPLETE);
+            assertThat(result.successfulQuotes()).extracting(CarrierQuote::currency).containsExactly("USD");
         } finally { engine.close(); }
     }
 
@@ -114,7 +128,7 @@ class RateEngineTest {
         var breakers = CircuitBreakerRegistry.ofDefaults();
         breakers.circuitBreaker("bad").transitionToOpenState();
         var engine = new HighFanOutAggregationEngine(List.of(adapter("bad", 1000, t -> { called.set(true); return List.of(); })),
-                breakers, BulkheadRegistry.ofDefaults(), new MicrometerQuoteObserver(new SimpleMeterRegistry()), properties("bad"));
+                breakers, BulkheadRegistry.ofDefaults(), new MicrometerQuoteObserver(new SimpleMeterRegistry()), properties("bad"), com.enterprise.shipping.support.TestMarket.canadian());
         try {
             var response = engine.executeFanOutRates(REQUEST, 1000);
             assertThat(response.status()).isEqualTo(ComparisonStatus.FAILED);
