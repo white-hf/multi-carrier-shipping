@@ -116,11 +116,21 @@ class BookingApiTest {
         assertThat(data(unavailable).get("status").asText()).isEqualTo("PENDING_INQUIRY");
     }
 
-    @Test void invalidRequestsDoNotCreateClaims() {
-        assertThat(post(null, request("NORMAL")).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-        assertThat(post("contains space", request("NORMAL")).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    @Test void invalidRequestsDoNotCreateClaims() throws Exception {
+        var missing = post(null, request("NORMAL"));
+        assertThat(missing.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        var error = mapper.readTree(missing.getBody());
+        assertThat(error.get("errorCode").asText()).isEqualTo("INVALID_REQUEST");
+        assertThat(error.get("message").asText()).isEqualTo("Missing required header: Idempotency-Key");
+
+        for (String key : new String[] {"", "contains space"}) {
+            var invalid = post(key, request("NORMAL"));
+            assertThat(invalid.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+            assertThat(mapper.readTree(invalid.getBody()).get("errorCode").asText()).isEqualTo("INVALID_IDEMPOTENCY_KEY");
+        }
         assertThat(post("bad-parcel", request("NORMAL").replace("\"weightKg\":1", "\"weightKg\":0")).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(new JdbcTemplate(database).queryForObject("SELECT COUNT(*) FROM shipment_bookings", Integer.class)).isZero();
+        assertThat(new JdbcTemplate(remoteDatabase).queryForObject("SELECT COUNT(*) FROM carrier_bookings", Integer.class)).isZero();
     }
 
     @Test void cannotCallCarrierFromInsideAnOuterDatabaseTransaction() {

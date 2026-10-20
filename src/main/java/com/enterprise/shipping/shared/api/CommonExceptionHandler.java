@@ -1,12 +1,12 @@
 package com.enterprise.shipping.shared.api;
 
-import com.enterprise.shipping.shared.api.ApiResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -22,6 +22,12 @@ public class CommonExceptionHandler {
         String fields = ex.getBindingResult().getFieldErrors().stream().map(e -> e.getField()).distinct().sorted()
                 .collect(java.util.stream.Collectors.joining(", "));
         return ResponseEntity.badRequest().body(ApiResponse.failure("INVALID_REQUEST", "Invalid fields: " + fields));
+    }
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    public ResponseEntity<ApiResponse<Void>> missingHeader(MissingRequestHeaderException exception) {
+        // The header name comes from the controller contract, not a submitted header value.
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                "INVALID_REQUEST", "Missing required header: " + exception.getHeaderName()));
     }
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiResponse<Void>> malformed() {

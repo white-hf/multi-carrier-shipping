@@ -49,7 +49,9 @@ Create the timeout-after-accept operation, stop the app after its 202 response, 
 | `REJECTED` | 422, terminal FAILED; repeated request replays it |
 | `TIMEOUT_AFTER_ACCEPT` | 202, then confirmed by inquiry |
 | `UNAVAILABLE` | 202, inquiry backoff; eventually MANUAL_REVIEW, never automatic resubmission |
-| Missing/invalid key or parcel | 400; no claim created |
+| Missing `Idempotency-Key` header | 400 / INVALID_REQUEST; rejected during HTTP binding |
+| Blank/malformed key | 400 / INVALID_IDEMPOTENCY_KEY; no claim created |
+| Invalid parcel | 400 / INVALID_REQUEST; no claim created |
 | Reused key with changed intent | 409; existing operation unchanged |
 | SQLite unavailable/busy beyond timeout | 503; retry with the same key, since a carrier booking may already exist |
 

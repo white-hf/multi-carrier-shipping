@@ -24,7 +24,7 @@ public class BookingController {
 
     @PostMapping
     public ResponseEntity<ApiResponse<BookingResponse>> create(
-            @RequestHeader(value = "Idempotency-Key", required = false) String key,
+            @RequestHeader(value = "Idempotency-Key", required = true) String key,
             @Valid @RequestBody CreateBookingRequest request) {
         BookingResponse response = service.create(owner, key, request.toCommand());
         HttpStatus status;
