@@ -123,7 +123,7 @@ curl -sS http://127.0.0.1:8080/api/shipping/quotes \
   -d '{"originPostalCode":"L6K 3V3","destinationPostalCode":"M5V 2T6","weight":1,"weightUnit":"KG","dimensionUnit":"CM","length":10,"width":10,"height":10}'
 ```
 
-**Verified results:** all **88 tests pass**. Packaged demo checks produced:
+**Verified results:** all **90 tests pass**. Packaged demo checks produced:
 
 | Scenario | HTTP / Status | Result |
 | --- | --- | --- |

@@ -8,7 +8,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
+import com.enterprise.shipping.shared.identity.TimeOrderedIds;
 import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,7 +32,7 @@ public final class JdbcReconciliationTaskStore implements ReconciliationTaskStor
                     carrier_context_reference,customer_reference,state,available_at,attempts,version,created_at,updated_at)
                 VALUES (?,?,?,?,?,?,'WAITING',?,0,0,?,?)
                 ON CONFLICT(booking_locator,booking_id) DO NOTHING
-                """, UUID.randomUUID().toString(), ref.bookingId(), ref.bookingLocator(), ref.carrierId(),
+                """, TimeOrderedIds.next(), ref.bookingId(), ref.bookingLocator(), ref.carrierId(),
                 ref.carrierContextReference(), ref.customerReference(), now, now, now)) == 1;
     }
     @Override public List<ReconciliationTask> findDue(long now, int limit) {

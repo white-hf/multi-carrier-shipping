@@ -90,6 +90,7 @@ class BookingApiTest {
         assertThat(replay.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(mapper.readTree(replay.getBody())).isEqualTo(mapper.readTree(first.getBody()));
         assertThat(first.getHeaders().getLocation()).isNotNull();
+        assertThat(java.util.UUID.fromString(data(first).get("bookingId").asText()).version()).isEqualTo(7);
         assertThat(carrier.submissionCount(data(first).get("customerReference").asText())).isEqualTo(1);
         var label = client.getForEntity("http://127.0.0.1:" + PORT + data(first).get("labelUrl").asText(), String.class);
         assertThat(label.getStatusCode()).isEqualTo(HttpStatus.OK);

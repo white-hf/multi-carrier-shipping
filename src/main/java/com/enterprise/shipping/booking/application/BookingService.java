@@ -5,7 +5,7 @@ import com.enterprise.shipping.booking.config.BookingProperties;
 import com.enterprise.shipping.booking.domain.*;
 import com.enterprise.shipping.booking.port.*;
 import java.time.Clock;
-import java.util.UUID;
+import com.enterprise.shipping.shared.identity.TimeOrderedIds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.transaction.annotation.Propagation;
@@ -51,7 +51,7 @@ public class BookingService {
         }
 
         long now = clock.millis();
-        String id = UUID.randomUUID().toString();
+        String id = TimeOrderedIds.next();
         // Persist the exact carrier/reference/intent before any network operation.
         ShipmentBooking booking = ShipmentBooking.pending(new BookingId(id), command.carrierId(), "booking-" + id);
         BookingRecord candidate = BookingRecord.claim(booking, owner, key, hash, command, properties.bookingLocator(),

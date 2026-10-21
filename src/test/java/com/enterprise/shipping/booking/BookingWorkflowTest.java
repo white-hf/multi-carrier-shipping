@@ -357,6 +357,7 @@ class BookingWorkflowTest {
         discovery(tasks).discoverBatch();
         var due = tasks.findDue(clock.millis(), 10);
         assertThat(due).hasSize(1);
+        assertThat(UUID.fromString(due.get(0).taskId()).version()).isEqualTo(7);
         assertThat(due.get(0).reference().carrierContextReference()).isEqualTo("test-account");
         assertThat(due.get(0).reference().customerReference()).startsWith("booking-");
     }

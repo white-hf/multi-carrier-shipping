@@ -84,7 +84,7 @@ All fields of a terminal business outcome are updated together. Responses are re
 
 ## SQLite choices
 
-WAL supports concurrent readers with one writer; `synchronous=FULL` favors durable claims. Hikari supplies a small bounded connection pool; the busy timeout bounds write contention. Database locks and unrelated constraint errors produce a retryable storage error, not a false duplicate-key replay. Keys use binary comparison. UUID text IDs keep the demo simple; a production ID/sharding strategy is outside scope.
+WAL supports concurrent readers with one writer; `synchronous=FULL` favors durable claims. Hikari supplies a small bounded connection pool; the busy timeout bounds write contention. Database locks and unrelated constraint errors produce a retryable storage error, not a false duplicate-key replay. Keys use binary comparison. Booking and recovery-task IDs use UUIDv7 through the shared `TimeOrderedIds` policy (`uuid-creator` 6.1.1, compatible with Java 17). The canonical lowercase UUID text keeps time-leading lexical order and improves insertion locality over random UUIDv4 keys. SQLite still uses a separate primary-key index on these rowid tables; UUIDv7 does not eliminate page splits or reduce the 36-character storage size. Shard routing remains a separate design decision.
 
 The two databases must live on local persistent storage; do not share WAL files across network-mounted replicas. Initial `schema-v1.sql` scripts initialize fresh demo databases, not a production migration system. Keep these files when restarting to demonstrate recovery. Their contents and WAL/SHM files are excluded from Git.
 

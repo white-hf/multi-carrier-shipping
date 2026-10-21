@@ -32,7 +32,7 @@ The booking row keeps business identity, intent, receipt, status, version and a 
 
 The task holds `carrier_id`, `carrier_context_reference`, and `customer_reference`, in addition to booking ID/locator. These identify the original carrier/account/attempt without joining the booking table. The context reference is a server-owned credential alias, never a credential. The simulator has one account; production account selection and credential resolution require a real adapter.
 
-Task scheduling uses `available_at`: the next eligible time when waiting, or lease expiry while running/delivering. The task also owns attempt count, lease token, version, safe error code and structured result fields. No request/response JSON or foreign key to the booking table is required.
+Task scheduling uses `available_at`: the next eligible time when waiting, or lease expiry while running/delivering. Task primary keys use UUIDv7 for insertion locality; lease tokens remain random UUIDv4 because they fence ownership rather than order inserts. The task also owns attempt count, lease token, version, safe error code and structured result fields. No request/response JSON or foreign key to the booking table is required.
 
 ## Recovery across failures
 
