@@ -11,8 +11,11 @@ shipping:
     enabled: true
     enabled-carriers: [fedex, ups]
     database-path: ${BOOKING_DB_PATH:./data/bookings.db}
-    reconciliation-enabled: true
-    reconciliation-interval-ms: 1000
+    carrier-context-reference: demo-account
+  reconciliation:
+    enabled: true
+    discovery-interval-ms: 30000
+    execution-interval-ms: 1000
 
   engine:
     global-timeout-ms: 600

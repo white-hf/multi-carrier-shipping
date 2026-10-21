@@ -1,6 +1,6 @@
 package com.enterprise.shipping.demo.booking;
 
-import com.enterprise.shipping.booking.application.BookingJson;
+import com.enterprise.shipping.booking.application.BookingRequestHasher;
 import com.enterprise.shipping.booking.config.BookingProperties;
 import com.enterprise.shipping.booking.domain.BookingOwner;
 import com.enterprise.shipping.booking.infrastructure.persistence.SqliteDataSources;
@@ -36,14 +36,14 @@ public class DemoCarrierConfiguration {
     }
 
     @Bean SqliteDemoCarrier sqliteDemoCarrier(@Qualifier("demoCarrierDataSource") DataSource source,
-            BookingJson json, ObjectMapper mapper) {
-        return new SqliteDemoCarrier(new JdbcTemplate(source), json, mapper);
+            BookingRequestHasher hasher, ObjectMapper mapper) {
+        return new SqliteDemoCarrier(new JdbcTemplate(source), hasher, mapper);
     }
 
     @Bean(destroyMethod = "dispose")
     ConnectionProvider bookingCarrierPool() { return CarrierHttpClientFactory.pool("demo-booking", 8); }
 
-    @Bean CarrierBookingPort demoBookingCarrier(@Qualifier("bookingCarrierPool") ConnectionProvider pool,
+    @Bean DemoHttpBookingAdapter demoBookingCarrier(@Qualifier("bookingCarrierPool") ConnectionProvider pool,
             DemoBookingProperties demo, BookingProperties booking) {
         var client = CarrierHttpClientFactory.client(pool, demo.baseUrl(), booking.carrierTimeoutMs(),
                 CarrierHttpClientFactory.TransportRetry.DISABLED);

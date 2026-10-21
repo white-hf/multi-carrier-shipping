@@ -99,12 +99,12 @@ classDiagram
 
 ## 5. Implementation Focus: Shipment Booking
 
-- **Durable idempotency:** SQLite unique owner/key claims and normalized request fingerprints prevent duplicate initial submissions and reject changed intent.
+- **Durable idempotency:** SQLite unique owner/key claims, structured business fields, and normalized request fingerprints prevent duplicate initial submissions and reject changed intent.
 - **Short atomic writes:** Spring JDBC commits the claim before calling the carrier; no database transaction spans the HTTP request.
-- **Recovery without blind retries:** stable carrier references, inquiry-only reconciliation, and version/token-fenced updates recover uncertain outcomes across restarts.
+- **Recovery without blind retries:** stable carrier references, inquiry-only reconciliation, and business-version guards and independently leased recovery tasks recover uncertain outcomes across restarts. Successful bookings create no recovery task.
 - **Domain behavior:** `ShipmentBooking` owns receipt validation and lifecycle transitions; application services coordinate carrier calls and persistence. Metrics use a failure-isolated observer port.
 
-[Core and demo boundaries](docs/design/runtime-boundaries.md) · [Shared code organization](docs/design/code-organization.md) · [Booking design](docs/design/booking-sqlite.md) · [Run the booking demo](docs/runbooks/booking-demo.md)
+[Core and demo boundaries](docs/design/runtime-boundaries.md) · [Shared code organization](docs/design/code-organization.md) · [Booking design](docs/design/booking-sqlite.md) · [Recovery module](docs/design/reconciliation.md) · [Run the booking demo](docs/runbooks/booking-demo.md)
 
 ## 6. Run & Results
 
@@ -123,7 +123,7 @@ curl -sS http://127.0.0.1:8080/api/shipping/quotes \
   -d '{"originPostalCode":"L6K 3V3","destinationPostalCode":"M5V 2T6","weight":1,"weightUnit":"KG","dimensionUnit":"CM","length":10,"width":10,"height":10}'
 ```
 
-**Verified results:** all **76 tests pass**. Packaged demo checks produced:
+**Verified results:** all **88 tests pass**. Packaged demo checks produced:
 
 | Scenario | HTTP / Status | Result |
 | --- | --- | --- |
@@ -140,7 +140,7 @@ To reproduce the timeout scenario, stop the application and restart it with:
 
 Metrics: `http://127.0.0.1:9091/actuator/prometheus`.
 
-[Booking API and restart recovery](docs/runbooks/booking-demo.md) · [Rate demo scenarios](docs/runbooks/demo.md) · [Recorded responses](docs/summaries/demo-smoke-results.json) · [Boundary validation](docs/summaries/runtime-boundaries.md) · [Domain validation](docs/summaries/booking-domain.md) · [Refactor validation](docs/summaries/structure-refactor.md) · [Booking validation](docs/summaries/booking-sqlite.md) · [Rate validation](docs/summaries/java17.md)
+[Booking API and restart recovery](docs/runbooks/booking-demo.md) · [Rate demo scenarios](docs/runbooks/demo.md) · [Recorded responses](docs/summaries/demo-smoke-results.json) · [Recovery validation](docs/summaries/reconciliation-separation.md) · [Storage validation](docs/summaries/structured-booking-storage.md) · [Boundary validation](docs/summaries/runtime-boundaries.md) · [Domain validation](docs/summaries/booking-domain.md) · [Refactor validation](docs/summaries/structure-refactor.md) · [Booking validation](docs/summaries/booking-sqlite.md) · [Rate validation](docs/summaries/java17.md)
 
 ---
 

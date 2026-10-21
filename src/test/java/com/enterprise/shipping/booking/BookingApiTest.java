@@ -28,7 +28,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import static org.assertj.core.api.Assertions.*;
 
 @SpringBootTest(classes = Application.class, webEnvironment = SpringBootTest.WebEnvironment.DEFINED_PORT,
-        properties = {"management.server.port=0", "shipping.booking.reconciliation-enabled=false"})
+        properties = {"management.server.port=0", "shipping.reconciliation.scheduling-enabled=false"})
 @ActiveProfiles("demo")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class BookingApiTest {
@@ -51,7 +51,8 @@ class BookingApiTest {
     }
     @Autowired TestRestTemplate client;
     @Autowired ObjectMapper mapper;
-    @Autowired BookingReconciliationWorker worker;
+    @Autowired com.enterprise.shipping.reconciliation.application.ReconciliationWorker worker;
+    @Autowired com.enterprise.shipping.reconciliation.application.ReconciliationDiscovery discovery;
     @Autowired BookingService service;
     @Autowired com.enterprise.shipping.booking.port.BookingOwnerProvider owners;
     @Autowired com.enterprise.shipping.demo.booking.DemoBookingBehavior behavior;
@@ -64,6 +65,7 @@ class BookingApiTest {
     @BeforeEach void reset() {
         owner = owners.ownerFor(null);
         behavior.setMode(com.enterprise.shipping.demo.booking.DemoBookingProperties.Mode.NORMAL);
+        new JdbcTemplate(database).update("DELETE FROM booking_reconciliation_tasks");
         new JdbcTemplate(database).update("DELETE FROM shipment_bookings");
         new JdbcTemplate(remoteDatabase).update("DELETE FROM carrier_bookings");
     }
@@ -108,11 +110,9 @@ class BookingApiTest {
         assertThat(replay.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(mapper.readTree(replay.getBody())).isEqualTo(mapper.readTree(first.getBody()));
         assertThat(carrier.submissionCount(data(first).get("customerReference").asText())).isEqualTo(1);
-        String saved = new JdbcTemplate(database).queryForObject("SELECT request_json FROM shipment_bookings", String.class);
-        var parcel = mapper.readTree(saved).path("parcel");
-        assertThat(parcel.path("lengthCm").decimalValue()).isEqualByComparingTo("25.4");
-        assertThat(parcel.path("weightKg").decimalValue()).isEqualByComparingTo("0.90718474");
-        assertThat(parcel.has("dimensionUnit")).isFalse();
+        var saved = new JdbcTemplate(database).queryForMap("SELECT length_cm, weight_kg FROM shipment_bookings");
+        assertThat(new java.math.BigDecimal((String) saved.get("length_cm"))).isEqualByComparingTo("25.4");
+        assertThat(new java.math.BigDecimal((String) saved.get("weight_kg"))).isEqualByComparingTo("0.90718474");
     }
 
     @Test void configuredCarrierNeedsNoCodeOrRegexChange() throws Exception {
@@ -143,8 +143,8 @@ class BookingApiTest {
         assertThat(initial.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
         assertThat(data(initial).get("status").asText()).isEqualTo("PENDING_INQUIRY");
         assertThat(post("http-timeout", request()).getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
-        new JdbcTemplate(database).update("UPDATE shipment_bookings SET next_inquiry_at=0");
-        worker.reconcileBatch();
+        discovery.discoverBatch();
+        worker.runBatch();
         var result = client.getForEntity("http://127.0.0.1:" + PORT + initial.getHeaders().getLocation(), String.class);
         assertThat(data(result).get("status").asText()).isEqualTo("CONFIRMED");
         assertThat(carrier.submissionCount(data(initial).get("customerReference").asText())).isEqualTo(1);

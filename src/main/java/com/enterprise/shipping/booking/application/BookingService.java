@@ -18,18 +18,18 @@ public class BookingService {
     private static final String IDEMPOTENCY_KEY_PATTERN = "[A-Za-z0-9._:-]{1,64}";
     private final BookingStore store;
     private final CarrierBookingPort carrier;
-    private final BookingJson json;
+    private final BookingRequestHasher hasher;
     private final BookingProperties properties;
     private final Clock clock;
     private final BookingObserver observer;
     private final ShippingMarketPolicy market;
 
-    public BookingService(BookingStore store, CarrierBookingPort carrier, BookingJson json,
+    public BookingService(BookingStore store, CarrierBookingPort carrier, BookingRequestHasher hasher,
             BookingProperties properties, Clock clock, BookingObserver observer,
             ShippingMarketPolicy market) {
         this.store = store;
         this.carrier = carrier;
-        this.json = json;
+        this.hasher = hasher;
         this.properties = properties;
         this.clock = clock;
         this.observer = observer;
@@ -40,7 +40,7 @@ public class BookingService {
         if (key == null || !key.matches(IDEMPOTENCY_KEY_PATTERN)) {
             throw new BookingException(BookingException.Code.INVALID_IDEMPOTENCY_KEY);
         }
-        String hash = json.hash(command);
+        String hash = hasher.hash(command);
         var existing = store.find(owner, key);
         if (existing.isPresent()) return replay(existing.get(), hash);
 
@@ -54,8 +54,8 @@ public class BookingService {
         String id = UUID.randomUUID().toString();
         // Persist the exact carrier/reference/intent before any network operation.
         ShipmentBooking booking = ShipmentBooking.pending(new BookingId(id), command.carrierId(), "booking-" + id);
-        BookingRecord candidate = BookingRecord.claim(booking, owner, key, hash, json.write(command), now,
-                UUID.randomUUID().toString(), now + properties.leaseMs());
+        BookingRecord candidate = BookingRecord.claim(booking, owner, key, hash, command, properties.bookingLocator(),
+                properties.carrierContextReference(), now, now + properties.submissionDeadlineMs());
         if (!store.insertClaim(candidate)) {
             // A conflict is a replay path, regardless of whether the winner is pending or in inquiry.
             BookingRecord winner = store.find(owner, key)
@@ -67,7 +67,7 @@ public class BookingService {
 
         long start = System.nanoTime();
         try {
-            booking.confirm(carrier.submit(booking.customerReference(), command));
+            booking.confirm(carrier.submit(candidate.carrierContextReference(), booking.customerReference(), command));
         } catch (CarrierBookingPort.Rejected rejected) {
             booking.reject(RejectionReason.CARRIER_REJECTED);
             return finish(candidate, booking, start);
@@ -76,7 +76,7 @@ public class BookingService {
             log.warn("Booking outcome uncertain bookingId={} carrier={} type={}", id, command.carrierId(),
                     uncertain.getClass().getSimpleName());
             booking.markOutcomeUnknown();
-            store.defer(candidate, booking, clock.millis() + properties.inquiryBaseDelayMs(), clock.millis());
+            store.saveOutcome(candidate, booking, clock.millis());
             observer.outcome("submit", booking.status(), System.nanoTime() - start);
             return get(owner, id);
         }
@@ -103,7 +103,7 @@ public class BookingService {
 
     private BookingResponse finish(BookingRecord owned, ShipmentBooking booking, long start) {
         BookingResponse response = BookingResponse.from(booking);
-        boolean updated = store.complete(owned, booking, json.write(response), clock.millis());
+        boolean updated = store.saveOutcome(owned, booking, clock.millis());
         if (!updated) {
             log.info("Booking completion fenced bookingId={}", owned.bookingId());
             return get(owned.owner(), owned.bookingId());
@@ -114,11 +114,6 @@ public class BookingService {
     }
 
     private BookingResponse response(BookingRecord record) {
-        ShipmentBooking booking = record.restoreBooking();
-        if (booking.status().isTerminal()) {
-            if (record.responseJson() == null) throw new IllegalStateException("Terminal response snapshot missing");
-            return json.readResponse(record.responseJson());
-        }
-        return BookingResponse.from(booking);
+        return BookingResponse.from(record.restoreBooking());
     }
 }

@@ -11,10 +11,13 @@ Current feature-based Java 17 demo. This describes repository code, not ShipTime
 | Quote application metrics | [MicrometerQuoteObserver](../../src/main/java/com/enterprise/shipping/quote/infrastructure/monitoring/MicrometerQuoteObserver.java) |
 | Booking lifecycle rules | [ShipmentBooking](../../src/main/java/com/enterprise/shipping/booking/domain/ShipmentBooking.java) |
 | Booking orchestration | [BookingService](../../src/main/java/com/enterprise/shipping/booking/application/BookingService.java) |
-| Inquiry-only recovery | [BookingReconciliationWorker](../../src/main/java/com/enterprise/shipping/booking/application/BookingReconciliationWorker.java) |
+| Inquiry-only recovery | [ReconciliationWorker](../../src/main/java/com/enterprise/shipping/reconciliation/application/ReconciliationWorker.java) |
+| Recovery business boundary | [BookingRecoveryService](../../src/main/java/com/enterprise/shipping/booking/application/BookingRecoveryService.java) |
+| Recovery task storage | [JdbcReconciliationTaskStore](../../src/main/java/com/enterprise/shipping/reconciliation/infrastructure/persistence/JdbcReconciliationTaskStore.java) |
+| Intent fingerprints | [BookingRequestHasher](../../src/main/java/com/enterprise/shipping/booking/application/BookingRequestHasher.java) |
 | Atomic booking storage | [JdbcBookingStore](../../src/main/java/com/enterprise/shipping/booking/infrastructure/persistence/JdbcBookingStore.java) |
 | Shared parcel intent | [ShipmentParcel](../../src/main/java/com/enterprise/shipping/shared/domain/ShipmentParcel.java) |
 | HTTP construction / pool isolation | [CarrierHttpClientFactory](../../src/main/java/com/enterprise/shipping/shared/infrastructure/http/CarrierHttpClientFactory.java) |
 | Transport monitoring | [CarrierMonitoringAspect](../../src/main/java/com/enterprise/shipping/shared/infrastructure/monitoring/CarrierMonitoringAspect.java) |
 
-[Package boundaries](code-organization.md) · [Rate design](rate-comparison.md) · [Booking design](booking-sqlite.md) · [Latest validation](../summaries/runtime-boundaries.md)
+[Package boundaries](code-organization.md) · [Rate design](rate-comparison.md) · [Booking design](booking-sqlite.md) · [Latest validation](../summaries/reconciliation-separation.md)

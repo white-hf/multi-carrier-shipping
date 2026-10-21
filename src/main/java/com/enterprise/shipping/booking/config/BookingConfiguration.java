@@ -16,7 +16,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 
@@ -24,7 +23,6 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 @Configuration
 @ConditionalOnProperty(name = "shipping.booking.enabled", havingValue = "true")
 @EnableConfigurationProperties(BookingProperties.class)
-@EnableScheduling
 @EnableTransactionManagement
 public class BookingConfiguration {
 
@@ -44,26 +42,17 @@ public class BookingConfiguration {
         return new JdbcBookingStore(new JdbcTemplate(source));
     }
 
-    @Bean BookingJson bookingJson(ObjectMapper mapper) { return new BookingJson(mapper); }
-    @Bean Clock bookingClock() { return Clock.systemUTC(); }
+    @Bean BookingRequestHasher bookingRequestHasher(ObjectMapper mapper) { return new BookingRequestHasher(mapper); }
+    @Bean @Primary Clock bookingClock() { return Clock.systemUTC(); }
     @Bean BookingObserver bookingObserver(MeterRegistry registry) { return new MicrometerBookingObserver(registry); }
 
     @Bean
-    BookingService bookingService(BookingStore store, CarrierBookingPort carrier, BookingJson json,
+    BookingService bookingService(BookingStore store, CarrierBookingPort carrier, BookingRequestHasher hasher,
             BookingProperties properties, Clock clock, BookingObserver observer, ShippingMarketPolicy market) {
-        return new BookingService(store, carrier, json, properties, clock, observer, market);
+        return new BookingService(store, carrier, hasher, properties, clock, observer, market);
     }
 
-    @Bean
-    BookingReconciliationWorker bookingReconciliationWorker(BookingStore store, CarrierBookingPort carrier,
-            BookingJson json, BookingProperties properties, Clock clock, BookingObserver observer) {
-        return new BookingReconciliationWorker(store, carrier, json, properties, clock, observer);
+    @Bean BookingRecoveryService bookingRecoveryService(BookingStore store, Clock clock) {
+        return new BookingRecoveryService(store, clock);
     }
-
-    @Bean
-    @ConditionalOnProperty(name = "shipping.booking.reconciliation-enabled", havingValue = "true", matchIfMissing = true)
-    BookingReconciliationScheduler bookingReconciliationScheduler(BookingReconciliationWorker worker) {
-        return new BookingReconciliationScheduler(worker);
-    }
-
 }

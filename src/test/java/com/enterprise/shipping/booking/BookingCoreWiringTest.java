@@ -29,7 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest(classes = Application.class, properties = {
         "shipping.booking.enabled=true", "shipping.quote.enabled=false",
-        "shipping.booking.enabled-carriers[0]=test-carrier", "shipping.booking.reconciliation-enabled=false",
+        "shipping.booking.enabled-carriers[0]=test-carrier", "shipping.reconciliation.enabled=false", "shipping.booking.carrier-context-reference=test-account",
         "shipping.market.default-country=US", "shipping.market.comparison-currency=USD",
         "shipping.market.postal-code-patterns.US=[0-9]{5}"})
 @AutoConfigureMockMvc
@@ -106,7 +106,7 @@ class BookingCoreWiringTest {
     }
     static class TestCarrier implements CarrierBookingPort {
         final AtomicInteger calls = new AtomicInteger();
-        public CarrierReceipt submit(String reference, BookingCommand command) {
+        public CarrierReceipt submit(String context, String reference, BookingCommand command) {
             calls.incrementAndGet();
             return new CarrierReceipt(reference, reference + "-id", "tracking", "/test-label");
         }

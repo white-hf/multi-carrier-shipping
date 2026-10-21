@@ -13,13 +13,11 @@ import org.springframework.validation.annotation.Validated;
 public record BookingProperties(
         @DefaultValue("./data/bookings.db") @NotBlank String databasePath,
         @DefaultValue("500") @Min(50) @Max(5000) long carrierTimeoutMs,
-        @DefaultValue("15000") @Min(1000) @Max(300000) long leaseMs,
+        @DefaultValue("15000") @Min(1000) @Max(300000) long submissionDeadlineMs,
         @DefaultValue("1000") @Min(1) @Max(5000) int databaseBusyTimeoutMs,
         @DefaultValue("4") @Min(2) @Max(8) int databasePoolSize,
-        @DefaultValue("1000") @Min(10) @Max(60000) long inquiryBaseDelayMs,
-        @DefaultValue("30000") @Min(10) @Max(300000) long inquiryMaxDelayMs,
-        @DefaultValue("8") @Min(1) @Max(100) int inquiryMaxAttempts,
-        @DefaultValue("16") @Min(1) @Max(100) int inquiryBatchSize,
+        @DefaultValue("local") @NotBlank String bookingLocator,
+        @NotBlank String carrierContextReference,
         @NotEmpty Set<@NotBlank @Size(max = 32) String> enabledCarriers) {
     public BookingProperties {
         if (enabledCarriers == null || enabledCarriers.isEmpty()) {
@@ -28,11 +26,8 @@ public record BookingProperties(
         // Match BookingCommand normalization and prevent callers from mutating startup policy.
         enabledCarriers = enabledCarriers.stream()
                 .map(id -> id.strip().toLowerCase(Locale.ROOT)).collect(Collectors.toUnmodifiableSet());
-        if (leaseMs <= carrierTimeoutMs) {
-            throw new IllegalArgumentException("Booking lease must exceed carrier timeout");
-        }
-        if (inquiryMaxDelayMs < inquiryBaseDelayMs) {
-            throw new IllegalArgumentException("Maximum inquiry delay must not be below base delay");
+        if (submissionDeadlineMs <= carrierTimeoutMs) {
+            throw new IllegalArgumentException("Submission deadline must exceed carrier timeout");
         }
     }
 }
