@@ -1,40 +1,29 @@
-# Business research and scope
+# Demo scenario and engineering goals
 
-Reviewed October 18, 2026. This note distinguishes product evidence, customer reports, and engineering inference.
+An independent engineering exercise using simulated carrier APIs and synthetic scenarios. The shipping domain supplies concrete examples of common distributed-system failure modes; it does not describe a particular company's products or internal systems.
 
-## What the evidence establishes
+## Implemented workflows
 
-| Source | Evidence used | Implication for this case study |
+| Workflow | User need | Engineering focus |
 | --- | --- | --- |
-| [ShipTime homepage](https://shiptime.com/) | Shipment description, comparison, pickup/drop-off, labels; public prices are estimates affected by details and options | Preserve quote context and distinguish estimated from final charges |
-| [Shipping API](https://shiptime.com/shipping-api/) | Quotes, labels, and tracking across carriers, including envelopes, packages, and LTL | Separate carrier integration from application workflows |
-| [Bring Your Own Rates](https://shiptime.com/bring-your-own-courier-rates/) | Compare customer-negotiated courier pricing with platform pricing; use account rates at checkout | A carrier alone does not identify the pricing context |
-| [June 2026 ecommerce update](https://shiptime.com/shiptime-updates-features/revamped-ecommerce-shipping/) | Bulk operations, pickup preferences, international preparation, landed-cost visibility, document uploads, product data and autoboxing | Shipment preparation affects rate correctness; bulk workflows need item-level outcomes |
-| [LTL offering](https://shiptime.com/couriers/ltl-freight/) | Freight shipping is part of the offering | Avoid pretending a single parcel DTO covers every shipment type |
-| [Returns](https://shiptime.com/returns/) and [ShipAudit](https://shiptime.com/shipaudit/) | Reverse shipping and shipment audit are product capabilities | Lifecycle and financial history extend beyond purchasing a label |
-| [PAID Q1 2026 filing](https://www.sec.gov/Archives/edgar/data/1017655/000143774926017412/payd20260331_10q.htm) | SMB SaaS, quoting through tracking, direct and association channels | Understand ShipTime as a shipping workflow business, with partner distribution |
+| Compare rates | Obtain available shipping options within a predictable wait | Concurrent fan-out, global deadlines, partial results, circuit breakers and capacity isolation |
+| Create a shipment | Avoid duplicate side effects when requests are retried | Durable idempotency, explicit state transitions and inquiry-only reconciliation |
+| Observe outcomes | Understand latency, capacity and uncertain operations | Correlated operational logs, typed error outcomes and failure-isolated metrics |
 
-The filing describes other PAID businesses too. Their capabilities, including warehousing marketplace scale and wider shipping modes, must not automatically be attributed to ShipTime itself. Public pricing or a free installation does not establish the company's exact revenue split or margin model.
+## Design assumptions
 
-## Independent customer perspective
+- Carrier integrations are simulated. Names used by local adapter examples identify test scenarios; no live carrier contract is implemented.
+- Rate inputs use explicit measurement units and a configured comparison currency/market.
+- A submit timeout cannot establish whether the carrier created a shipment. Persist the attempt first and retain a stable lookup identity.
+- Idempotency applies to an owner's request key and normalized intent. Different keys represent different operations.
+- Numerical capacity examples are illustrative assumptions, not production measurements.
 
-The [Shopify App Store](https://apps.shopify.com/shiptime-discounted-shipping) includes an August 2025 merchant review describing heavy-item shipping, checkout choices, automatic tracking, and fulfillment updates. A June 2025 reviewer reported a canceled order blocking synchronization. These are individual reports, not evidence of current platform-wide behavior. They motivate questions about checkout usability and isolating problematic orders during synchronization.
+## Growth boundaries
 
-[Capterra review search results](https://www.capterra.com/p/198849/ShipTime/reviews/) also highlight comparison and ease of shipping. Full-page retrieval was unavailable, so these snippets are supplementary and are not used to establish technical facts. G2 was searched as additional product context; the primary evidence above is sufficient for the architecture discussion.
+Stateless quote workflows can run on additional replicas, subject to fleet-wide carrier capacity. Booking persistence is accessed through ports and carries an immutable logical locator, allowing future shard routing. Idempotency scope must remain co-located or be coordinated separately; UUID-based distribution alone is insufficient.
 
-## Refinements to the supplied analysis
+Reconciliation owns its task table and reaches booking state through a neutral contract. This supports later process extraction without direct cross-module database writes. The current application uses local SQLite files, not a distributed database or deployed service cluster.
 
-- Keep the adapter and concurrent aggregation ideas: they follow naturally from multi-carrier comparison.
-- Treat 8–12 simultaneous carriers, 1.5-second latency, and millions of events as hypothetical examples. Actual workloads and objectives are unknown.
-- Do not infer Redis, Kafka, RabbitMQ, carrier protocol versions, webhook availability, or nonblocking execution from product pages.
-- Ten order items do not necessarily mean ten parcels. Packaging must precede meaningful rating.
-- Cache static reference data only when its source and freshness rules permit it. Actual account quotes need much richer identity and expiry handling.
-- A booking timeout leaves an uncertain outcome. Check carrier references and reconcile before retrying or attempting a void. Compensation is carrier-dependent and may fail.
-- Preserve tracking event history. A simple increasing status rank cannot represent returns, exceptions, corrections, and multiple packages reliably.
-- Odoo integration, specific CSV capacities, and automatic generation of every customs document are not established by the sources reviewed here.
+## Evaluation
 
-## Scope and success
-
-This repository explains the platform at module level and uses existing rate aggregation code for a bounded implementation discussion. Booking, tracking, billing, bulk processing, and international preparation remain design context.
-
-A CTO should be able to follow business value → failure mode → design choice → code boundary. Later implementation claims must include reproducible evidence. Load, service objectives, pricing policies, and historical achievements remain unknown until confirmed.
+Demonstrate normal, partial-failure and uncertain-write behavior. Explain the correctness guarantees, their external dependencies, and the difference between implemented modules and proposed deployment extensions. Tests and code entry points provide evidence for each implemented claim.

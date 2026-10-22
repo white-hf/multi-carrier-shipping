@@ -1,6 +1,6 @@
 # Implementation map
 
-Current feature-based Java 17 demo. This describes repository code, not ShipTime internals.
+Code entry points for the independent Java 17 demo: rate comparison, shipment booking, reconciliation and observability.
 
 | Responsibility | Entry point |
 | --- | --- |

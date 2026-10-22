@@ -1,44 +1,46 @@
-# CTO walkthrough
+# Engineering discussion guide
 
 ## Opening — about 30 seconds
 
-“I prepared this case study to make my technical thinking easy to follow. I started with your public shipping workflow, identified the engineering challenges, and proposed an architecture. The implementation deep dive is rate comparison. I would like to walk through the design and discuss the tradeoffs with you.”
-
-Use this opening after the implementation is available. Until then, describe the repository as a design foundation.
+“This is an independent demo of designing distributed applications for failure. Rate comparison demonstrates bounded concurrent calls, deadlines, circuit breakers and isolation. Shipment creation demonstrates durable idempotency, state transitions and reconciliation when a carrier's response is lost. I kept the modules behind interfaces so we can discuss how to scale them or extract services.”
 
 ## Suggested five-minute path
 
-1. Business: a merchant needs comparable shipping options quickly.
-2. Challenges: carrier latency, price consistency, account-specific rates, and partial failures.
-3. Architecture: separate comparison logic from carrier-specific integrations; show the diagram.
-4. Code: show the request contract, orchestration, one adapter, and error handling after review.
-5. Evidence: run normal, partial-failure, and total-failure scenarios; explain one limitation.
+1. Read path: run a comparison with one slow carrier and explain partial results and the global deadline.
+2. Resource protection: show per-carrier workers, connection pools, bulkheads and circuit breakers.
+3. Write path: show the unique claim, request fingerprint and booking aggregate.
+4. Recovery: show timeout-after-accept, persisted task evidence and idempotent delivery after restart.
+5. Operations and growth: show logs/metrics, explain module boundaries, and identify what remains necessary for sharding and multi-host deployment.
 
 ## Short technical answers
 
-**Why call carriers concurrently?**
+**What does the deadline guarantee?**
 
-“Sequential calls accumulate waiting time. Concurrent calls share the request's time budget. I also limit outbound concurrency so slow carriers cannot exhaust the application.”
+“It bounds the orchestration's waiting and preserves available results. Transport timeouts and cooperative cancellation also matter; cancellation does not prove that a remote operation stopped.”
 
-**What if one carrier is slow?**
+**Why use a circuit breaker and a bulkhead?**
 
-“I return valid results within the deadline and report the missing carrier. I configure transport timeouts as well as the orchestration deadline. A future timeout alone may leave the network call running.”
+“A breaker controls calls to an unhealthy dependency. A bulkhead caps the resources it can consume. Separate connection pools prevent one carrier from using another's allocated connections.”
 
-**Why not retry every failure?**
+**What if shipment submission times out?**
 
-“Retries consume time and carrier capacity. I retry only transient, safe operations when the remaining budget allows it. Booking requires extra care because a timed-out request may already have created a shipment.”
+“I retain an unknown outcome and query the original carrier/account/reference. Recovery cannot submit a shipment. Finding no result is not permission to create another one.”
 
-**How do you know the cheapest rate is correct?**
+**Is this a distributed ACID transaction?**
 
-“I compare eligible services using the same currency and explicit charge inclusion. I use decimal money and distinguish an estimate from a final charge. Missing tax or surcharge information must remain visible.”
+“No. Database writes are locally atomic; the remote outcome is reconciled. The guarantee depends on the carrier's idempotency and lookup contract.”
 
-**Why not make every component a microservice?**
+**What if booking confirmation succeeds but recovery loses the acknowledgement?**
 
-“The module boundaries matter first. Separate deployments add operational cost. I would extract services when scaling, ownership, or release requirements justify that cost.”
+“The task has already saved its observation. It redelivers that observation, and the booking handler acknowledges the matching confirmed receipt without another business write.”
 
-**Is this how ShipTime is built?**
+**Can this run as a cluster today?**
 
-“I do not know your internal architecture. This is a proposed design based on your public product. I would first learn your existing constraints before recommending changes.”
+“The quote workflow is stateless, but limits and breakers are per instance. Multi-host booking needs a production database. Sharding also needs a routing strategy that preserves owner-scoped idempotency; the current locator is a boundary for that work, not a shard router.”
+
+**Why keep one process?**
+
+“Separate module and data ownership first. Extract a service when independent capacity, operational ownership or deployment requirements justify the transport and coordination costs.”
 
 ## Phrases to support discussion
 
@@ -46,8 +48,4 @@ Use this opening after the implementation is available. Until then, describe the
 - “Could you repeat the last part, please?”
 - “Are you asking about correctness, performance, or the failure path?”
 - “My assumption here is ____. If that changes, I would reconsider ____.”
-- “That behavior is proposed; it is not implemented in this demo yet.”
-
-## Historical project stories — pending candidate input
-
-Add two truthful examples: a logistics backend project and a production/database problem. For each, capture the context, personal responsibility, decision, tradeoff, result, and evidence. Include metrics only if the candidate can substantiate them. Link each story to the relevant design or code discussion; this demo alone does not establish historical experience.
+- “That is a design extension; it is not implemented in this demo.”

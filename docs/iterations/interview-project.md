@@ -6,7 +6,7 @@ Provide a concise English case study linking shipping business capabilities to t
 
 ## Delivered
 
-- Public-source product research with explicit architecture assumptions.
+- Generic shipping scenarios with explicit engineering assumptions.
 - Business-to-architecture explanation and focused module/class diagrams.
 - Java 17 rate comparison with bounded courier resources, deadlines, partial results, and typed failure outcomes.
 - AOP transport monitoring, Prometheus metrics, and deterministic mock scenarios.
@@ -17,4 +17,4 @@ See the [implementation iteration](java17.md), [validation evidence](../summarie
 
 ## Scope boundaries
 
-Carrier contracts are simulated. Real carrier integration, account pricing, and tracking processing are not implemented. Shipment booking is implemented as a local SQLite-backed simulation. Historical project stories require candidate confirmation. This repository is a local engineering demonstration, not a production shipping service.
+Carrier contracts are simulated. Real carrier integration, account pricing, and tracking processing are not implemented. Shipment booking is implemented as a local SQLite-backed simulation. This repository is a local engineering demonstration, not a production shipping service.

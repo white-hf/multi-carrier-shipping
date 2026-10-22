@@ -9,8 +9,8 @@
 <style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b4d}.heading{font-size:23px;font-weight:700}.label{font-size:19px;font-weight:600}.detail{font-size:16px;fill:#475569}.small{font-size:15px;fill:#475569}</style>
 <rect width="1800" height="1470" fill="#fff"/>
 
-<text x="45" y="35" text-anchor="start" class="heading">POSSIBLE SHIPPING PLATFORM</text>
-<text x="45" y="61" text-anchor="start" class="detail">Inferred design — not ShipTime internal architecture. Rate comparison and shipment booking have demo implementations.</text>
+<text x="45" y="35" text-anchor="start" class="heading">ILLUSTRATIVE SHIPPING PLATFORM</text>
+<text x="45" y="61" text-anchor="start" class="detail">Generic design context. Rate comparison, booking and reconciliation run in one local demo application.</text>
 <rect x="45" y="145" width="1320" height="100" rx="12" fill="#f8fafc" stroke="#dbe3ee" stroke-width="1.5"/>
 <text x="63" y="174" text-anchor="start" class="heading">EDGE / API GATEWAY</text>
 <rect x="45" y="305" width="1320" height="145" rx="12" fill="#f8fafc" stroke="#dbe3ee" stroke-width="1.5"/>
@@ -148,7 +148,7 @@
 <text x="1618" y="883" text-anchor="middle" class="detail">Correlated / redacted logs</text>
 <text x="1618" y="911" text-anchor="middle" class="detail">Bounded telemetry buffers</text>
 <text x="1618" y="1020" text-anchor="middle" class="small">Tools are proposed examples,</text>
-<text x="1618" y="1044" text-anchor="middle" class="small">not confirmed ShipTime systems.</text>
+<text x="1618" y="1044" text-anchor="middle" class="small">not deployed demo components.</text>
 <path d="M 55 1450 L 115 1450" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#blue)"/>
 <text x="125" y="1456" text-anchor="start" class="small">Synchronous API calls</text>
 <path d="M 390 1450 L 450 1450" fill="none" stroke="#13875c" stroke-width="2.2" stroke-linejoin="round" marker-end="url(#green)"/>

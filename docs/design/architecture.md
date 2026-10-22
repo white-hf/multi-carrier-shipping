@@ -1,10 +1,10 @@
-# Proposed platform architecture
+# Illustrative platform architecture
 
-This is a platform design inferred from ShipTime's public product capabilities, not a claim about its internal architecture. Client channels, microservice deployment, database technology, and observability products are proposed choices. Rate aggregation and SQLite-backed shipment booking are implemented as local demos.
+A generic shipping scenario illustrates service boundaries and failure handling. Client channels, independently deployed services, production databases and observability backends are design extensions. Rate aggregation, SQLite-backed booking and modular reconciliation are implemented in one local application.
 
 ## Platform view
 
-[![Proposed shipping platform architecture](platform-architecture.svg)](platform-architecture.svg)
+[![Illustrative shipping platform architecture](platform-architecture.svg)](platform-architecture.svg)
 
 ## Design boundaries
 
@@ -15,7 +15,7 @@ This is a platform design inferred from ShipTime's public product capabilities, 
 - **Messaging and consumers:** tracking and commerce have separate queues/topics, consumer groups, retry policies, and dead-letter handling. Consumers expect redelivery, deduplicate events, and commit database changes before acknowledging messages/committing offsets. Tracking consumers preserve event history and apply guarded projections; commerce consumers reconcile orders and synchronize fulfillment according to event type.
 - **Domain events:** shipment-booked events can trigger ecommerce fulfillment write-back. If publishing an event accompanies a database change, use a transactional outbox and relay; a database commit followed by an unprotected broker publish can lose the event. This internal event path is omitted from the overview to keep external integrations readable.
 - **Data ownership:** quote context, shipment/labels, tracking, orders, and accounts/billing use separate schemas or databases with service-owned write access. APIs and consumer workers in one domain share its data ownership. No cross-service table writes or shared transactional database are assumed. Separate physical database servers are optional; this is an ownership boundary, not a requirement for one server per service. Label files and documents belong in object storage, with metadata in the shipment domain.
-- **Observability:** gateway, services, adapters, and consumers emit telemetry through an instrumented path. Propagate trace context over HTTP and message headers; correlate logs with request/trace IDs. The OpenTelemetry Collector exports signals to the chosen metrics, log, and tracing backends. Export is buffered and bounded so backend outages do not become synchronous business dependencies. Product names in the diagram are examples, not confirmed ShipTime technologies.
+- **Observability:** gateway, services, adapters, and consumers emit telemetry through an instrumented path. Propagate trace context over HTTP and message headers; correlate logs with request/trace IDs. The OpenTelemetry Collector exports signals to the chosen metrics, log, and tracing backends. Export is buffered and bounded so backend outages do not become synchronous business dependencies. Observability products in the diagram are illustrative deployment choices.
 
 ## Implemented versus proposed
 
@@ -23,7 +23,6 @@ The Java 17 demo implements rate aggregation and a SQLite-backed booking API wit
 
 ## References
 
-- Product capabilities: [ShipTime](https://shiptime.com/), [shipping API](https://shiptime.com/shipping-api/), [ecommerce workflows](https://shiptime.com/shiptime-updates-features/revamped-ecommerce-shipping/).
 - Delivery/acknowledgement semantics: [RabbitMQ reliability guidance](https://www.rabbitmq.com/docs/reliability).
 - Side-effect safety: [AWS idempotent API guidance](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/).
 - Telemetry pipeline: [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/).
