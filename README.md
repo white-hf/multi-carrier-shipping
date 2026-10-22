@@ -38,11 +38,13 @@ These mechanisms provide durable local coordination and eventual outcome reconci
 | Recovery | Separate task ownership; neutral `BookingRecoveryPort`; no cross-module table joins or writes | Extract a worker process and replace in-process calls with an authenticated transport |
 | Carrier integration | Separate rate, submission, and inquiry ports | Add carrier adapters without changing core workflows |
 
+`quote`, `booking`, and `reconciliation` own their workflows and configuration. `contracts/recovery` defines communication between booking and recovery; `runtime` wires shared deployment resources; `shared` supplies reusable infrastructure and value types; `demo` contains simulated integrations.
+
 **Current deployment:** one modular application with local SQLite storage. Shard routing, cross-shard uniqueness, multi-host deployment, and remote recovery transport are design extensions, not implemented features. A UUID alone does not route requests or preserve owner/key uniqueness across shards.
 
-[Generic platform architecture](docs/design/architecture.md): the wider service layout below provides design context; the implemented scope is rate comparison, booking, reconciliation, and local observability.
+The wider service layout below provides design context; the implemented scope is rate comparison, booking, reconciliation, and local observability.
 
-[![Illustrative multi-carrier shipping platform](docs/design/platform-architecture.svg)](docs/design/platform-architecture.svg)
+[![Illustrative multi-carrier shipping platform](assets/platform-architecture.svg)](assets/platform-architecture.svg)
 
 ```mermaid
 classDiagram
@@ -107,6 +109,8 @@ curl -sS http://127.0.0.1:8080/api/shipping/quotes \
 
 Metrics: `http://127.0.0.1:9091/actuator/prometheus`.
 
-[Rate scenarios](docs/runbooks/demo.md) · [Booking and restart recovery](docs/runbooks/booking-demo.md) · [Package structure](docs/design/code-organization.md) · [Code entry points](docs/design/implementation-map.md) · [Recovery design](docs/design/reconciliation.md) · [Discussion guide](docs/interview/walkthrough.md)
+[Demo commands and recovery walkthrough](DEMO.md)
+
+Code entry points: [rate engine](src/main/java/com/enterprise/shipping/quote/application/HighFanOutAggregationEngine.java) · [booking service](src/main/java/com/enterprise/shipping/booking/application/BookingService.java) · [booking aggregate](src/main/java/com/enterprise/shipping/booking/domain/ShipmentBooking.java) · [recovery worker](src/main/java/com/enterprise/shipping/reconciliation/application/ReconciliationWorker.java) · [transport monitoring](src/main/java/com/enterprise/shipping/shared/infrastructure/monitoring/CarrierMonitoringAspect.java)
 
 Engineering references: [timeouts and backoff](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/) · [idempotent APIs](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/) · [Resilience4j](https://resilience4j.readme.io/docs/circuitbreaker).
