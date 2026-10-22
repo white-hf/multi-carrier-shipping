@@ -1,6 +1,6 @@
 # Independent reconciliation module
 
-Booking and reconciliation run in one process. Each owns its table and persistence port. Reconciliation imports only neutral recovery contracts, never booking repositories or domain classes. The runtime composition layer currently binds both tables to the same SQLite datasource.
+Booking and reconciliation run in one process. Each owns its table and persistence port. Reconciliation imports only neutral recovery contracts, never booking repositories or domain classes. Each module owns its configuration; the runtime composition layer currently binds both tables to the same SQLite datasource. `reconciliation/config/ReconciliationConfiguration` assembles recovery components, while `runtime/RecoveryRuntimeConfiguration` supplies the shared deployment resources.
 
 ```mermaid
 flowchart LR
@@ -55,7 +55,7 @@ JDBC tests inspect actual SQLite query plans. This is not evidence of throughput
 
 ## Runtime and future extraction
 
-The demo enables `shipping.reconciliation.enabled`. `scheduling-enabled=false` disables both scheduled loops while leaving components available for tests. Discovery defaults to one page of 100 every 30 seconds; execution defaults to 16 eligible tasks every second. `shipping.booking.submission-deadline-ms` defaults to 15 seconds and must exceed the submit timeout. Separate `shipping.reconciliation.*` settings control inquiry timeout, lease, backoff and attempt limit.
+Reconciliation components load unconditionally. `shipping.reconciliation.scheduling-enabled=false` disables both scheduled loops while leaving discovery, task storage and workers available for deterministic tests. Outside the demo profile, a carrier inquiry implementation must be supplied alongside the submission implementation. Discovery defaults to one page of 100 every 30 seconds; execution defaults to 16 eligible tasks every second. `shipping.booking.submission-deadline-ms` defaults to 15 seconds and must exceed the submit timeout. Separate `shipping.reconciliation.*` settings control inquiry timeout, lease, backoff and attempt limit.
 
 A future process can own the task datasource and carrier inquiry adapters, replacing the in-process `BookingRecoveryPort` with an authenticated HTTP/MQ boundary. Discovery and idempotent observation delivery already define that seam. Service deployment, remote authentication, transport budgets, sharded routing and production database migration remain future work. SQLite WAL files must remain local; this demo does not support multiple application hosts sharing a file.
 

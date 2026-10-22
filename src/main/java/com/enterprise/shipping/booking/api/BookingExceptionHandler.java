@@ -2,7 +2,6 @@ package com.enterprise.shipping.booking.api;
 
 import com.enterprise.shipping.booking.domain.BookingException;
 import com.enterprise.shipping.shared.api.ApiResponse;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
@@ -11,7 +10,6 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
-@ConditionalOnProperty(name = "shipping.booking.enabled", havingValue = "true")
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class BookingExceptionHandler {
     @ExceptionHandler(BookingException.class)

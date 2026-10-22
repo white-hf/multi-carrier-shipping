@@ -1,4 +1,4 @@
-package com.enterprise.shipping.booking.infrastructure.persistence;
+package com.enterprise.shipping.shared.infrastructure.persistence;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -20,7 +20,7 @@ public final class SqliteDataSources {
         try {
             Files.createDirectories(path.getParent());
         } catch (IOException error) {
-            throw new IllegalStateException("Cannot create booking database directory", error);
+            throw new IllegalStateException("Cannot create SQLite database directory", error);
         }
         SQLiteConfig sqlite = new SQLiteConfig();
         sqlite.setJournalMode(SQLiteConfig.JournalMode.WAL);

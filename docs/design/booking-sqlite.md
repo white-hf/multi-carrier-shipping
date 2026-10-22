@@ -2,7 +2,7 @@
 
 ## Scope
 
-A local Java 17 / Spring MVC demo with two independent file-backed SQLite databases: application booking state and simulated carrier state. Business components are enabled through `shipping.booking.enabled`. The `demo` profile supplies the simulated carrier and fixed owner; outside it ownership requires an authenticated principal and a carrier port implementation. No real shipment, charge, slot reservation, or carrier contract is created.
+A local Java 17 / Spring MVC demo with two independent file-backed SQLite databases: application booking state and simulated carrier state. Booking components load unconditionally; required configuration and carrier ports must be supplied. The `demo` profile supplies the simulated carrier and fixed owner; outside it ownership requires an authenticated principal and a carrier port implementation. No real shipment, charge, slot reservation, or carrier contract is created.
 
 ## Code organization
 

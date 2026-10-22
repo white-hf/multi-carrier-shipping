@@ -107,6 +107,6 @@ curl -sS http://127.0.0.1:8080/api/shipping/quotes \
 
 Metrics: `http://127.0.0.1:9091/actuator/prometheus`.
 
-[Rate scenarios](docs/runbooks/demo.md) · [Booking and restart recovery](docs/runbooks/booking-demo.md) · [Code entry points](docs/design/implementation-map.md) · [Recovery design](docs/design/reconciliation.md) · [Discussion guide](docs/interview/walkthrough.md)
+[Rate scenarios](docs/runbooks/demo.md) · [Booking and restart recovery](docs/runbooks/booking-demo.md) · [Package structure](docs/design/code-organization.md) · [Code entry points](docs/design/implementation-map.md) · [Recovery design](docs/design/reconciliation.md) · [Discussion guide](docs/interview/walkthrough.md)
 
 Engineering references: [timeouts and backoff](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/) · [idempotent APIs](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/) · [Resilience4j](https://resilience4j.readme.io/docs/circuitbreaker).

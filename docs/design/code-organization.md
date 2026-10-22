@@ -1,63 +1,55 @@
 # Code organization
 
-One Maven project and one Spring Boot application, organized first by business feature.
+One Maven project and one Spring Boot application. Business capabilities own their code; shared contracts and deployment wiring are explicit.
 
 ```text
 com.enterprise.shipping
-├── quote/
-│   ├── api/
-│   ├── application/
-│   ├── domain/
-│   ├── port/
-│   ├── infrastructure/monitoring/
-│   └── config/
-├── booking/
-│   ├── api/
-│   ├── application/
-│   ├── domain/
-│   ├── port/
-│   ├── infrastructure/{persistence,monitoring,security}/
-│   └── config/
-├── reconciliation/{application,domain,port,config,infrastructure}/
-├── contracts/recovery/
-├── runtime/
+├── Application.java
+├── quote/                    Rate comparison
+│   ├── api/                  HTTP input and error mapping
+│   ├── application/          Fan-out orchestration
+│   ├── domain/               Commands, quotes and outcomes
+│   ├── port/                 Carrier and observer interfaces
+│   ├── infrastructure/       Monitoring adapters
+│   └── config/               Module wiring and settings
+├── booking/                  Shipment creation and business state
+│   └── {api,application,domain,port,infrastructure,config}/
+├── reconciliation/           Recovery task ownership and inquiry
+│   └── {application,domain,port,infrastructure,config}/
+├── contracts/recovery/       Booking/reconciliation communication contract
+├── runtime/                  Cross-module deployment wiring only
 ├── shared/
-│   ├── api/
-│   ├── domain/
-│   ├── config/
-│   └── infrastructure/{http,monitoring}/
-└── demo/{quote,booking}/
+│   ├── api/                  Response envelope, parcel input and safe errors
+│   ├── domain/               Parcel, units and market rules
+│   ├── identity/             UUIDv7 generation policy
+│   ├── infrastructure/       Reusable HTTP, monitoring and SQLite setup
+│   └── config/               Market configuration
+└── demo/{quote,booking}/     Simulators, fault modes and demo wiring
 ```
 
-## Boundaries
+## Module ownership
 
-Controllers map validated input to application commands. Application services coordinate workflows through ports. The booking aggregate and domain value types contain no Spring, HTTP-client, or database dependencies. Infrastructure implements carrier, storage, and observer ports; configuration wires dependencies and owns pool shutdown. Tests mirror the feature packages.
+Controllers translate requests; application services coordinate through ports; domain classes enforce business rules. Infrastructure implements database, HTTP and monitoring details. Each module's `config` package assembles its own components. Packages are added only when needed: reconciliation has no public HTTP API, and quote has no database repository.
 
-Business features and reconciliation do not import each other. They communicate through `contracts.recovery`; runtime configuration binds implementations. Shared code imports no feature. Quote infrastructure has no persistence package because it currently needs no database.
+`ShipmentBooking` owns receipt validation and lifecycle transitions. `BookingRecord` rehydrates it while keeping the persistence version and submission deadline outside the aggregate. Recovery scheduling data belongs to the separate reconciliation task table.
 
-## Reuse
+`ReconciliationConfiguration` lives in `reconciliation/config` with its properties. The storage exception lives beside `ReconciliationTaskStore`, because it describes a persistence-port failure rather than a shipment business rule.
 
-| Component | Reused responsibility |
-| --- | --- |
-| `shared.api.ParcelRequest` | Validated parcel fields; quote input remains flat, booking input keeps its nested `parcel` |
-| `shared.domain.ShipmentParcel` | Immutable normalized postal codes/countries and kg/cm measurements |
-| `DimensionUnit`, `WeightUnit` | Exact decimal conversion from CM/IN and KG/LB before hashing and carrier dispatch |
-| `shared.api.ApiResponse`, `CommonExceptionHandler` | Response envelope and generic safe HTTP errors |
-| `CarrierHttpClientFactory` | Bounded pool construction, deadlines, response-size limits, warmup |
-| Carrier monitoring annotation/aspect | Transport timings with failure-isolated recording |
+## Communication and deployment
 
-The HTTP factory creates independent resources. FedEx quotes, UPS quotes, and booking have separate pools. Retry policy is explicit: the existing quote transport behavior is preserved, while booking disables automatic transport retries.
+- `contracts/recovery` contains `BookingRecoveryPort` and minimal discovery/observation records. Booking implements the boundary; reconciliation consumes it. Neither module imports the other's implementation.
+- `runtime/RecoveryRuntimeConfiguration` binds reconciliation's datasource and clock to the current application's resources. This deployment currently shares booking's datasource; module configuration does not select the other module's resources.
+- `shared` imports no business module. `SqliteDataSources` lives in shared infrastructure because both booking and the simulated external carrier use the setup helper, with separate database files.
+- `demo` implements core ports; business code imports no simulator. Quote, submission and inquiry remain separate capabilities with different failure semantics.
 
-`CarrierRatePort` and `CarrierBookingPort` remain separate capability contracts. Quote deadlines/partial results and booking claims/reconciliation remain independent workflows. `BookingRequestHasher` calculates intent fingerprints. Structured business columns are the authoritative persisted state, and responses are reconstructed from the aggregate.
+These are package boundaries within one build. Separate artifacts and remote transport are future extraction work, not current deployment features.
 
-`QuoteObserver` and `BookingObserver` separate application events from Micrometer. Their implementations preserve existing metric names and isolate recording failures. The quote worker gauge retains its supplier for the registry lifetime.
+## Reuse and operation
 
-## Booking domain behavior
+Parcel inputs normalize CM/IN and KG/LB through shared value types before hashing or carrier dispatch. `BookingRequestHasher` fingerprints intent; business columns remain authoritative and API responses are reconstructed from persisted state.
 
-`ShipmentBooking` owns receipt validation and lifecycle transitions. Application services invoke its behavior instead of assigning statuses or constructing arbitrary outcomes. `BookingRecord` is a storage-port snapshot, mapping persisted state back to the aggregate while keeping storage version/deadline metadata outside the domain. [Domain model and class diagram](booking-sqlite.md#domain-model).
+The shared HTTP factory creates separate pools for each carrier capability. Booking submission disables automatic transport retries. Spring AOP and observer ports isolate monitoring from business decisions and preserve bounded metric labels.
 
-## Runtime selection and compatibility
+Booking and reconciliation components load unconditionally. Quote activation and reconciliation scheduling remain configurable. Outside the demo profile, required market, carrier and ownership infrastructure must be supplied. Development schema changes use fresh database paths; no compatibility layer or automatic migration is provided.
 
-Business controllers, services, and handlers are feature-gated, independently of the demo profile. Simulated protocol adapters, connection wiring, fault modes, carrier database, and fixed owner are under `demo`. Core code imports no demo package. [Runtime boundaries](runtime-boundaries.md).
-
-Request intent contains only business fields. Optional country codes resolve from the configured default before hashing. Only the current development format is supported; no compatibility layer or automatic data migration is provided. Use fresh local demo database files after intent model changes. Incoming simulator fields are rejected rather than ignored. See [booking runbook](../runbooks/booking-demo.md).
+[Code entry points](implementation-map.md) · [Booking model](booking-sqlite.md) · [Recovery design](reconciliation.md) · [Runtime boundaries](runtime-boundaries.md)

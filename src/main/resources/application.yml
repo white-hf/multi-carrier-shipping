@@ -19,11 +19,7 @@ spring:
   main:
     web-application-type: servlet
 shipping:
-  reconciliation:
-    enabled: false
   quote:
-    enabled: false
-  booking:
     enabled: false
 resilience4j:
   circuitbreaker:

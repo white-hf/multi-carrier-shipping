@@ -68,7 +68,7 @@ Change the list and restart to enable/disable new operations. IDs are normalized
 
 `BOOKING_DB_PATH` sets the application file. `DEMO_CARRIER_DB_PATH`, `BOOKING_CARRIER_URL`, and `DEMO_BOOKING_MODE` configure only the simulator. The booking table and recovery task table share the application file in this deployment. Its structured settings live under `demo.booking-carrier`. When changing the application port, also update the simulator URL and quote simulator base URLs.
 
-Outside the demo profile, explicitly enable booking, configure its database/market/carriers, and supply a real carrier port implementation. `PrincipalBookingOwnerProvider` requires a principal established by a servlet container or security integration. It never trusts an owner field/header. No authentication login/token-verification system is supplied by this repository; missing principals receive 401. The demo's fixed merchant is selected only by its profile.
+Booking and reconciliation load automatically. Outside the demo profile, configure the database/market/carriers and supply carrier submission and inquiry implementations (`CarrierBookingPort` and `CarrierInquiryPort`). `PrincipalBookingOwnerProvider` requires a principal established by a servlet container or security integration. It never trusts an owner field/header. No authentication login/token-verification system is supplied by this repository; missing principals receive 401. The demo's fixed merchant is selected only by its profile.
 
 ## Errors and development data
 

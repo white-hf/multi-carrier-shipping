@@ -5,7 +5,6 @@ import com.enterprise.shipping.demo.booking.DemoBookingProperties.Mode;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -14,7 +13,6 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @Profile("demo")
-@ConditionalOnProperty(name = "shipping.booking.enabled", havingValue = "true")
 @RequestMapping("/api/mock/bookings")
 public class DemoBookingCarrierController {
     private static final Logger log = LoggerFactory.getLogger(DemoBookingCarrierController.class);

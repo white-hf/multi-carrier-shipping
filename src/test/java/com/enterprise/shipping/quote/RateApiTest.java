@@ -15,14 +15,17 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 import static org.assertj.core.api.Assertions.*;
 
 @org.springframework.test.context.ActiveProfiles("demo")
+@org.springframework.test.annotation.DirtiesContext(classMode = org.springframework.test.annotation.DirtiesContext.ClassMode.AFTER_CLASS)
 @AutoConfigureObservability
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
-        "management.server.port=0", "shipping.booking.enabled=false", "shipping.engine.global-timeout-ms=1500",
+        "management.server.port=0", "shipping.reconciliation.scheduling-enabled=false", "shipping.engine.global-timeout-ms=1500",
         "shipping.engine.carriers.fedex.timeout-ms=1000", "shipping.engine.carriers.ups.timeout-ms=1000"})
 class RateApiTest {
     static final String VALID = "{\"originPostalCode\":\"L6K 3V3\",\"destinationPostalCode\":\"M5V 2T6\",\"weight\":1,\"weightUnit\":\"KG\",\"dimensionUnit\":\"CM\",\"length\":10,\"width\":10,\"height\":10}";
@@ -31,8 +34,10 @@ class RateApiTest {
     static final AtomicInteger calls = new AtomicInteger(), delay = new AtomicInteger();
     static final ExecutorService workers = Executors.newCachedThreadPool();
     static final HttpServer server;
+    static final Path databaseDirectory;
     static {
         try {
+            databaseDirectory = Files.createTempDirectory("rate-api-booking-");
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             server.setExecutor(workers);
             for (String id : new String[]{"fedex", "ups"}) server.createContext("/" + id + "/rates", exchange -> {
@@ -50,6 +55,9 @@ class RateApiTest {
         } catch (Exception ex) { throw new ExceptionInInitializerError(ex); }
     }
     @DynamicPropertySource static void properties(DynamicPropertyRegistry registry) {
+        // Booking is part of the application; isolate its stores even when tests exercise only quotes.
+        registry.add("shipping.booking.database-path", () -> databaseDirectory.resolve("bookings.db").toString());
+        registry.add("demo.booking-carrier.database-path", () -> databaseDirectory.resolve("carrier.db").toString());
         registry.add("shipping.engine.carriers.fedex.base-url", () -> "http://127.0.0.1:" + server.getAddress().getPort() + "/fedex");
         registry.add("shipping.engine.carriers.ups.base-url", () -> "http://127.0.0.1:" + server.getAddress().getPort() + "/ups");
     }

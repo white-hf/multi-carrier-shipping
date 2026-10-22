@@ -3,6 +3,9 @@ package com.enterprise.shipping.booking;
 import com.enterprise.shipping.Application;
 import com.enterprise.shipping.booking.domain.*;
 import com.enterprise.shipping.booking.port.CarrierBookingPort;
+import com.enterprise.shipping.contracts.recovery.Recovery.Evidence;
+import com.enterprise.shipping.contracts.recovery.Recovery.Reference;
+import com.enterprise.shipping.reconciliation.port.CarrierInquiryPort;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,8 +31,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @SpringBootTest(classes = Application.class, properties = {
-        "shipping.booking.enabled=true", "shipping.quote.enabled=false",
-        "shipping.booking.enabled-carriers[0]=test-carrier", "shipping.reconciliation.enabled=false", "shipping.booking.carrier-context-reference=test-account",
+        "shipping.quote.enabled=false",
+        "shipping.booking.enabled-carriers[0]=test-carrier", "shipping.reconciliation.scheduling-enabled=false", "shipping.booking.carrier-context-reference=test-account",
         "shipping.market.default-country=US", "shipping.market.comparison-currency=USD",
         "shipping.market.postal-code-patterns.US=[0-9]{5}"})
 @AutoConfigureMockMvc
@@ -60,6 +63,9 @@ class BookingCoreWiringTest {
     }
 
     @Test void coreRunsWithoutAnyDemoBeanAndRequiresAuthentication() throws Exception {
+        assertThat(context.getBean(com.enterprise.shipping.reconciliation.application.ReconciliationWorker.class)).isNotNull();
+        assertThat(context.getBean(com.enterprise.shipping.reconciliation.application.ReconciliationDiscovery.class)).isNotNull();
+        assertThat(context.getBeansOfType(com.enterprise.shipping.reconciliation.application.ReconciliationScheduler.class)).isEmpty();
         for (String name : context.getBeanDefinitionNames()) {
             Class<?> type = context.getType(name);
             if (type != null) assertThat(type.getPackageName()).doesNotStartWith("com.enterprise.shipping.demo");
@@ -104,12 +110,12 @@ class BookingCoreWiringTest {
     static class TestCarrierConfiguration {
         @Bean TestCarrier testCarrier() { return new TestCarrier(); }
     }
-    static class TestCarrier implements CarrierBookingPort {
+    static class TestCarrier implements CarrierBookingPort, CarrierInquiryPort {
         final AtomicInteger calls = new AtomicInteger();
         public CarrierReceipt submit(String context, String reference, BookingCommand command) {
             calls.incrementAndGet();
             return new CarrierReceipt(reference, reference + "-id", "tracking", "/test-label");
         }
-        public Optional<CarrierReceipt> inquire(String reference) { return Optional.empty(); }
+        public Optional<Evidence> inquire(Reference reference, long timeoutMs) { return Optional.empty(); }
     }
 }

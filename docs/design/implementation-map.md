@@ -15,6 +15,9 @@ Code entry points for the independent Java 17 demo: rate comparison, shipment bo
 | Recovery business boundary | [BookingRecoveryService](../../src/main/java/com/enterprise/shipping/booking/application/BookingRecoveryService.java) |
 | Recovery task storage | [JdbcReconciliationTaskStore](../../src/main/java/com/enterprise/shipping/reconciliation/infrastructure/persistence/JdbcReconciliationTaskStore.java) |
 | Intent fingerprints | [BookingRequestHasher](../../src/main/java/com/enterprise/shipping/booking/application/BookingRequestHasher.java) |
+| Module assembly | [ReconciliationConfiguration](../../src/main/java/com/enterprise/shipping/reconciliation/config/ReconciliationConfiguration.java) |
+| Cross-module wiring | [RecoveryRuntimeConfiguration](../../src/main/java/com/enterprise/shipping/runtime/RecoveryRuntimeConfiguration.java) |
+| Shared SQLite setup | [SqliteDataSources](../../src/main/java/com/enterprise/shipping/shared/infrastructure/persistence/SqliteDataSources.java) |
 | Atomic booking storage | [JdbcBookingStore](../../src/main/java/com/enterprise/shipping/booking/infrastructure/persistence/JdbcBookingStore.java) |
 | Shared parcel intent | [ShipmentParcel](../../src/main/java/com/enterprise/shipping/shared/domain/ShipmentParcel.java) |
 | HTTP construction / pool isolation | [CarrierHttpClientFactory](../../src/main/java/com/enterprise/shipping/shared/infrastructure/http/CarrierHttpClientFactory.java) |

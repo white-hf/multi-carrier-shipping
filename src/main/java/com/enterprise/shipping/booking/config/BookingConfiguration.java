@@ -1,5 +1,6 @@
 package com.enterprise.shipping.booking.config;
 
+import com.enterprise.shipping.shared.infrastructure.persistence.SqliteDataSources;
 import com.enterprise.shipping.shared.domain.ShippingMarketPolicy;
 import com.enterprise.shipping.booking.application.*;
 import com.enterprise.shipping.booking.infrastructure.monitoring.MicrometerBookingObserver;
@@ -11,7 +12,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.*;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -21,7 +21,6 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 /** Business composition root; external carrier and owner implementations are supplied by infrastructure. */
 @Configuration
-@ConditionalOnProperty(name = "shipping.booking.enabled", havingValue = "true")
 @EnableConfigurationProperties(BookingProperties.class)
 @EnableTransactionManagement
 public class BookingConfiguration {

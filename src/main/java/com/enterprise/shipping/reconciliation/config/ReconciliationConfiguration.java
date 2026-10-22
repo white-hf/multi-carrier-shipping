@@ -1,6 +1,4 @@
-package com.enterprise.shipping.runtime;
-
-import com.enterprise.shipping.reconciliation.config.ReconciliationProperties;
+package com.enterprise.shipping.reconciliation.config;
 
 import com.enterprise.shipping.contracts.recovery.BookingRecoveryPort;
 import com.enterprise.shipping.reconciliation.application.*;
@@ -20,7 +18,6 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(name = {"shipping.booking.enabled", "shipping.reconciliation.enabled"}, havingValue = "true")
 @EnableConfigurationProperties(ReconciliationProperties.class)
 @EnableScheduling
 public class ReconciliationConfiguration {

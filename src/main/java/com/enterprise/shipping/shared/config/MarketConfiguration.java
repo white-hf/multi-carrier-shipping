@@ -9,7 +9,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.validation.annotation.Validated;
 
-@org.springframework.boot.autoconfigure.condition.ConditionalOnExpression("${shipping.quote.enabled:false} or ${shipping.booking.enabled:false}")
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(MarketConfiguration.Properties.class)
 public class MarketConfiguration {

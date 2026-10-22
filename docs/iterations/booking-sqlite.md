@@ -6,7 +6,7 @@ Implement a local, restartable booking API that demonstrates durable idempotency
 
 ## Scope and decisions
 
-- Java 17 / Spring MVC; feature enabled only with the demo profile.
+- Java 17 / Spring MVC; booking loads unconditionally, with simulated infrastructure selected by the demo profile.
 - Fixed server-owned demo merchant. No client-supplied ownership or production authentication.
 - Spring JDBC and SQLite WAL/FULL synchronization; short atomic SQL operations, no carrier call inside a database transaction.
 - Unique owner/key claim, normalized request hash, persisted carrier/reference/request before submission.

@@ -5,7 +5,6 @@ import com.enterprise.shipping.booking.domain.*;
 import com.enterprise.shipping.shared.api.ApiResponse;
 import jakarta.validation.Valid;
 import java.net.URI;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import com.enterprise.shipping.booking.port.BookingOwnerProvider;
 import com.enterprise.shipping.shared.domain.ShippingMarketPolicy;
 import java.security.Principal;
@@ -15,7 +14,6 @@ import org.springframework.web.bind.annotation.*;
 
 /** Maps booking operations to HTTP; ownership comes from a trusted provider. */
 @RestController
-@ConditionalOnProperty(name = "shipping.booking.enabled", havingValue = "true")
 @RequestMapping("/api/shipping/bookings")
 public class BookingController {
     private static final String RETRY_AFTER_SECONDS = "1";

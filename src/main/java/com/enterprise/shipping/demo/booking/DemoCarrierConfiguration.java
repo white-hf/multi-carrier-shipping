@@ -3,16 +3,14 @@ package com.enterprise.shipping.demo.booking;
 import com.enterprise.shipping.booking.application.BookingRequestHasher;
 import com.enterprise.shipping.booking.config.BookingProperties;
 import com.enterprise.shipping.booking.domain.BookingOwner;
-import com.enterprise.shipping.booking.infrastructure.persistence.SqliteDataSources;
+import com.enterprise.shipping.shared.infrastructure.persistence.SqliteDataSources;
 import com.enterprise.shipping.booking.port.BookingOwnerProvider;
-import com.enterprise.shipping.booking.port.CarrierBookingPort;
 import com.enterprise.shipping.shared.infrastructure.http.CarrierHttpClientFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariDataSource;
 import java.time.Duration;
 import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.*;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -20,7 +18,6 @@ import reactor.netty.resources.ConnectionProvider;
 
 @Configuration(proxyBeanMethods = false)
 @Profile("demo")
-@ConditionalOnProperty(name = "shipping.booking.enabled", havingValue = "true")
 @EnableConfigurationProperties(DemoBookingProperties.class)
 public class DemoCarrierConfiguration {
     @Bean DemoBookingBehavior demoBookingBehavior(DemoBookingProperties p) { return new DemoBookingBehavior(p.mode()); }

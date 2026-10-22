@@ -1,5 +1,6 @@
 package com.enterprise.shipping.booking.infrastructure.persistence;
 
+import com.enterprise.shipping.shared.infrastructure.persistence.SqliteDataSources;
 import com.enterprise.shipping.booking.application.BookingRequestHasher;
 import com.enterprise.shipping.booking.domain.*;
 import com.enterprise.shipping.booking.port.BookingRecord;
