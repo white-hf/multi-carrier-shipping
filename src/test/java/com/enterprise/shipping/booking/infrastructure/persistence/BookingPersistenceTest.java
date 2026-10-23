@@ -76,8 +76,8 @@ class BookingPersistenceTest {
         var uncertain = inquiry.restoreBooking();
         uncertain.markOutcomeUnknown();
         assertThat(store.saveOutcome(inquiry, uncertain, 1)).isTrue();
-        assertThat(store.discoverUnresolved(500, com.enterprise.shipping.contracts.recovery.Recovery.Cursor.START, 2)).extracting(c -> c.reference().bookingId()).containsExactly("a", "b");
-        assertThat(store.discoverUnresolved(500, com.enterprise.shipping.contracts.recovery.Recovery.Cursor.START, 10)).extracting(c -> c.reference().bookingId()).containsExactly("a", "b", "inquiry");
+        assertThat(store.discoverUnresolved(500, com.enterprise.shipping.booking.contract.recovery.Recovery.Cursor.START, 2)).extracting(c -> c.reference().bookingId()).containsExactly("a", "b");
+        assertThat(store.discoverUnresolved(500, com.enterprise.shipping.booking.contract.recovery.Recovery.Cursor.START, 10)).extracting(c -> c.reference().bookingId()).containsExactly("a", "b", "inquiry");
         List<String> plan = plan(JdbcBookingStore.DISCOVERY_SQL, 500, -1, "", 2);
         assertThat(plan).anyMatch(step -> step.contains("USING INDEX idx_booking_unresolved"));
         assertThat(plan).noneMatch(step -> step.contains("TEMP B-TREE") || step.startsWith("SCAN shipment_bookings"));

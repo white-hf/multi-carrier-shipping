@@ -24,7 +24,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 @Service
 @ConditionalOnProperty(name = "shipping.quote.enabled", havingValue = "true")
-public class HighFanOutAggregationEngine {
+@org.springframework.context.annotation.Profile("!workflow")
+public class HighFanOutAggregationEngine implements com.enterprise.shipping.quote.port.RateComparisonPort {
     private static final long WORKER_IDLE_TIMEOUT_SECONDS = 30;
 
     private static final Logger log = LoggerFactory.getLogger(HighFanOutAggregationEngine.class);
@@ -59,6 +60,23 @@ public class HighFanOutAggregationEngine {
             observer.workers(id, executor::getActiveCount);
         }
     }
+    /** The legacy carrier comparison can share the result contract without inventing bookable provider tokens. */
+    @Override public List<com.enterprise.shipping.quote.domain.ShippingQuote> compare(
+            com.enterprise.shipping.shared.domain.ShippingIntent intent,long deadlineNanos) {
+        var p=intent.parcel();
+        var parcel=new com.enterprise.shipping.shared.domain.ShipmentParcel(intent.sender().postalCode(),intent.recipient().postalCode(),
+                p.weightUnit().toKilograms(p.weight()),p.dimensionUnit().toCentimeters(p.length()),
+                p.dimensionUnit().toCentimeters(p.width()),p.dimensionUnit().toCentimeters(p.height()),
+                intent.sender().countryCode(),intent.recipient().countryCode());
+        long remaining=Math.max(1,TimeUnit.NANOSECONDS.toMillis(deadlineNanos-System.nanoTime()));
+        var result=executeFanOutRates(new QuoteCommand(parcel),remaining);
+        if(result.status()==ComparisonStatus.FAILED) throw new com.enterprise.shipping.shared.api.WorkflowException(
+                "PROVIDER_UNAVAILABLE",org.springframework.http.HttpStatus.BAD_GATEWAY);
+        return result.successfulQuotes().stream().map(q->new com.enterprise.shipping.quote.domain.ShippingQuote(null,null,
+                "direct-carrier-demo","demo-account",null,q.carrierId(),q.carrierName(),q.serviceLevel(),q.serviceLevel(),
+                q.rate().movePointRight(2).longValueExact(),q.currency(),q.estimatedDeliveryDays(),System.currentTimeMillis()+60000)).toList();
+    }
+
     private record Result(String carrierId, OutcomeCode code, List<CarrierQuote> quotes) {}
     // Absolute monotonic time, never a wall-clock timestamp or a fresh timeout per wait.
     private record Pending(String carrierId, long deadline) {}

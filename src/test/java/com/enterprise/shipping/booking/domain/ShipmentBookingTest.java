@@ -31,6 +31,13 @@ class ShipmentBookingTest {
         assertThat(booking.errorCode()).isNull();
     }
 
+    @Test void confirmationDoesNotRequireTrackingOrLabel() {
+        var booking=pending();
+        booking.confirm(new CarrierReceipt(REFERENCE,"carrier-1",null,null));
+        assertThat(booking.status()).isEqualTo(BookingStatus.CONFIRMED);
+        assertThat(booking.receipt().labelUrl()).isNull();
+    }
+
     @Test void inquiryCanConfirmUnknownOutcomeAndClearItsError() {
         var booking = pending();
         booking.markOutcomeUnknown();
@@ -89,9 +96,7 @@ class ShipmentBookingTest {
     static Stream<CarrierReceipt> invalidReceipts() {
         return Stream.of(null,
                 new CarrierReceipt("other-reference", "carrier-1", "tracking-1", "/labels/1"),
-                new CarrierReceipt(REFERENCE, null, "tracking-1", "/labels/1"),
-                new CarrierReceipt(REFERENCE, "carrier-1", " ", "/labels/1"),
-                new CarrierReceipt(REFERENCE, "carrier-1", "tracking-1", null));
+                new CarrierReceipt(REFERENCE, null, "tracking-1", "/labels/1"));
     }
 
     @ParameterizedTest @MethodSource("invalidReceipts")

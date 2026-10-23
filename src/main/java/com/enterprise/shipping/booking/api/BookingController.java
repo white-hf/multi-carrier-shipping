@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 /** Maps booking operations to HTTP; ownership comes from a trusted provider. */
 @RestController
 @RequestMapping("/api/shipping/bookings")
+@org.springframework.context.annotation.Profile("!workflow")
 public class BookingController {
     private static final String RETRY_AFTER_SECONDS = "1";
     private final BookingService service;

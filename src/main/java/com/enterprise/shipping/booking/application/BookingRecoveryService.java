@@ -2,8 +2,8 @@ package com.enterprise.shipping.booking.application;
 
 import com.enterprise.shipping.booking.domain.*;
 import com.enterprise.shipping.booking.port.BookingStore;
-import com.enterprise.shipping.contracts.recovery.BookingRecoveryPort;
-import com.enterprise.shipping.contracts.recovery.Recovery.*;
+import com.enterprise.shipping.booking.contract.recovery.BookingRecoveryPort;
+import com.enterprise.shipping.booking.contract.recovery.Recovery.*;
 import java.time.Clock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

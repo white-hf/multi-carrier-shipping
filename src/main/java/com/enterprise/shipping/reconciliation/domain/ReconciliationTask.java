@@ -1,6 +1,6 @@
 package com.enterprise.shipping.reconciliation.domain;
 
-import com.enterprise.shipping.contracts.recovery.Recovery.*;
+import com.enterprise.shipping.booking.contract.recovery.Recovery.*;
 
 /** Immutable task state. A stored observation survives booking-port failures and is delivered before another inquiry. */
 public record ReconciliationTask(String taskId, Reference reference, State state, long availableAt,

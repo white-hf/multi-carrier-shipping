@@ -1,7 +1,7 @@
 package com.enterprise.shipping.booking.infrastructure.persistence;
 
 import com.enterprise.shipping.booking.domain.*;
-import com.enterprise.shipping.contracts.recovery.Recovery.*;
+import com.enterprise.shipping.booking.contract.recovery.Recovery.*;
 import com.enterprise.shipping.booking.port.BookingStore;
 import com.enterprise.shipping.booking.port.BookingRecord;
 import java.sql.ResultSet;

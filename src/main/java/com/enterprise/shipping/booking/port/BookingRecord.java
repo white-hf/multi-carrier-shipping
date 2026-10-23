@@ -11,7 +11,7 @@ public record BookingRecord(String bookingId, BookingOwner owner, String idempot
 
     public BookingRecord {
         // Lookup identity must survive retries and configuration changes; never persist raw credentials.
-        new com.enterprise.shipping.contracts.recovery.Recovery.Reference(bookingId, bookingLocator,
+        new com.enterprise.shipping.booking.contract.recovery.Recovery.Reference(bookingId, bookingLocator,
                 intent.carrierId(), carrierContextReference, customerReference);
     }
 

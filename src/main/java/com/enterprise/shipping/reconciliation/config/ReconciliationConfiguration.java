@@ -1,6 +1,6 @@
 package com.enterprise.shipping.reconciliation.config;
 
-import com.enterprise.shipping.contracts.recovery.BookingRecoveryPort;
+import com.enterprise.shipping.booking.contract.recovery.BookingRecoveryPort;
 import com.enterprise.shipping.reconciliation.application.*;
 import com.enterprise.shipping.reconciliation.infrastructure.monitoring.MicrometerReconciliationObserver;
 import com.enterprise.shipping.reconciliation.infrastructure.persistence.JdbcReconciliationTaskStore;
@@ -20,6 +20,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(ReconciliationProperties.class)
 @EnableScheduling
+@org.springframework.context.annotation.Profile("!workflow")
 public class ReconciliationConfiguration {
     @Bean ReconciliationTaskStore reconciliationTaskStore(@Qualifier("reconciliationDataSource") DataSource source) {
         new ResourceDatabasePopulator(new ClassPathResource("reconciliation/schema-v1.sql")).execute(source);
@@ -39,4 +40,9 @@ public class ReconciliationConfiguration {
     ReconciliationScheduler reconciliationScheduler(ReconciliationDiscovery discovery, ReconciliationWorker worker) {
         return new ReconciliationScheduler(discovery, worker);
     }
+    // Current local deployment shares storage infrastructure; business access stays behind recovery contracts.
+    @Bean(name="reconciliationClock")
+    Clock reconciliationClock(@Qualifier("bookingClock") Clock clock){return clock;}
+    @Bean(name="reconciliationDataSource",destroyMethod="")
+    DataSource reconciliationDataSource(@Qualifier("bookingDataSource") DataSource source){return source;}
 }

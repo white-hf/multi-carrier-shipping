@@ -1,7 +1,7 @@
 package com.enterprise.shipping.reconciliation.application;
 
-import com.enterprise.shipping.contracts.recovery.BookingRecoveryPort;
-import com.enterprise.shipping.contracts.recovery.Recovery.*;
+import com.enterprise.shipping.booking.contract.recovery.BookingRecoveryPort;
+import com.enterprise.shipping.booking.contract.recovery.Recovery.*;
 import com.enterprise.shipping.reconciliation.config.ReconciliationProperties;
 import com.enterprise.shipping.reconciliation.domain.ReconciliationTask;
 import com.enterprise.shipping.reconciliation.port.*;

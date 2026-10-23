@@ -2,7 +2,7 @@ package com.enterprise.shipping.booking;
 
 import com.enterprise.shipping.shared.infrastructure.persistence.SqliteDataSources;
 import com.enterprise.shipping.shared.domain.ShipmentParcel;
-import com.enterprise.shipping.contracts.recovery.Recovery.*;
+import com.enterprise.shipping.booking.contract.recovery.Recovery.*;
 import com.enterprise.shipping.reconciliation.application.*;
 import com.enterprise.shipping.reconciliation.config.ReconciliationProperties;
 import com.enterprise.shipping.reconciliation.infrastructure.persistence.JdbcReconciliationTaskStore;
@@ -344,7 +344,7 @@ class BookingWorkflowTest {
         return new ReconciliationDiscovery(new BookingRecoveryService(store, clock), taskStore, recovery, clock, recoveryObserver);
     }
     ReconciliationWorker worker(ReconciliationTaskStore taskStore,
-            com.enterprise.shipping.contracts.recovery.BookingRecoveryPort bookingPort) {
+            com.enterprise.shipping.booking.contract.recovery.BookingRecoveryPort bookingPort) {
         return new ReconciliationWorker(taskStore, bookingPort, carrier, recovery, clock, recoveryObserver);
     }
 

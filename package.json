@@ -1,0 +1,14 @@
+{
+  "name": "shipping-workflow-browser-tests",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test:browser": "./mvnw -Pbrowser-tests -Dtest=WorkflowApiTest test",
+    "browser:install": "playwright install chromium"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1"
+  }
+}

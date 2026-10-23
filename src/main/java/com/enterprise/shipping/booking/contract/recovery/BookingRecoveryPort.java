@@ -1,6 +1,6 @@
-package com.enterprise.shipping.contracts.recovery;
+package com.enterprise.shipping.booking.contract.recovery;
 
-import com.enterprise.shipping.contracts.recovery.Recovery.*;
+import com.enterprise.shipping.booking.contract.recovery.Recovery.*;
 
 /** Booking-owned discovery and idempotent outcome application; replace local calls with RPC when extracted. */
 public interface BookingRecoveryPort {

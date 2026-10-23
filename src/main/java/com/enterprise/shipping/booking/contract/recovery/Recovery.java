@@ -1,4 +1,4 @@
-package com.enterprise.shipping.contracts.recovery;
+package com.enterprise.shipping.booking.contract.recovery;
 
 import java.util.List;
 import java.util.Objects;

@@ -10,9 +10,15 @@ target/
 .env
 .env.*
 !.env.example
+start-workflow.sh
 
 # Local booking and simulated-carrier persistence
 /data/
 *.db
 *.db-wal
 *.db-shm
+
+# Browser test dependencies and artifacts
+node_modules/
+playwright-report/
+test-results/

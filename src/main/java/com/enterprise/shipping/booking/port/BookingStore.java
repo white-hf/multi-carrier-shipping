@@ -1,7 +1,7 @@
 package com.enterprise.shipping.booking.port;
 
 import com.enterprise.shipping.booking.domain.*;
-import com.enterprise.shipping.contracts.recovery.Recovery.*;
+import com.enterprise.shipping.booking.contract.recovery.Recovery.*;
 import java.util.List;
 import java.util.Optional;
 

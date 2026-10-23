@@ -1,0 +1,37 @@
+CREATE TABLE shipment_requests (
+ request_id TEXT PRIMARY KEY NOT NULL, user_id TEXT NOT NULL,
+ sender_contact_name TEXT,
+ sender_company_name TEXT,
+ sender_address_line1 TEXT,
+ sender_address_line2 TEXT,
+ sender_city TEXT,
+ sender_province TEXT,
+ sender_postal_code TEXT,
+ sender_country_code TEXT,
+ sender_phone TEXT,
+ sender_email TEXT,
+ sender_residential TEXT,
+ recipient_contact_name TEXT,
+ recipient_company_name TEXT,
+ recipient_address_line1 TEXT,
+ recipient_address_line2 TEXT,
+ recipient_city TEXT,
+ recipient_province TEXT,
+ recipient_postal_code TEXT,
+ recipient_country_code TEXT,
+ recipient_phone TEXT,
+ recipient_email TEXT,
+ recipient_residential TEXT,
+ length TEXT NOT NULL, width TEXT NOT NULL, height TEXT NOT NULL, weight TEXT NOT NULL,
+ dimension_unit TEXT NOT NULL, weight_unit TEXT NOT NULL, package_type TEXT NOT NULL,
+ shipping_date TEXT NOT NULL, state TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+ UNIQUE(user_id,request_id)
+);
+CREATE TABLE shipment_quotes (
+ quote_id TEXT PRIMARY KEY NOT NULL, request_id TEXT NOT NULL, user_id TEXT NOT NULL,
+ provider_id TEXT NOT NULL, account_alias TEXT NOT NULL, provider_quote_id TEXT, carrier_id TEXT NOT NULL, carrier_name TEXT,
+ service_id TEXT NOT NULL, service_name TEXT, total_minor INTEGER NOT NULL CHECK(total_minor>=0),
+ currency TEXT NOT NULL, transit_days INTEGER, expires_at INTEGER NOT NULL,
+ FOREIGN KEY(user_id,request_id) REFERENCES shipment_requests(user_id,request_id),
+ UNIQUE(user_id,request_id,quote_id)
+);

@@ -1,7 +1,7 @@
 package com.enterprise.shipping.reconciliation.application;
 
-import com.enterprise.shipping.contracts.recovery.BookingRecoveryPort;
-import com.enterprise.shipping.contracts.recovery.Recovery.Cursor;
+import com.enterprise.shipping.booking.contract.recovery.BookingRecoveryPort;
+import com.enterprise.shipping.booking.contract.recovery.Recovery.Cursor;
 import com.enterprise.shipping.reconciliation.config.ReconciliationProperties;
 import com.enterprise.shipping.reconciliation.port.*;
 import com.enterprise.shipping.reconciliation.port.ReconciliationObserver.*;

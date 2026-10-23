@@ -1,0 +1,23 @@
+shipping:
+  market:
+    default-country: CA
+    comparison-currency: CAD
+    postal-code-patterns:
+      CA: '[A-Z]\d[A-Z]\d[A-Z]\d'
+  demo-user-id: ${SHIPPING_DEMO_USER_ID:demo-user}
+  database-path: ${SHIPPING_DATABASE_PATH:./data/workflow.db}
+  provider:
+    base-url: ${SHIPPING_PROVIDER_BASE_URL:}
+    username: ${SHIPPING_PROVIDER_USERNAME:}
+    password: ${SHIPPING_PROVIDER_PASSWORD:}
+    provider-id: sandbox
+    account-alias: local-account
+    shipments-path: ${SHIPPING_PROVIDER_SHIPMENTS_PATH:/rest/shipments}
+    rate-timeout: ${SHIPPING_PROVIDER_RATE_TIMEOUT:90s}
+    create-timeout: ${SHIPPING_PROVIDER_CREATE_TIMEOUT:60s}
+    read-timeout: ${SHIPPING_PROVIDER_READ_TIMEOUT:30s}
+    read-concurrency: 8
+    create-concurrency: 4
+    collection-seconds: 30
+    quote-lifetime-seconds: 780
+    label-hosts: ${SHIPPING_PROVIDER_LABEL_HOSTS:}

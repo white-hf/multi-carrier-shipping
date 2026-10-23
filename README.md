@@ -2,9 +2,23 @@
 
 # Multi-Carrier Shipping — Designing for Failure
 
-An independent demo of resilient distributed application patterns, using simulated carrier integrations and synthetic scenarios. Two workflows make the engineering tradeoffs concrete: **compare shipping rates** and **create a shipment**.
+An independent shipping application demonstrating resilient reads and safe external writes. The web workflow compares provider quotations, selects an exact offer, creates a shipment and retrieves its label. A separate simulator demonstrates direct-carrier fan-out and inquiry recovery.
 
-**Java 17 · Spring Boot · Spring JDBC · SQLite · Resilience4j · Micrometer · Prometheus**
+**Java 17 · Spring Boot · Spring JDBC · SQLite · Resilience4j · Micrometer · HTML · Bootstrap 5 · Vanilla JavaScript**
+
+## Current web workflow
+
+Use the `workflow` profile for the integrated product. Rates use a single shipping-provider adapter behind `RateComparisonPort`; the application persists immutable shipment input and exact quotation selection. Booking commits a user-scoped idempotency claim before quote-only external creation. Unknown outcomes remain pending/manual review because the provider's reference-lookup guarantee is unverified. Labels use an existing shipment identity, one frontend retrieval attempt and manual retry.
+
+External credentials stay in local backend configuration. This profile can create chargeable shipments against the configured provider; the separate `demo` profile uses synthetic integrations. The UI defaults to backend mode, with an explicitly marked mock preview option.
+
+[Local setup](docs/runbooks/workflow-setup.md) · [Frontend API contract](docs/design/application-api.md) · [Backend design](docs/design/backend-design.md) · [Delivery plan](docs/iterations/delivery-plan.md)
+
+**Delivery status:** I1, I2, and I3 implementation, frontend integration, backend API/SQLite/concurrency tests, Playwright headless Chromium E2E browser acceptance against a controlled local HTTP provider stub (103 passing tests), and live end-to-end verification against the external ShipTime Sandbox are complete.
+
+## Existing simulator reference
+
+The numbered sections below describe the separate `demo` profile and its engineering patterns, not an assertion that the real provider supports the simulator's recovery guarantees.
 
 ## 1. Rate Comparison: Bound Latency and Isolate Failures
 
@@ -38,7 +52,7 @@ These mechanisms provide durable local coordination and eventual outcome reconci
 | Recovery | Separate task ownership; neutral `BookingRecoveryPort`; no cross-module table joins or writes | Extract a worker process and replace in-process calls with an authenticated transport |
 | Carrier integration | Separate rate, submission, and inquiry ports | Add carrier adapters without changing core workflows |
 
-`quote`, `booking`, and `reconciliation` own their workflows and configuration. `contracts/recovery` defines communication between booking and recovery; `runtime` wires shared deployment resources; `shared` supplies reusable infrastructure and value types; `demo` contains simulated integrations.
+`quote`, `booking`, and `reconciliation` own their workflows and configuration. `booking/contract` defines communication with recovery; module/shared configuration wires deployment resources; `shared` supplies reusable infrastructure and value types; `demo` contains simulated integrations.
 
 **Current deployment:** one modular application with local SQLite storage. Shard routing, cross-shard uniqueness, multi-host deployment, and remote recovery transport are design extensions, not implemented features. A UUID alone does not route requests or preserve owner/key uniqueness across shards.
 
@@ -105,12 +119,16 @@ curl -sS http://127.0.0.1:8080/api/shipping/quotes \
 | Repeated booking with identical owner/key/intent | Same booking identity; no additional submission |
 | Carrier accepts but submission response is lost | `202 / PENDING_INQUIRY`, followed by inquiry-based recovery |
 
-**Latest code validation:** clean package build with **90 passing tests**, including concurrent claims, timeout/restart recovery, stale lease fencing, lost acknowledgements, UUIDv7 generation, and JDBC query plans. These are correctness checks, not production throughput benchmarks.
+**Latest code validation:** clean package build with **103 passing tests**, including workflow API/SQLite/concurrency/Playwright E2E acceptance, concurrent claims, timeout/restart recovery, stale lease fencing, lost acknowledgements, UUIDv7 generation, and JDBC query plans. These are correctness checks, not production throughput benchmarks.
 
 Metrics: `http://127.0.0.1:9091/actuator/prometheus`.
 
-[Demo commands and recovery walkthrough](DEMO.md)
+[Demo commands and recovery walkthrough](demo.md)
 
 Code entry points: [rate engine](src/main/java/com/enterprise/shipping/quote/application/HighFanOutAggregationEngine.java) · [booking service](src/main/java/com/enterprise/shipping/booking/application/BookingService.java) · [booking aggregate](src/main/java/com/enterprise/shipping/booking/domain/ShipmentBooking.java) · [recovery worker](src/main/java/com/enterprise/shipping/reconciliation/application/ReconciliationWorker.java) · [transport monitoring](src/main/java/com/enterprise/shipping/shared/infrastructure/monitoring/CarrierMonitoringAspect.java)
 
 Engineering references: [timeouts and backoff](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/) · [idempotent APIs](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/) · [Resilience4j](https://resilience4j.readme.io/docs/circuitbreaker).
+
+Product iteration: [requirements, prototype and delivery workflow](docs/README.md). The agreed design and roadmap govern the web workflow; simulator behavior is not evidence of provider acceptance.
+
+Manual product walkthrough: [startup and acceptance guide](docs/runbooks/manual-acceptance.md). Start with `./scripts/start-workflow.sh`; local credentials stay in the ignored `.env`.

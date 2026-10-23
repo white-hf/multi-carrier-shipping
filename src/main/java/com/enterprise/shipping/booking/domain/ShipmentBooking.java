@@ -79,8 +79,6 @@ public final class ShipmentBooking {
         if (candidate == null || !customerReference.equals(candidate.customerReference()))
             throw new IllegalArgumentException("Receipt must match the booking reference");
         required(candidate.carrierBookingId(), "Carrier booking ID required");
-        required(candidate.trackingNumber(), "Tracking number required");
-        required(candidate.labelUrl(), "Label URL required");
     }
 
     private void validateRestoredState() {

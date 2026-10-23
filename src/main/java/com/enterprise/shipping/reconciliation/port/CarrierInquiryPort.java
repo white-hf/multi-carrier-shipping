@@ -1,6 +1,6 @@
 package com.enterprise.shipping.reconciliation.port;
 
-import com.enterprise.shipping.contracts.recovery.Recovery.*;
+import com.enterprise.shipping.booking.contract.recovery.Recovery.*;
 import java.util.Optional;
 
 /** Read-only carrier lookup. An absent result never authorizes another submission. */

@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 @Configuration
 @EnableConfigurationProperties(BookingProperties.class)
 @EnableTransactionManagement
+@org.springframework.context.annotation.Profile("!workflow")
 public class BookingConfiguration {
 
     @Bean(destroyMethod = "close") @Primary

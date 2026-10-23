@@ -1,6 +1,6 @@
 package com.enterprise.shipping.reconciliation.port;
 
-import com.enterprise.shipping.contracts.recovery.Recovery.*;
+import com.enterprise.shipping.booking.contract.recovery.Recovery.*;
 import com.enterprise.shipping.reconciliation.domain.ReconciliationTask;
 import java.util.List;
 import java.util.Optional;
