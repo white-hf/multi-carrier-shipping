@@ -75,6 +75,30 @@ class ShipmentBookingTest {
         assertThat(booking.errorCode()).isEqualTo("INQUIRY_EXHAUSTED");
     }
 
+    @ParameterizedTest @EnumSource(ManualReviewReason.class)
+    void manualReviewReasonSurvivesRestoreWithoutReopeningAutomation(ManualReviewReason reason) {
+        var booking = pending();
+        booking.markOutcomeUnknown();
+        booking.requireManualReview(reason);
+        var restored = ShipmentBooking.restore(ID, "fedex", REFERENCE,
+                BookingStatus.MANUAL_REVIEW, null, reason.name());
+        assertThat(restored.errorCode()).isEqualTo(reason.name());
+        assertThat(restored.status().isTerminal()).isFalse(); // Manual review is unresolved.
+        assertThatThrownBy(restored::markOutcomeUnknown).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> restored.confirm(receipt())).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test void invalidManualReviewReasonCannotMutateOrRestoreABooking() {
+        var booking = pending();
+        booking.markOutcomeUnknown();
+        assertThatThrownBy(() -> booking.requireManualReview(null)).isInstanceOf(NullPointerException.class);
+        assertThat(booking.status()).isEqualTo(BookingStatus.PENDING_INQUIRY);
+        assertThat(booking.errorCode()).isEqualTo("CARRIER_OUTCOME_UNKNOWN");
+        assertThatThrownBy(() -> ShipmentBooking.restore(ID, "fedex", REFERENCE,
+                BookingStatus.MANUAL_REVIEW, null, "UNKNOWN_REASON"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @ParameterizedTest
     @EnumSource(value = BookingStatus.class, names = {"CONFIRMED", "FAILED", "MANUAL_REVIEW"})
     void closedAutomationStatesRejectEveryFurtherTransition(BookingStatus status) {

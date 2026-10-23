@@ -4,7 +4,7 @@
 **Status:** I1, I2 and I3 accepted for the agreed demo scope after independent review follow-up (2026-10-23)  
 **Design baseline:** [Backend technical design](../design/backend-design.md), including fixed demo user, user-based routing, core engineering challenges and the minimal HTML + Bootstrap 5 + Vanilla JavaScript frontend. External API names and the documentation reference are recorded in the design; detailed contracts stay in the supplied integration reference. Historical sandbox checks and current deterministic acceptance evidence are recorded separately in the acceptance report.
 
-**Inputs:** [PRD v1.3](../prd/shipping-workflow.md), [requirements review](../prd/requirements-review.md), [product prototype](../prototypes/shipping-workflow.html).
+**Inputs:** [PRD v1.4](../prd/shipping-workflow.md), [requirements review](../prd/requirements-review.md), [product prototype](../prototypes/shipping-workflow.html).
 
 ## 1. Planning assumptions
 
@@ -86,3 +86,13 @@ The user approved closing four review findings within the existing iteration sco
 4. Rerun acceptance and align delivery status with reproducible evidence.
 
 All four findings are closed by 123 passing backend tests and a separately passing browser journey. No new product features, provider creation retries, automated compensation or background label polling are introduced. See [acceptance report](../summaries/acceptance-test-report.md) for the final decision, commands, test counts and limitations.
+
+## Follow-up iteration
+
+[I4 — Manual review for unrecoverable shipment outcomes](iteration-04-manual-review.md) follows the accepted I1–I3 baseline. It exposes provider capability limits, safely escalates unresolved bookings and gives the frontend actionable guidance. Accepted on 2026-10-23: 134 backend cases and the separate browser journey passed; see the I4 summary for evidence.
+
+[I5 — Shipping label actions](iteration-05-label-actions.md) adds browser-based view, download, print, email-draft and share actions to the confirmed-shipment screen. Accepted on 2026-10-23: 135 backend tests (including guest-token authentication) and the separate browser journey passed; see the [I5 summary](../summaries/iteration-05-label-actions.md). No backend email service or new API is introduced.
+
+## Proposed quotation-recovery iteration
+
+[I6 — Durable requests and recoverable quotation attempts](iteration-06-request-idempotency.md) is proposed for review after authentication and I5 integration. It separates immutable request creation from quotation attempts, adds request/attempt idempotency and status recovery, and preserves booking uniqueness across rate retries. No implementation is approved or started.

@@ -1,5 +1,7 @@
 const { chromium } = require('playwright');
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const [appUrl, controlUrl] = process.argv.slice(2);
 async function ctl(mode) {
   const res = await fetch(`${controlUrl}?mode=${mode}`);
@@ -8,11 +10,11 @@ async function ctl(mode) {
 (async () => {
   const browser = await chromium.launch();
   try {
-    const context = await browser.newContext();
-    const page = await context.newPage();
+    let context = await browser.newContext();
+    let page = await context.newPage();
     page.on('dialog', dialog => dialog.accept());
 
-    // 1. Default Backend Mode & Step 1
+    // 1. Default Backend Mode, 2-Hour Guest Token Issuance & Step 1
     await ctl('normal');
     await ctl('reset-counts');
     await page.goto(appUrl, { waitUntil: 'networkidle' });
@@ -20,6 +22,22 @@ async function ctl(mode) {
     assert.strictEqual(await page.textContent('#mode-indicator'), 'Backend API');
     assert.strictEqual(await page.isVisible('#step-1'), true);
     assert.strictEqual(await page.isVisible('#step-2'), false);
+
+    // Verify 2-hour fingerprint-bound Guest Token was issued and unauthenticated requests are blocked (401)
+    await page.waitForFunction(() => !!sessionStorage.getItem('shipping.guestSession.v1'));
+    const guestSession = await page.evaluate(() => JSON.parse(sessionStorage.getItem('shipping.guestSession.v1')));
+    assert.ok(guestSession.token && guestSession.token.includes('.'), 'Guest token must be signed');
+    assert.ok(guestSession.userId && guestSession.userId.startsWith('guest-'), 'Guest userId must be derived');
+    assert.ok(guestSession.fingerprint && guestSession.fingerprint.startsWith('fp-'), 'Client fingerprint must be bound');
+    const unauthStatus = await page.evaluate(async () => {
+      const res = await fetch('/api/quotes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+      });
+      return res.status;
+    });
+    assert.strictEqual(unauthStatus, 401, 'Unauthenticated API call without Guest Token must return 401');
 
     // 2. Client-side & server-side field validation + input retention
     await page.fill('input[name="weight"]', '0');
@@ -132,8 +150,37 @@ async function ctl(mode) {
     await page.waitForSelector('#unknown-view:not([hidden])');
     assert.strictEqual(await page.textContent('#outcome-title'), 'Pending confirmation');
     assert.strictEqual((await ctl('stats')).createCalls, 1);
-    await page.click('#unknown-new');
-    await page.waitForSelector('#step-1:not([hidden])');
+    // 7b. Unsupported recovery becomes manual review and stops background polling.
+    let statusReads = 0;
+    page.on('request', request => {
+      if (request.method() === 'GET' && /\/api\/bookings\/[^/]+$/.test(new URL(request.url()).pathname)) statusReads++;
+    });
+    await ctl('manual-review');
+    await page.click('#check-status-btn');
+    await page.waitForFunction(() => document.getElementById('outcome-title').textContent === 'Manual review required');
+    assert.ok((await page.textContent('#outcome-explanation')).includes('Do not submit it again'));
+    assert.ok((await page.textContent('#unknown-id')).includes('AUTHORITATIVE_LOOKUP_UNSUPPORTED'));
+    assert.strictEqual(await page.isVisible('#check-status-btn'), false);
+    assert.strictEqual(await page.isVisible('#unknown-new'), false);
+    await page.click('.stepper .step[data-step="1"]');
+    assert.strictEqual(await page.textContent('#outcome-title'), 'Manual review required');
+    assert.strictEqual(await page.isVisible('#check-status-btn'), false);
+    const readsAfterManual = statusReads;
+    await page.waitForTimeout(2200);
+    assert.strictEqual(statusReads, readsAfterManual, 'Manual review must stop polling');
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForFunction(() => document.getElementById('outcome-title').textContent === 'Manual review required');
+    await page.waitForTimeout(300);
+    const readsAfterReload = statusReads;
+    await page.waitForTimeout(2200);
+    assert.strictEqual(statusReads, readsAfterReload, 'Reload may read once but must not resume polling');
+    assert.strictEqual((await ctl('stats')).createCalls, 1);
+
+    // Use an independent browser context for a genuinely separate shipment journey.
+    await context.close();
+    context = await browser.newContext();
+    page = await context.newPage();
+    await page.goto(appUrl, { waitUntil: 'networkidle' });
 
     // 8. Happy path creation + delayed label (1 automatic attempt -> 202 -> manual Retry label -> PDF available)
     await ctl('normal');
@@ -147,22 +194,122 @@ async function ctl(mode) {
     assert.strictEqual(await page.textContent('#result-id'), '98765');
     assert.strictEqual(await page.textContent('#result-tracking'), 'TRK-98765');
     await page.waitForFunction(() => document.getElementById('label-status-text').textContent.includes('Label not ready; use Retry label later.'));
-    assert.strictEqual(await page.isVisible('#label-link'), false);
+    assert.strictEqual(await page.textContent('#success-view h2'), 'Shipment confirmed');
+    assert.strictEqual(await page.isVisible('#label-link'), true);
+    assert.strictEqual(await page.getAttribute('#label-link', 'aria-disabled'), 'true');
+    for (const id of ['label-download-btn', 'label-print-btn', 'label-share-btn']) {
+      assert.strictEqual(await page.isDisabled('#' + id), true);
+    }
+    assert.strictEqual(await page.getAttribute('#label-email-link', 'aria-disabled'), 'true');
     assert.strictEqual(await page.isVisible('#refresh-label-btn'), true);
     assert.strictEqual((await ctl('stats')).createCalls, 1);
     assert.strictEqual((await ctl('stats')).labelCalls, 1);
+
+    await ctl('label-error');
+    await page.click('#refresh-label-btn');
+    await page.waitForFunction(() => document.getElementById('label-status-text').textContent.includes('retrieval failed'));
+    assert.strictEqual(await page.isDisabled('#label-download-btn'), true);
+    assert.strictEqual((await ctl('stats')).createCalls, 1);
 
     await ctl('label-pdf');
     await page.click('#refresh-label-btn');
     await page.waitForFunction(() => document.getElementById('label-status-text').textContent.includes('Label available.'));
     assert.strictEqual(await page.isVisible('#label-link'), true);
-    assert.strictEqual(await page.isVisible('#refresh-label-btn'), false);
+    assert.strictEqual(await page.textContent('#refresh-label-btn'), 'Reload label');
     assert.ok((await page.getAttribute('#label-link', 'href')).startsWith('blob:'));
     assert.strictEqual((await ctl('stats')).createCalls, 1);
-    assert.strictEqual((await ctl('stats')).labelCalls, 2);
+    assert.strictEqual((await ctl('stats')).labelCalls, 3);
+
+    // All ready actions reuse the bytes already read for this shipment.
+    const fixture = fs.readFileSync(path.join(__dirname, '../../src/test/resources/fixtures/shipping-label.pdf'));
+    const labelHref = await page.getAttribute('#label-link', 'href');
+    assert.strictEqual(await page.getAttribute('#label-link', 'aria-disabled'), 'false');
+    const downloadPromise = page.waitForEvent('download');
+    await page.click('#label-download-btn');
+    const downloaded = await downloadPromise;
+    assert.strictEqual(downloaded.suggestedFilename(), 'shipping-label-98765.pdf');
+    assert.deepStrictEqual(fs.readFileSync(await downloaded.path()), fixture);
+    const email = await page.getAttribute('#label-email-link', 'href');
+    assert.ok(email.startsWith('mailto:'));
+    assert.ok(decodeURIComponent(email).includes('Attach the downloaded PDF'));
+    assert.ok(!email.includes('blob:'));
+
+    await page.evaluate(() => {
+      window.__openedLabels = [];
+      window.open = (...args) => { window.__openedLabels.push(args); return null; };
+    });
+    await page.click('#label-print-btn');
+    assert.strictEqual(await page.evaluate(() => window.__openedLabels[0][0]), labelHref);
+    assert.ok((await page.textContent('#notice')).includes('print button in the PDF viewer'));
+
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'canShare', { configurable: true, value: data => data.files?.length === 1 });
+      Object.defineProperty(navigator, 'share', { configurable: true, value: async data => {
+        window.__sharedLabel = { name: data.files[0].name, type: data.files[0].type, size: data.files[0].size, url: data.url || null };
+      } });
+    });
+    await page.click('#label-share-btn');
+    assert.deepStrictEqual(await page.evaluate(() => window.__sharedLabel), {
+      name: 'shipping-label-98765.pdf', type: 'application/pdf', size: fixture.length, url: null
+    });
+    let downloadCount = 0;
+    page.on('download', () => downloadCount++);
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'share', { configurable: true, value: async () => {
+        throw new DOMException('Share cancelled', 'AbortError');
+      } });
+    });
+    await page.click('#label-share-btn');
+    await page.waitForTimeout(100);
+    assert.strictEqual(downloadCount, 0, 'Cancelling share must not download a file');
+    await page.evaluate(() => Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => false }));
+    const fallbackPromise = page.waitForEvent('download');
+    await page.click('#label-share-btn');
+    assert.deepStrictEqual(fs.readFileSync(await (await fallbackPromise).path()), fixture);
+    assert.ok((await page.textContent('#notice')).includes('share it from your downloads'));
+    assert.strictEqual((await ctl('stats')).labelCalls, 3);
+    assert.strictEqual((await ctl('stats')).createCalls, 1);
+    assert.strictEqual(await page.evaluate(() => sessionStorage.getItem('shipping.activeBooking.v1').includes('blob:')), false);
+
+    // Reload restores the booking, not expired in-memory blob URLs; explicitly reload the label.
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector('#success-view:not([hidden])');
+    assert.strictEqual(await page.isDisabled('#label-download-btn'), true);
+    assert.strictEqual((await ctl('stats')).labelCalls, 3);
+    await page.click('#refresh-label-btn');
+    await page.waitForFunction(() => !document.getElementById('label-download-btn').disabled);
+    assert.strictEqual((await ctl('stats')).labelCalls, 4);
+
+    // URL-only providers remain usable without CORS-dependent cross-origin PDF fetching.
+    await ctl('label-url');
+    await page.click('#refresh-label-btn');
+    await page.waitForFunction(() => document.getElementById('label-link').href === 'https://labels.example.com/label.pdf');
+    await page.evaluate(() => {
+      window.__openedLabels = [];
+      window.open = (...args) => { window.__openedLabels.push(args); return null; };
+    });
+    await page.click('#label-download-btn');
+    assert.strictEqual(await page.evaluate(() => window.__openedLabels[0][0]), 'https://labels.example.com/label.pdf');
+    assert.ok((await page.textContent('#label-action-help')).includes('Provider-hosted label'));
+    assert.strictEqual((await ctl('stats')).createCalls, 1);
 
     await page.click('#new-shipment-btn');
     await page.waitForSelector('#step-1:not([hidden])');
+    assert.strictEqual(await page.getAttribute('#label-link', 'href'), '#');
+    assert.strictEqual(await page.isDisabled('#label-download-btn'), true);
+
+    // Demo preview never pretends to provide a real shipping label.
+    await page.goto(appUrl + '?mock=1', { waitUntil: 'networkidle' });
+    await page.click('#get-rates-btn');
+    await page.waitForSelector('#step-2:not([hidden]) .rate-card');
+    await page.click('.rate-card:first-child');
+    await page.click('#review-btn');
+    await page.click('#create-btn');
+    await page.waitForSelector('#success-view:not([hidden])');
+    assert.ok((await page.textContent('#label-status-text')).includes('no real shipment or label'));
+    assert.strictEqual(await page.isDisabled('#label-download-btn'), true);
+    assert.strictEqual(await page.getAttribute('#label-email-link', 'aria-disabled'), 'true');
+    assert.strictEqual((await ctl('stats')).createCalls, 1);
   } finally {
     await browser.close();
   }

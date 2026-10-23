@@ -1,6 +1,7 @@
 package com.enterprise.shipping.integration;
 
 import com.enterprise.shipping.integration.config.ProviderProperties;
+import com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort;
 import com.enterprise.shipping.quote.port.RateProviderPort;
 import com.enterprise.shipping.quote.domain.ShippingQuote;
 import com.enterprise.shipping.booking.port.*;
@@ -28,7 +29,7 @@ import java.util.function.Supplier;
  * for each operation type (rates, creates, labels) to prevent downstream rate timeouts 
  * or failures from exhausting creation/booking resources.
  */
-public class SandboxShippingAdapter implements RateProviderPort, ShipmentProviderPort, LabelProviderPort {
+public class SandboxShippingAdapter implements RateProviderPort, ShipmentProviderPort, LabelProviderPort, RecoveryCapabilityPort {
 
     private final ProviderProperties p;
     private final ObjectMapper mapper;
@@ -80,6 +81,15 @@ public class SandboxShippingAdapter implements RateProviderPort, ShipmentProvide
                 .codecs(c -> c.defaultCodecs().maxInMemorySize(4 * 1024 * 1024))
                 .defaultHeaders(h -> h.setBasicAuth(p.username(), p.password()))
                 .build();
+    }
+
+    @Override
+    public Capabilities capabilities(String providerId, String accountAlias) {
+        if (!p.providerId().equals(providerId) || !p.accountAlias().equals(accountAlias)) {
+            return new Capabilities(Support.UNVERIFIED, Support.UNVERIFIED);
+        }
+        // No documented authoritative reference lookup or guaranteed safe creation retry.
+        return new Capabilities(Support.UNSUPPORTED, Support.UNVERIFIED);
     }
 
     @Override

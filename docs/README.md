@@ -84,3 +84,11 @@ The supplied PRD/prototype headings and display branding were normalized to the 
 - [Acceptance & E2E test report](summaries/acceptance-test-report.md) — full English test report covering I1, I2, I3, Playwright browser E2E, and live ShipTime Sandbox verification.
 
 Backend checks run with `./mvnw clean test`. Browser checks run separately with `npm ci`, `npm run browser:install`, and `npm run test:browser`. Both use controlled local HTTP provider stubs without creating chargeable external shipments; see the workflow runbook.
+
+## Follow-up iteration
+
+[I4 — Manual review for unresolved shipments](iterations/iteration-04-manual-review.md): accepted on 2026-10-23. See the [I4 summary](summaries/iteration-04-manual-review.md). I1–I3 acceptance remains the recorded baseline.
+
+[I5 — Shipping label actions](iterations/iteration-05-label-actions.md): browser-based label actions; accepted on 2026-10-23; see the [I5 summary](summaries/iteration-05-label-actions.md).
+
+[I6 — Durable requests and recoverable quotation attempts](iterations/iteration-06-request-idempotency.md): proposed for review only; implementation not started.

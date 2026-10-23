@@ -48,3 +48,23 @@ The preceding implementation report recorded live rate retrieval (18 quotes, app
 - Rate/create circuit separation is tested. Sustained-load behavior, saturation limits, P95/P99 latency and production cluster/shard operation are not established by this acceptance suite.
 - SQLite, the configured demo user and local deployment remain the agreed demo posture. There is no production authentication or implemented database sharding.
 - Frontend assets need no Node build. Node and Playwright are only required for browser acceptance testing.
+
+## I4 follow-up — 2026-10-23
+
+**Accepted for the agreed demo scope.** Current backend suite: **134 passed**, zero failures/errors/skips (`./mvnw clean test`). The separate browser suite passed one journey, extended with manual-review escalation, refresh persistence, hidden retry controls and polling cessation (`npm run test:browser`).
+
+Recovery now converts unsupported/unverified provider lookup into explicit booking `MANUAL_REVIEW`, retaining a deduplicated paused task. Tests cover task-first interruption recovery, zero provider lookup/retry calls, manual replay and duplicate prevention, and both directions of the concurrent confirmation race. See the [I4 summary](iteration-04-manual-review.md) for detail.
+
+The earlier 123-case count and eight-stage browser account above describe the I1–I3 baseline; they have not been retroactively changed. Manual verification still takes place outside the application, without resolution endpoints or an automatic provider reconciliation capability. No new live sandbox shipment was created during I4.
+
+## Guest Session Token & Client Fingerprint Security — 2026-10-23
+
+**Accepted.** Current backend suite: **135 passed**, zero failures/errors/skips (`./mvnw test`). The separate browser suite passed (`./mvnw test -Pbrowser-tests`).
+
+- **2-Hour Fingerprint-Bound Guest Token (`GuestSessionTokenService` & `WorkflowAuthController`)**: `POST /api/auth/guest` derives a privacy-safe `guest-<hmac>` identity from the client instance seed and signs a 2-hour (`7200s`) HMAC-SHA256 token bound to the client's environment fingerprint hash (`X-Client-Fingerprint`).
+- **Unified API Enforcement (`WorkflowRequestFilter` & `WorkflowContextConfiguration`)**: `/api/quotes` and `/api/bookings/**` require a valid Bearer token and matching `X-Client-Fingerprint` (falling back to `SameSite=Strict; HttpOnly` cookies on `GET` requests for direct browser PDF label navigation). Controllers and services consume `UserContext.userId()` uniformly without guest-specific branching.
+- **Verification**: `WorkflowApiTest.enforcesGuestTokenAndClientFingerprintAndIsolatesGuestSessions` and `tests/browser/workflow-journey.cjs` verify `401 UNAUTHORIZED` on missing/expired tokens or mismatched fingerprints, deterministic same-client guest ID resolution, 2-hour TTL enforcement, and strict cross-guest resource isolation (`404 RESOURCE_NOT_FOUND`).
+
+## I5 follow-up — 2026-10-23
+
+**Accepted for the agreed demo scope.** Backend regression: **135 passed**, zero failures/errors/skips. The separate browser journey passed label pending/error/ready/demo states, verified downloaded PDF bytes (`shipping-label.pdf` fixture), print-viewer dispatch, email-draft content, native file sharing/cancellation, download fallback, URL-only viewer fallback and reset/reload while retaining 2-hour Guest Token + Fingerprint authentication headers. Label actions never repeated shipment creation. See [I5 summary](iteration-05-label-actions.md) for evidence and native browser/OS limitations. No new backend API or chargeable sandbox creation was introduced.

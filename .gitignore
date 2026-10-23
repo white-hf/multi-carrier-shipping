@@ -5,6 +5,7 @@ target/
 *.iml
 .DS_Store
 *.log
+/logs/
 
 # Local configuration and credentials
 .env

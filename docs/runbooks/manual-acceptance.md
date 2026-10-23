@@ -43,10 +43,15 @@ Open <http://127.0.0.1:8080/> after startup. Ensure **Demo mode is off** and the
 1. Enter shipment details and click **Compare shipping rates**. The provider can take tens of seconds.
 2. Select an offer and review the service and price.
 3. Confirm one shipment; this calls the sandbox and may charge the configured account.
-4. Open the label, or use **Retry label** if it is pending.
-5. Refresh the same tab to restore the existing booking.
+4. Use **View label**, **Download PDF**, **Print label**, **Email label** or **Share label** once ready. Use **Retry label** while pending.
+   Email opens your mail app; attach the downloaded PDF yourself. Print opens the PDF viewer. Sharing uses the browser/OS when supported, otherwise downloads the PDF or opens the provider viewer.
+5. Refresh the same tab to restore the existing booking. Use **Retry label** / **Reload label** to retrieve its PDF again; no new shipment is created.
 
-If creation shows **Pending confirmation**, use **Check Status** for the existing operation rather than submitting it again.
+If creation shows **Pending confirmation**, use **Check Status** for the existing operation rather than submitting it again. After recovery detects unsupported lookup, **Manual review required** appears: polling stops and retry controls disappear. Keep the booking reference and contact support to verify the provider result. Refreshing does not create a new shipment.
+
+## Logs
+
+Application logs are written automatically to `logs/shipping.log` and the console. Files roll daily or at 10 MB, with compressed archives retained for up to 14 days and a 1 GB archive limit. Set `SHIPPING_LOG_FILE` in `.env` to change the path. The `logs/` directory is ignored by Git.
 
 ## Check and stop
 

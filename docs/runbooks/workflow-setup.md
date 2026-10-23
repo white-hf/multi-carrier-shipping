@@ -43,3 +43,7 @@ Start the application after exporting the local provider configuration:
 The application binds to loopback by default. Missing credentials/configuration fail startup rather than fall back to fake rates. Four application tables are initialized through checksummed versioned migrations; a separate schema-history table is infrastructure metadata. Do not reuse an earlier demo database as the workflow database. Do not edit an already-applied migration.
 
 Application endpoint examples are in [the frontend handoff](../design/application-api.md). Provider details remain in the supplied integration reference. Automated backend and browser tests use local stubs and synthetic accounts; no credentials are needed for those tests. Never run uncontrolled real shipment-creation retries. Creation can be chargeable even in the provided sandbox.
+
+## Application logs
+
+Spring Boot/Logback writes to the console and `logs/shipping.log` by default. No shell redirection is required. Archives use `shipping.log.YYYY-MM-DD.N.gz`, rolling daily or at 10 MB. Retention is 14 days with a 1 GB archive cap; cleanup also runs at startup. The active log can add up to one file beyond the archive cap. Override the active file with `SHIPPING_LOG_FILE`; ensure its directory is writable. Relative paths resolve from the working directory (the launcher uses the project root). Timestamps, levels and request IDs are included. Custom log directories outside `logs/` must also stay out of version control.

@@ -127,7 +127,8 @@ public class ShipmentApplicationService {
         if (!store.outcome(claim, booking, clock.millis())) {
             var latest = store.byId(user, id)
                     .orElseThrow(WorkflowException::missing);
-            if (latest.status() == BookingStatus.PENDING_INQUIRY && booking.status() == BookingStatus.CONFIRMED) {
+            if ((latest.status() == BookingStatus.PENDING_INQUIRY || latest.status() == BookingStatus.MANUAL_REVIEW)
+                    && booking.status() == BookingStatus.CONFIRMED) {
                 store.outcome(latest, booking, clock.millis());
             }
         }
@@ -164,7 +165,8 @@ public class ShipmentApplicationService {
                         : ShipmentWorkflowObserver.Outcome.UNKNOWN;
         observer.record(ShipmentWorkflowObserver.Operation.REPLAY, outcomeTag, 0);
 
-        HttpStatus httpStatus = row.status().isTerminal() ? HttpStatus.OK : HttpStatus.ACCEPTED;
+        HttpStatus httpStatus = row.status().isTerminal() || row.status() == BookingStatus.MANUAL_REVIEW
+                ? HttpStatus.OK : HttpStatus.ACCEPTED;
         return new Submission(view(row), httpStatus, null);
     }
 
@@ -214,6 +216,7 @@ public class ShipmentApplicationService {
             case CONFIRMED -> "CONFIRMED";
             case FAILED -> "REJECTED";
             case PENDING -> "PENDING";
+            case MANUAL_REVIEW -> "MANUAL_REVIEW";
             default -> "PENDING_CONFIRMATION";
         };
 

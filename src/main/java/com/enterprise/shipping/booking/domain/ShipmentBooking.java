@@ -8,7 +8,6 @@ import java.util.Objects;
  */
 public final class ShipmentBooking {
     private static final String OUTCOME_UNKNOWN = "CARRIER_OUTCOME_UNKNOWN";
-    private static final String INQUIRY_EXHAUSTED = "INQUIRY_EXHAUSTED";
 
     private final BookingId id;
     private final String carrierId;
@@ -61,8 +60,12 @@ public final class ShipmentBooking {
     }
 
     public void requireManualReview() {
+        requireManualReview(ManualReviewReason.INQUIRY_EXHAUSTED);
+    }
+
+    public void requireManualReview(ManualReviewReason reason) {
         requireStatus(BookingStatus.PENDING_INQUIRY);
-        this.errorCode = INQUIRY_EXHAUSTED;
+        this.errorCode = Objects.requireNonNull(reason, "Manual review reason required").name();
         this.status = BookingStatus.MANUAL_REVIEW;
     }
 
@@ -88,11 +91,16 @@ public final class ShipmentBooking {
             return;
         }
         if (receipt != null) throw new IllegalArgumentException("Unconfirmed booking cannot have a receipt");
+        if (status == BookingStatus.MANUAL_REVIEW) {
+            if (!ManualReviewReason.accepts(errorCode))
+                throw new IllegalArgumentException("Manual review reason required");
+            return;
+        }
         String expectedError = switch (status) {
             case PENDING -> null;
             case FAILED -> RejectionReason.CARRIER_REJECTED.name();
             case PENDING_INQUIRY -> OUTCOME_UNKNOWN;
-            case MANUAL_REVIEW -> INQUIRY_EXHAUSTED;
+            case MANUAL_REVIEW -> throw new IllegalStateException("Manual review already checked");
             case CONFIRMED -> throw new IllegalStateException("Confirmation already checked");
         };
         if (!Objects.equals(expectedError, errorCode))

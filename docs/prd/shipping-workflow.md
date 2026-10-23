@@ -1,6 +1,6 @@
 # Multi-Carrier Shipping — Rate Comparison & Shipment Creation
 
-**Product Requirements Document | Version 1.3 | Product Decisions Updated; Integration Validation Pending**  
+**Product Requirements Document | Version 1.4 | Product Decisions Updated; Integration Validation Pending**  
 **Context:** Independent shipping web application — product iteration  
 **Product:** Web application
 
@@ -78,7 +78,7 @@ Each shipping option displays carrier name, service, total price including taxes
 
 Before final submission, show shipment route, package information, selected service and total amount. The user clicks “Create Shipment.” Display a pending state and prevent accidental repeated submission. Shipment creation uses the original shipment information associated with that exact selected quotation.
 
-**Acceptance:** successful creation presents an actual confirmation; failures never display false success. An uncertain outcome remains Pending Confirmation and does not automatically trigger a duplicate operation. Retries retain the same operation identity rather than starting another shipment.
+**Acceptance:** successful creation presents an actual confirmation; failures never display false success. An uncertain outcome first appears as Pending Confirmation and never automatically triggers a duplicate operation. If safe provider recovery is unavailable, show Manual Review Required with the booking reference and guidance to contact support; stop polling and hide retry/recreation controls for that operation. Refresh preserves this state. Any replay retains the same operation identity rather than starting another shipment.
 
 ### FR-05 Shipment Confirmation (P0)
 

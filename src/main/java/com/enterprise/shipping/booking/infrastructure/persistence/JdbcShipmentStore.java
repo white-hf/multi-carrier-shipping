@@ -69,7 +69,9 @@ public final class JdbcShipmentStore implements ShipmentStore {
                 UPDATE shipment_bookings 
                 SET status = ?, provider_shipment_id = ?, tracking_number = ?, label_url = ?,
                     label_status = ?, error_code = ?, updated_at = ?, version = version + 1
-                WHERE user_id = ? AND booking_id = ? AND version = ? AND status IN ('PENDING', 'PENDING_INQUIRY')
+                WHERE user_id = ? AND booking_id = ? AND version = ?
+                  AND (status IN ('PENDING', 'PENDING_INQUIRY')
+                       OR (status = 'MANUAL_REVIEW' AND ? = 'CONFIRMED'))
                 """,
                 booking.status().name(),
                 receipt == null ? null : receipt.carrierBookingId(),
@@ -80,7 +82,8 @@ public final class JdbcShipmentStore implements ShipmentStore {
                 now,
                 expected.userId(),
                 expected.id(),
-                expected.version()) == 1;
+                expected.version(),
+                booking.status().name()) == 1;
     }
 
     @Override

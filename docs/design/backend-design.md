@@ -1,8 +1,8 @@
 # Shipping workflow — backend technical design
 
-**Version:** 0.5  
-**Status:** Agreed design baseline; integration verification pending; not an implementation claim  
-**Date:** 2026-10-22  
+**Version:** 0.6  
+**Status:** Demo design baseline through I4; implementation evidence is recorded in iteration summaries  
+**Date:** 2026-10-23  
 **Inputs:** [PRD v1.3](../prd/shipping-workflow.md), [requirements review](../prd/requirements-review.md), [delivery plan](../iterations/delivery-plan.md).
 
 ## 1. Scope and principal decisions
@@ -154,15 +154,21 @@ sequenceDiagram
 
 ### 3.3 Recovery and restart
 
-Booking states: `PENDING → CONFIRMED | REJECTED | PENDING_CONFIRMATION`; unresolved states can become `CONFIRMED` from authoritative evidence or `MANUAL_REVIEW` after the recovery budget. Confirmed creation never becomes failed because its label is delayed. State transitions use `WHERE booking_id = ? AND version = ?` and allowed prior states; inspect the affected-row count.
+Booking states: `PENDING → CONFIRMED | REJECTED | PENDING_CONFIRMATION`; unresolved states can become `CONFIRMED` from authoritative evidence or `MANUAL_REVIEW` when safe automatic recovery is unavailable or a supported inquiry budget is exhausted. Confirmed creation never becomes failed because its label is delayed. State transitions use `WHERE booking_id = ? AND version = ?` and allowed prior states; inspect the affected-row count.
 
 A scheduled discovery pass calls booking's recovery contract for overdue unresolved rows using keyset pagination. Reset the scan after its end so an older unresolved row remains discoverable. The deadline includes transport timeout plus a grace period; expiry permits inquiry, never another create call.
 
 Recovery tasks are **created only for unresolved work**, using a unique booking locator/ID. A crash between marking uncertainty and creating a task is repaired by discovery. Normal success adds no task insertion/deletion. Configure a starting budget, for example a 15-second scan, batches of 100 and bounded read-only lookup attempts with exponential backoff/jitter; these are tuning proposals, not provider guarantees.
 
-Workers atomically claim due tasks using a lease token and version. Lookup happens outside transactions. Persist the observed result before delivering it to booking; if delivery or acknowledgement fails, redeliver the saved observation rather than repeat creation. Expired leases can be reclaimed; stale workers cannot save or delete with an old token/version. Positive evidence must match provider/account/reference and sufficient receipt identity. A concurrent late create response and lookup result must converge or raise manual review on inconsistent shipment IDs.
+The current workflow uses `RecoveryCapabilityPort` to obtain local, typed provider/account capabilities: authoritative lookup and creation idempotency each have `SUPPORTED`, `UNSUPPORTED` or `UNVERIFIED` support. The sandbox reports unsupported lookup and unverified creation idempotency. This capability check sends no HTTP request. Even supported metadata alone cannot enable an unimplemented lookup/retry policy; it falls back to `AUTOMATIC_RECOVERY_UNAVAILABLE` in this workflow.
 
-Provider capability policy is explicit: `AUTHORITATIVE_LOOKUP`, `TRACKING_EVIDENCE_ONLY`, or `NO_LOOKUP`. Only the first enables automatic confirmation recovery under its verified contract. Tracking-only and unsupported cases retain uncertainty and escalate to manual review without pretending an inquiry can reconstruct a receipt. A missing tracking result proves neither non-creation nor non-charging. No automatic void, refund, or Saga compensation is in scope.
+For the unsupported/unverified case, discovery commits the deduplicated `PAUSED` task first, then calls booking's contract to compare-and-set `PENDING_INQUIRY -> MANUAL_REVIEW` with the explicit reason. These are separate short commits owned by each module. If the second write fails, the unresolved booking remains discoverable; an existing task does not suppress completion on the next pass. Manual-review bookings leave the partial unresolved index and are not repeatedly scanned. No DDL change is required.
+
+A concurrent confirmation cannot be downgraded by recovery. A valid result from the original in-flight create call may still confirm the same booking after manual escalation through a fenced update; only confirmation can supersede this state through that path. A paused task can remain as historical evidence after that race and is never automatically executed. No external resolution endpoint is exposed.
+
+The separate legacy simulator retains its inquiry/lease worker. Adding a verified lookup workflow to this product later would require bounded read-only inquiry, fenced task delivery and authoritative matching evidence; that is not implemented by I4.
+
+Authoritative shipment lookup must be distinguished from package tracking. Unsupported or unverified lookup escalates to manual review without pretending tracking can reconstruct the creation receipt. A missing tracking result proves neither non-creation nor non-charging. No automatic void, refund, or Saga compensation is in scope.
 
 The supplied integration specification does not establish server-side create idempotency or authoritative lookup by a client reference. **The initial sandbox policy is `NO_LOOKUP` for a lost creation result**: persist uncertainty and escalate to manual review. A paginated shipment list may assist investigation only after its returned identity and consistency are verified; it is not an automatic matching algorithm. Get Shipment requires an already-known provider shipment ID, so it cannot recover an ID lost with the create response. Public carrier capabilities do not automatically apply to this intermediary.
 
@@ -385,3 +391,7 @@ Execution may reuse inspected code, but module reuse and passing legacy tests ar
 A successful HTTP status alone cannot confirm a shipment. Validate `shipId` as a positive signed 64-bit integer (JSON integer or decimal-digit string) before constructing the receipt; reject Boolean, zero, negative, fractional, missing or out-of-range values. A malformed creation result is an unknown outcome, retaining the original local booking for manual review without another creation attempt. Current configurable deployment defaults are 90 seconds for rates, 60 seconds for creation and 30 seconds for label reads; these are budgets, not measured latency guarantees.
 
 The automated workflow restart checks close and reopen a file-backed SQLite database and reconstruct application/recovery services. They cover interruption after durable claim, unknown acceptance, failed confirmation persistence and confirmed replay. They do not claim operating-system crash or production cluster failover validation.
+
+### I4 — Manual-review behavior
+
+The status API returns `MANUAL_REVIEW` explicitly; same-key replay returns the existing booking with HTTP 200 and no `Retry-After`. The frontend displays the booking reference and support guidance, hides retry/recreation controls for that operation, and stops polling. Refresh preserves manual review and may perform one current-status read. No new login, table, process, resolution endpoint, automatic refund, creation retry or background label polling is introduced. Unknown remote outcomes still require verification outside the application.

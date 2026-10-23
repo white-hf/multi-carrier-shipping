@@ -94,9 +94,12 @@ class ShipmentRestartTest {
         assertThat(competing.booking().bookingId()).isEqualTo(before.id());
 
         var discovery=new PendingShipmentDiscovery(new ShipmentRecoveryService(store),
-                new JdbcPendingTaskStore(new JdbcTemplate(source)),restartedClock,(a,b,c,d,e)->{});
+                new JdbcPendingTaskStore(new JdbcTemplate(source)),restartedClock,(a,b,c,d,e)->{},(providerId,accountAlias)->
+                        new com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort.Capabilities(
+                                com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort.Support.UNSUPPORTED,
+                                com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort.Support.UNVERIFIED));
         discovery.discover();discovery.discover();
-        assertThat(store.byKey("user","restart-key").orElseThrow().status()).isEqualTo(BookingStatus.PENDING_INQUIRY);
+        assertThat(store.byKey("user","restart-key").orElseThrow().status()).isEqualTo(BookingStatus.MANUAL_REVIEW);
         var jdbc=new JdbcTemplate(source);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM booking_reconciliation_tasks",Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT state FROM booking_reconciliation_tasks",String.class)).isEqualTo("PAUSED");
@@ -113,6 +116,74 @@ class ShipmentRestartTest {
         assertThat(replay.httpStatus()).isEqualTo(HttpStatus.OK);
         assertThat(replay.booking()).isEqualTo(first.booking());
         assertThat(accepted).hasValue(1);
+    }
+
+    @Test void interruptedManualReviewResumesAfterReopeningWithAnExistingTask() {
+        open();
+        var first = service(store, submission -> {
+            accept();
+            throw new IllegalStateException("Response lost");
+        }, initialClock).create("user", "manual-key", "quote-1");
+        Clock recoveryClock = Clock.offset(initialClock, Duration.ofMinutes(1));
+        var recovery = spy(new ShipmentRecoveryService(store));
+        doThrow(new DataAccessResourceFailureException("Interrupted after task commit"))
+                .when(recovery).requireManualReview(any(), any(), anyLong());
+        var discovery = manualDiscovery(recovery, new JdbcPendingTaskStore(new JdbcTemplate(source)), recoveryClock);
+        discovery.discover(); // Task commit survives the failed booking transition.
+        var jdbc = new JdbcTemplate(source);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM booking_reconciliation_tasks", Integer.class)).isEqualTo(1);
+        assertThat(store.byKey("user", "manual-key").orElseThrow().status()).isEqualTo(BookingStatus.PENDING_INQUIRY);
+        source.close();
+        open();
+        discovery = manualDiscovery(new ShipmentRecoveryService(store),
+                new JdbcPendingTaskStore(new JdbcTemplate(source)), recoveryClock);
+        discovery.discover();
+        discovery.discover();
+        var row = store.byKey("user", "manual-key").orElseThrow();
+        assertThat(row.status()).isEqualTo(BookingStatus.MANUAL_REVIEW);
+        assertThat(row.restore().errorCode()).isEqualTo("AUTHORITATIVE_LOOKUP_UNSUPPORTED");
+        assertThat(store.overdue(recoveryClock.millis(), -1, "", 100)).isEmpty();
+        assertThat(new JdbcTemplate(source).queryForObject("SELECT count(*) FROM booking_reconciliation_tasks", Integer.class)).isEqualTo(1);
+        var replay = service(store, submission -> { throw new AssertionError("Manual replay must not dispatch"); }, recoveryClock)
+                .create("user", "manual-key", "quote-1");
+        assertThat(replay.httpStatus()).isEqualTo(HttpStatus.OK);
+        assertThat(replay.booking().bookingId()).isEqualTo(first.booking().bookingId());
+        assertThat(replay.booking().status()).isEqualTo("MANUAL_REVIEW");
+        assertThat(accepted).hasValue(1);
+    }
+
+    @Test void confirmationWinningTheCompareAndSetCannotBeDowngradedToManualReview() {
+        open();
+        service(store, submission -> { accept(); throw new IllegalStateException("Response lost"); }, initialClock)
+                .create("user", "race-key", "quote-1");
+        Clock recoveryClock = Clock.offset(initialClock, Duration.ofMinutes(1));
+        var original = new ShipmentRecoveryService(store);
+        var candidate = original.discover(recoveryClock.millis(),
+                com.enterprise.shipping.booking.contract.ShipmentRecoveryPort.Cursor.START, 100).candidates().get(0);
+        var racingStore = spy(store);
+        doAnswer(call -> {
+            ShipmentStore.Record expected = call.getArgument(0);
+            var confirmed = expected.restore();
+            confirmed.confirm(new com.enterprise.shipping.booking.domain.CarrierReceipt(
+                    "booking-" + expected.id(), "123", "TRACK123", null));
+            assertThat(store.outcome(expected, confirmed, recoveryClock.millis())).isTrue();
+            return call.callRealMethod(); // Stale manual-review version must now fail.
+        }).when(racingStore).outcome(any(), any(), anyLong());
+        assertThat(new ShipmentRecoveryService(racingStore).requireManualReview(candidate,
+                com.enterprise.shipping.booking.domain.ManualReviewReason.AUTHORITATIVE_LOOKUP_UNSUPPORTED,
+                recoveryClock.millis())).isFalse();
+        assertThat(store.byKey("user", "race-key").orElseThrow().status()).isEqualTo(BookingStatus.CONFIRMED);
+        assertThat(store.byKey("user", "race-key").orElseThrow().providerShipmentId()).isEqualTo("123");
+        assertThat(accepted).hasValue(1);
+    }
+
+    private PendingShipmentDiscovery manualDiscovery(
+            com.enterprise.shipping.booking.contract.ShipmentRecoveryPort recovery,
+            com.enterprise.shipping.reconciliation.port.PendingTaskStore tasks, Clock clock) {
+        return new PendingShipmentDiscovery(recovery, tasks, clock, (a,b,c,d,e) -> {},
+                (providerId, accountAlias) -> new com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort.Capabilities(
+                        com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort.Support.UNSUPPORTED,
+                        com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort.Support.UNVERIFIED));
     }
 
     @AfterEach void close() { if(source!=null)source.close(); }

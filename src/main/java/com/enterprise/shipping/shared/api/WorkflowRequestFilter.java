@@ -1,23 +1,41 @@
 package com.enterprise.shipping.shared.api;
 
-import jakarta.servlet.*;
-import jakarta.servlet.http.*;
+import com.enterprise.shipping.shared.identity.GuestSessionTokenService;
+import com.enterprise.shipping.shared.identity.TimeOrderedIds;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.net.URI;
+import java.util.Optional;
 import java.util.Set;
-import org.springframework.web.filter.OncePerRequestFilter;
+import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
-import org.slf4j.MDC;
-import com.enterprise.shipping.shared.identity.TimeOrderedIds;
+import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
- * Intercepts incoming API requests to inject unique diagnostic request IDs, 
- * disable client caching, and protect local endpoints against unauthorized Cross-Origin writes.
+ * Enforces request correlation, Cross-Origin write protection, and 2-hour fingerprint-bound
+ * Guest/User token authentication on all workflow API endpoints.
  */
 @Component
 @Profile("workflow")
 public class WorkflowRequestFilter extends OncePerRequestFilter {
+
+    public static final String AUTHENTICATED_USER_ATTR = "shipping.authenticatedUserId";
+
+    private final GuestSessionTokenService tokens;
+    private final boolean requireToken;
+
+    public WorkflowRequestFilter(
+            GuestSessionTokenService tokens,
+            @Value("${shipping.auth.require-token:true}") boolean requireToken) {
+        this.tokens = tokens;
+        this.requireToken = requireToken;
+    }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
@@ -29,39 +47,100 @@ public class WorkflowRequestFilter extends OncePerRequestFilter {
             HttpServletRequest request,
             HttpServletResponse response,
             FilterChain chain) throws ServletException, IOException {
-        
+
+        // 1. Assign diagnostic correlation ID and no-store security headers
         String id = TimeOrderedIds.next();
         response.setHeader("X-Request-Id", id);
         response.setHeader("Cache-Control", "no-store");
         response.setHeader("X-Content-Type-Options", "nosniff");
 
         try (var ignored = MDC.putCloseable("requestId", id)) {
+            // 2. Reject cross-origin browser writes
             String origin = request.getHeader("Origin");
-            
-            // Reject non-safe CORS writes that do not match the backend server origin
-            if (!Set.of("GET", "HEAD", "OPTIONS").contains(request.getMethod()) 
-                    && origin != null 
+            if (!Set.of("GET", "HEAD", "OPTIONS").contains(request.getMethod())
+                    && origin != null
                     && !sameOrigin(origin, request)) {
-                
-                response.setStatus(403);
-                response.setContentType("application/json");
-                response.getWriter().write("{\"code\":\"ORIGIN_NOT_ALLOWED\",\"requestId\":\"" + id + "\"}");
+                writeJsonError(response, 403, "ORIGIN_NOT_ALLOWED", id);
                 return;
             }
-            
+
+            // 3. Allow the guest token issuance endpoint to proceed after same-origin check
+            if ("/api/auth/guest".equals(request.getRequestURI())) {
+                chain.doFilter(request, response);
+                return;
+            }
+
+            // 4. Extract Bearer token and client fingerprint (fallback to SameSite=Strict cookies on GET)
+            String token = extractBearerToken(request);
+            String fingerprint = request.getHeader("X-Client-Fingerprint");
+            if ("GET".equals(request.getMethod())) {
+                if (token == null) {
+                    token = extractCookie(request, WorkflowAuthController.TOKEN_COOKIE);
+                }
+                if (fingerprint == null || fingerprint.isBlank()) {
+                    fingerprint = extractCookie(request, WorkflowAuthController.FINGERPRINT_COOKIE);
+                }
+            }
+
+            boolean credentialsPresented = request.getHeader("Authorization") != null
+                    || request.getHeader("X-Client-Fingerprint") != null
+                    || token != null;
+
+            if (credentialsPresented || requireToken) {
+                Optional<String> verifiedUser = tokens.verifyAndResolveUser(token, fingerprint);
+                if (verifiedUser.isEmpty()) {
+                    writeJsonError(response, 401, "UNAUTHORIZED", id);
+                    return;
+                }
+                request.setAttribute(AUTHENTICATED_USER_ATTR, verifiedUser.get());
+            }
+
             chain.doFilter(request, response);
         }
+    }
+
+    private String extractBearerToken(HttpServletRequest request) {
+        String header = request.getHeader("Authorization");
+        if (header == null) {
+            return null;
+        }
+        if (header.regionMatches(true, 0, "Bearer ", 0, 7)) {
+            return header.substring(7).strip();
+        }
+        return "";
+    }
+
+    private String extractCookie(HttpServletRequest request, String name) {
+        Cookie[] cookies = request.getCookies();
+        if (cookies == null) {
+            return null;
+        }
+        for (Cookie cookie : cookies) {
+            if (name.equals(cookie.getName())) {
+                return cookie.getValue();
+            }
+        }
+        return null;
+    }
+
+    private void writeJsonError(HttpServletResponse response, int status, String code, String requestId) throws IOException {
+        response.setStatus(status);
+        response.setContentType("application/json");
+        response.getWriter().write(
+                "{\"code\":\"" + code + "\",\"message\":\"" + code.replace('_', ' ')
+                        + "\",\"requestId\":\"" + requestId + "\",\"fieldErrors\":[]}"
+        );
     }
 
     private boolean sameOrigin(String origin, HttpServletRequest request) {
         try {
             URI uri = URI.create(origin);
-            int port = uri.getPort() == -1 
-                    ? ("https".equals(uri.getScheme()) ? 443 : 80) 
+            int port = uri.getPort() == -1
+                    ? ("https".equals(uri.getScheme()) ? 443 : 80)
                     : uri.getPort();
-            
-            return request.getScheme().equals(uri.getScheme()) 
-                    && request.getServerName().equalsIgnoreCase(uri.getHost()) 
+
+            return request.getScheme().equals(uri.getScheme())
+                    && request.getServerName().equalsIgnoreCase(uri.getHost())
                     && request.getServerPort() == port;
         } catch (IllegalArgumentException error) {
             return false;

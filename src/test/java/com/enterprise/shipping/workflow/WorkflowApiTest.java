@@ -5,6 +5,7 @@ import com.enterprise.shipping.integration.config.ProviderProperties;
 import com.enterprise.shipping.quote.contract.QuoteSelectionPort;
 import com.enterprise.shipping.reconciliation.application.PendingShipmentDiscovery;
 import com.enterprise.shipping.shared.api.WorkflowException;
+import com.enterprise.shipping.shared.identity.GuestSessionTokenService;
 import com.enterprise.shipping.shared.infrastructure.persistence.WorkflowMigrations;
 import com.fasterxml.jackson.databind.*;
 import com.sun.net.httpserver.*;
@@ -12,14 +13,21 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.autoconfigure.web.servlet.MockMvcBuilderCustomizer;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Bean;
 import org.springframework.test.context.*;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -30,10 +38,27 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import org.springframework.http.MediaType;
 
 /** Real HTTP adapter and SQLite, without contacting a chargeable external service. */
-@SpringBootTest(classes=Application.class, webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(
+        classes = {Application.class, WorkflowApiTest.TestAuthDefaults.class},
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
+)
 @AutoConfigureMockMvc
 @ActiveProfiles("workflow")
 class WorkflowApiTest {
+    static final String DEFAULT_TEST_FINGERPRINT = "fp-test-suite-default-01";
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class TestAuthDefaults {
+        @Bean
+        MockMvcBuilderCustomizer defaultMockMvcGuestAuth(GuestSessionTokenService tokens) {
+            return builder -> {
+                var issued = tokens.issueTokenForUser("demo-user", DEFAULT_TEST_FINGERPRINT);
+                builder.defaultRequest(get("/")
+                        .header("Authorization", "Bearer " + issued.token())
+                        .header("X-Client-Fingerprint", DEFAULT_TEST_FINGERPRINT));
+            };
+        }
+    }
     static final HttpServer PROVIDER;
     static final ExecutorService THREADS=Executors.newCachedThreadPool();
     static final AtomicReference<String> RATE_BODY=new AtomicReference<>();
@@ -47,6 +72,8 @@ class WorkflowApiTest {
     static final AtomicReference<String> CREATE_RESPONSE=new AtomicReference<>("{\"shipId\":123,\"trackingNumbers\":[\"TRACK123\"]}");
     static final AtomicBoolean DROP_CREATE_RESPONSE=new AtomicBoolean();
     static final AtomicReference<Runnable> BEFORE_CREATE_RESPONSE=new AtomicReference<>(()->{});
+    static final AtomicInteger LOOKUP_CALLS=new AtomicInteger();
+    static final AtomicReference<PendingShipmentDiscovery> TEST_DISCOVERY=new AtomicReference<>();
     static final AtomicInteger LABEL_STATUS=new AtomicInteger(202);
     static final AtomicInteger LABEL_CALLS=new AtomicInteger();
     static final AtomicReference<String> LABEL_CONTENT_TYPE=new AtomicReference<>("application/json");
@@ -83,6 +110,7 @@ class WorkflowApiTest {
                     if(DROP_CREATE_RESPONSE.get()) { e.close(); return; }
                     respond(e,CREATE_STATUS.get(),"application/json",CREATE_RESPONSE.get().getBytes(StandardCharsets.UTF_8));
                 } else {
+                    LOOKUP_CALLS.incrementAndGet();
                     respond(e,202,"application/json","{}".getBytes(StandardCharsets.UTF_8));
                 }
             });
@@ -103,7 +131,18 @@ class WorkflowApiTest {
                     CREATE_STATUS.set(500); CREATE_RESPONSE.set("{\"error\":\"unknown\"}");
                 } else if(query.contains("mode=label-pdf")) {
                     LABEL_STATUS.set(200); LABEL_CONTENT_TYPE.set("application/pdf");
-                    LABEL_BYTES.set("%PDF-1.4 e2e shipping label".getBytes(StandardCharsets.UTF_8));
+                    try (var fixture = WorkflowApiTest.class.getResourceAsStream("/fixtures/shipping-label.pdf")) {
+                        LABEL_BYTES.set(java.util.Objects.requireNonNull(fixture).readAllBytes());
+                    }
+                } else if(query.contains("mode=manual-review")) {
+                    TEST_JDBC.get().update("UPDATE shipment_bookings SET submission_deadline_at=0");
+                    TEST_DISCOVERY.get().discover();
+                } else if(query.contains("mode=label-error")) {
+                    LABEL_STATUS.set(500); LABEL_CONTENT_TYPE.set("application/json");
+                    LABEL_BYTES.set("{}".getBytes(StandardCharsets.UTF_8));
+                } else if(query.contains("mode=label-url")) {
+                    LABEL_STATUS.set(200); LABEL_CONTENT_TYPE.set("application/json");
+                    LABEL_BYTES.set("{\"labelUrl\":\"https://labels.example.com/label.pdf\"}".getBytes(StandardCharsets.UTF_8));
                 } else if(query.contains("mode=reset-counts")) {
                     RATE_CALLS.set(0); CREATE_CALLS.set(0); LABEL_CALLS.set(0);
                 }
@@ -142,6 +181,8 @@ class WorkflowApiTest {
     @BeforeEach void reset() {
         adapter.resetCircuitBreakers();
         TEST_ADAPTER.set(adapter);
+        TEST_DISCOVERY.set(discovery);
+        LOOKUP_CALLS.set(0);
         var jdbc=new JdbcTemplate(source);
         TEST_JDBC.set(jdbc);
         jdbc.update("DELETE FROM booking_reconciliation_tasks");
@@ -393,6 +434,23 @@ class WorkflowApiTest {
         assertThat(jdbc.queryForObject("SELECT state FROM booking_reconciliation_tasks WHERE booking_id=?",String.class,bookingId)).isEqualTo("PAUSED");
         assertThat(jdbc.queryForObject("SELECT last_error_code FROM booking_reconciliation_tasks WHERE booking_id=?",String.class,bookingId))
                 .isEqualTo("AUTHORITATIVE_LOOKUP_UNSUPPORTED");
+        mvc.perform(get("/api/bookings/"+bookingId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("MANUAL_REVIEW"))
+                .andExpect(jsonPath("$.errorCode").value("AUTHORITATIVE_LOOKUP_UNSUPPORTED"));
+        mvc.perform(post("/api/bookings").header("Idempotency-Key","uncertain-key")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"quoteId\":\""+quoteId+"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(header().doesNotExist("Retry-After"))
+                .andExpect(jsonPath("$.status").value("MANUAL_REVIEW"));
+        mvc.perform(post("/api/bookings").header("Idempotency-Key","competing-manual-key")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"quoteId\":\""+quoteId+"\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.booking.status").value("MANUAL_REVIEW"));
+        assertThat(CREATE_CALLS).hasValue(1);
+        assertThat(LOOKUP_CALLS).hasValue(0);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM shipment_bookings WHERE status IN ('PENDING','PENDING_INQUIRY')",Integer.class))
+                .isZero();
     }
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings={
@@ -471,12 +529,13 @@ class WorkflowApiTest {
         assertThat(CREATE_CALLS).hasValue(1);
     }
 
-    @Test void lateConfirmationConvergesAfterDiscoveryMarkedInquiry() throws Exception {
+    @Test void lateConfirmationConvergesAfterDiscoveryRequiredManualReview() throws Exception {
         String quoteId=rates().path("quotes").get(0).path("quoteId").asText();
         var jdbc=new JdbcTemplate(source);
         BEFORE_CREATE_RESPONSE.set(()->{
             jdbc.update("UPDATE shipment_bookings SET submission_deadline_at=0");
             discovery.discover();
+            assertThat(jdbc.queryForObject("SELECT status FROM shipment_bookings",String.class)).isEqualTo("MANUAL_REVIEW");
         });
         mvc.perform(post("/api/bookings").header("Idempotency-Key","late-confirm-key")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"quoteId\":\""+quoteId+"\"}"))
@@ -484,6 +543,19 @@ class WorkflowApiTest {
                 .andExpect(jsonPath("$.status").value("CONFIRMED"))
                 .andExpect(jsonPath("$.shipmentId").value("123"));
     }
+    @Test void providerCapabilitiesAreLocalAndScopedToThePersistedAccount() {
+        var capability=adapter.capabilities(providerProperties.providerId(),providerProperties.accountAlias());
+        assertThat(capability.authoritativeLookup()).isEqualTo(
+                com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort.Support.UNSUPPORTED);
+        assertThat(capability.creationIdempotency()).isEqualTo(
+                com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort.Support.UNVERIFIED);
+        assertThat(adapter.capabilities("another-provider","another-account").authoritativeLookup()).isEqualTo(
+                com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort.Support.UNVERIFIED);
+        assertThat(CREATE_CALLS).hasValue(0);
+        assertThat(LOOKUP_CALLS).hasValue(0);
+        assertThat(RATE_CALLS).hasValue(0);
+    }
+
     @Test void labelRetrievalSupportsPendingPdfAndAllowlistedRedirectWithoutRecreatingShipment() throws Exception {
         String quoteId=rates().path("quotes").get(0).path("quoteId").asText();
         var created=mvc.perform(post("/api/bookings").header("Idempotency-Key","label-flow-key")
@@ -573,6 +645,111 @@ class WorkflowApiTest {
                 .contentType(MediaType.APPLICATION_JSON).content("{\"quoteId\":\""+quoteId+"\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("CONFIRMED"));
+    }
+
+    @Test
+    void enforcesGuestTokenAndClientFingerprintAndIsolatesGuestSessions() throws Exception {
+        // 1. Missing or invalid Authorization header is rejected with 401 UNAUTHORIZED
+        mvc.perform(post("/api/quotes")
+                        .header("Authorization", "")
+                        .header("X-Client-Fingerprint", "")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(INPUT))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+        assertThat(RATE_CALLS).hasValue(0);
+
+        // 2. Issue a 2-hour Guest Token for Guest Alpha bound to fingerprint fp-alpha
+        String fpAlpha = "fp-browser-alpha-00000001";
+        var alphaAuthBody = mvc.perform(post("/api/auth/guest")
+                        .header("Authorization", "")
+                        .header("X-Client-Fingerprint", fpAlpha)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"clientId\":\"client-alpha-12345678\",\"fingerprint\":\"" + fpAlpha + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("GUEST"))
+                .andExpect(jsonPath("$.ttlSeconds").value(7200))
+                .andExpect(header().exists("Set-Cookie"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode alphaAuth = mapper.readTree(alphaAuthBody);
+        String alphaToken = alphaAuth.path("token").asText();
+        String alphaUserId = alphaAuth.path("userId").asText();
+        assertThat(alphaUserId).startsWith("guest-");
+
+        // Re-requesting with the same clientId resolves to the same deterministic guest userId
+        var alphaRepeatBody = mvc.perform(post("/api/auth/guest")
+                        .header("Authorization", "")
+                        .header("X-Client-Fingerprint", fpAlpha)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"clientId\":\"client-alpha-12345678\",\"fingerprint\":\"" + fpAlpha + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        assertThat(mapper.readTree(alphaRepeatBody).path("userId").asText()).isEqualTo(alphaUserId);
+
+        // 3. Guest Alpha can obtain quotes when presenting matching token + fingerprint
+        var alphaQuotesResp = mvc.perform(post("/api/quotes")
+                        .header("Authorization", "Bearer " + alphaToken)
+                        .header("X-Client-Fingerprint", fpAlpha)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(INPUT))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String alphaQuoteId = mapper.readTree(alphaQuotesResp).path("quotes").get(0).path("quoteId").asText();
+
+        // 4. Presenting Guest Alpha's token with a different fingerprint is rejected with 401 UNAUTHORIZED
+        mvc.perform(post("/api/bookings")
+                        .header("Authorization", "Bearer " + alphaToken)
+                        .header("X-Client-Fingerprint", "fp-different-device-999999")
+                        .header("Idempotency-Key", "stolen-token-attempt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"quoteId\":\"" + alphaQuoteId + "\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+        assertThat(CREATE_CALLS).hasValue(0);
+
+        // 5. Guest Beta gets a distinct guest identity and cannot book Guest Alpha's quote (404 RESOURCE_NOT_FOUND)
+        String fpBeta = "fp-browser-beta-00000002";
+        var betaAuthBody = mvc.perform(post("/api/auth/guest")
+                        .header("Authorization", "")
+                        .header("X-Client-Fingerprint", fpBeta)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"clientId\":\"client-beta-87654321\",\"fingerprint\":\"" + fpBeta + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        JsonNode betaAuth = mapper.readTree(betaAuthBody);
+        String betaToken = betaAuth.path("token").asText();
+        String betaUserId = betaAuth.path("userId").asText();
+        assertThat(betaUserId).isNotEqualTo(alphaUserId);
+
+        mvc.perform(post("/api/bookings")
+                        .header("Authorization", "Bearer " + betaToken)
+                        .header("X-Client-Fingerprint", fpBeta)
+                        .header("Idempotency-Key", "cross-guest-attempt")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"quoteId\":\"" + alphaQuoteId + "\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));
+        assertThat(CREATE_CALLS).hasValue(0);
+
+        // 6. Expired token (past 2h TTL) is rejected
+        Clock baseClock = Clock.fixed(Instant.parse("2026-10-23T12:00:00Z"), ZoneOffset.UTC);
+        var verifierAtIssue = new GuestSessionTokenService("unit-test-secret", Duration.ofHours(2), baseClock);
+        var issued2h = verifierAtIssue.issueGuestToken("client-ttl-check-01", fpAlpha);
+        var verifierBeforeExpiry = new GuestSessionTokenService(
+                "unit-test-secret", Duration.ofHours(2), Clock.offset(baseClock, Duration.ofMinutes(119)));
+        var verifierAfterExpiry = new GuestSessionTokenService(
+                "unit-test-secret", Duration.ofHours(2), Clock.offset(baseClock, Duration.ofMinutes(121)));
+        assertThat(verifierBeforeExpiry.verifyAndResolveUser(issued2h.token(), fpAlpha)).contains(issued2h.userId());
+        assertThat(verifierAfterExpiry.verifyAndResolveUser(issued2h.token(), fpAlpha)).isEmpty();
     }
     @Test @Tag("browser")
     void endToEndBrowserJourneyCoversRatesValidationExpiryRejectionUncertaintyAndDelayedLabels() throws Exception {

@@ -6,6 +6,10 @@ shipping:
       CA: '[A-Z]\d[A-Z]\d[A-Z]\d'
   demo-user-id: ${SHIPPING_DEMO_USER_ID:demo-user}
   database-path: ${SHIPPING_DATABASE_PATH:./data/workflow.db}
+  auth:
+    token-secret: ${SHIPPING_AUTH_TOKEN_SECRET:local-workflow-hmac-secret-key-2026}
+    token-ttl: ${SHIPPING_AUTH_TOKEN_TTL:2h}
+    require-token: ${SHIPPING_AUTH_REQUIRE_TOKEN:true}
   provider:
     base-url: ${SHIPPING_PROVIDER_BASE_URL:}
     username: ${SHIPPING_PROVIDER_USERNAME:}

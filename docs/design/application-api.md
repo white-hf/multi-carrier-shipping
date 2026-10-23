@@ -1,6 +1,31 @@
 # Application API — frontend handoff
 
-Status: Frontend integrated, backend implemented, and verified via automated API and Playwright E2E browser tests against a controlled local provider stub. The supplied frontend is integrated with the contracts below. All paths are relative to the backend origin. Use JSON; no application login or provider credentials are sent by the browser. The backend resolves the fixed demo user.
+Status: Frontend integrated, backend implemented, and verified via automated API and Playwright E2E browser tests against a controlled local provider stub. The supplied frontend is integrated with the contracts below. All paths are relative to the backend origin. Use JSON; no application login UI or provider credentials are sent by the browser. The browser obtains a 2-hour HMAC-signed Guest Token bound to its client fingerprint (`POST /api/auth/guest`) and sends `Authorization: Bearer <token>` and `X-Client-Fingerprint: <fingerprint>` on subsequent API calls.
+
+## Guest Session Token (2-hour TTL, Fingerprint-Bound)
+
+`POST /api/auth/guest`
+
+```json
+{
+  "clientId": "client-...",
+  "fingerprint": "fp-..."
+}
+```
+
+`200` returns a 2-hour (`7200s`) HMAC-SHA256 signed token bound to the client's fingerprint and sets `SameSite=Strict; HttpOnly` cookies (`shipping_guest_token`, `shipping_guest_fp`) for top-level label navigation:
+
+```json
+{
+  "token": "<base64url-payload>.<base64url-hmac>",
+  "userId": "guest-...",
+  "mode": "GUEST",
+  "expiresAt": "2026-10-23T17:20:00Z",
+  "ttlSeconds": 7200
+}
+```
+
+All `/api/quotes` and `/api/bookings/**` requests require a valid token and matching `X-Client-Fingerprint` (returning `401 UNAUTHORIZED` when missing, expired, or fingerprint-mismatched). Downstream controllers and services resolve the verified `userId` uniformly through `UserContext`.
 
 ## Rates
 
@@ -53,7 +78,22 @@ Keep the same key and quote ID after any uncertain response or browser retry. Th
 }
 ```
 
-Status values: `PENDING`, `CONFIRMED`, `REJECTED`, `PENDING_CONFIRMATION`. A confirmed booking can have missing tracking and a pending label. Unknown creation must not be shown as rejection or retried with a new key. No automatic reference lookup is promised by the current provider contract.
+Status values: `PENDING`, `CONFIRMED`, `REJECTED`, `PENDING_CONFIRMATION`, `MANUAL_REVIEW`. A confirmed booking can have missing tracking and a pending label. Unknown creation must not be shown as rejection or retried with a new key. No automatic reference lookup is promised by the current provider contract.
+
+When recovery cannot safely query or retry the provider, the existing booking becomes `MANUAL_REVIEW`:
+
+```json
+{
+  "bookingId":"internal-booking-id","status":"MANUAL_REVIEW","shipmentId":null,
+  "trackingNumber":null,"labelStatus":"PENDING","labelUrl":null,
+  "errorCode":"AUTHORITATIVE_LOOKUP_UNSUPPORTED",
+  "statusUrl":"/api/bookings/internal-booking-id"
+}
+```
+
+Status reads and same-key manual-review replays return HTTP `200`; the replay has no automatic `Retry-After`. This is an unresolved booking, not creation success. Stop polling and hide creation/status retry controls. Preserve the booking reference and explain: **Do not submit it again. Contact support with the booking reference to verify the shipment before taking further action.** Refresh restores the same state; it may read current status once but does not restart polling. There are no manual resolution endpoints in this iteration.
+
+Recovery uses provider/account capabilities. Reasons distinguish `AUTHORITATIVE_LOOKUP_UNSUPPORTED`, `AUTHORITATIVE_LOOKUP_UNVERIFIED`, and `AUTOMATIC_RECOVERY_UNAVAILABLE`; existing simulator inquiry exhaustion remains `INQUIRY_EXHAUSTED`. Capability metadata alone never enables a creation retry.
 
 Different keys for the same request return `409` with `code: SHIPMENT_ALREADY_SUBMITTED` and the existing `booking` projection. Reusing a key for another quote returns `409 IDEMPOTENCY_CONFLICT`. An expired quote returns `409 QUOTE_EXPIRED`: retrieve rates again and ask the user to confirm.
 
@@ -66,6 +106,17 @@ Different keys for the same request return `409` with `code: SHIPMENT_ALREADY_SU
 - `202`: label not ready; keep shipment creation confirmed and show a manual Retry Label action.
 
 When confirmation has a pending label, the frontend may make **one automatic retrieval attempt**. It must not continuously poll this endpoint. No background label task, scheduler or queue is required. Recreating a shipment to obtain a label is forbidden. An unsupported label format or read failure is a label error, not failed shipment creation.
+
+## Label actions (I5)
+
+No new API is required. The confirmation screen uses the existing label endpoint (retaining the 2-hour fingerprint-bound Guest Token headers) and keeps shipment confirmation separate from label readiness.
+
+- PDF response: retain a `File` and object URL in browser memory for viewing, downloading and capability-detected native file sharing. Clear/revoke these on replacement or a new shipment; never persist PDF bytes or object URLs in browser storage.
+- Provider URL response: View opens the validated location. Saving/printing takes place in that viewer; do not depend on cross-origin JavaScript access or pretend a URL response is a PDF attachment.
+- Print opens the PDF viewer and explains its print control or Ctrl/Cmd+P. It does not assert that a physical document was printed.
+- Email opens a `mailto:` draft without a recipient or attachment. The user attaches the downloaded PDF and chooses whether to send. No backend email delivery is added.
+- Share sends the file through the Web Share API when supported. User cancellation performs no fallback. Unsupported/failed sharing falls back to download or provider-viewer guidance; no public hosting or blob link sharing is introduced.
+- Labels are retrieved automatically at most once for the active operation. After refresh, explicitly reload the label because browser-memory files are gone. Retry/reload never creates another shipment. Demo mode supplies no real label and disables all label actions.
 
 ## Errors and request correlation
 
