@@ -64,9 +64,12 @@ One package supports length, width, height, and weight. Package type defaults to
 
 ### FR-02 Rate Retrieval (P0)
 
-“Get Shipping Rates” starts a quotation request. Show a loading state while rates are being retrieved. Quotes must be derived from the shipping details and must not be fabricated in the working product. Show an empty state if none is available, and errors when retrieval fails. Allow the user to revise shipment information.
+“Get Shipping Rates” starts an idempotent quotation request (`Idempotency-Key`). Show a loading state while rates are being retrieved. Quotes must be derived from the shipping details and must not be fabricated in the working product. Show an empty state if none is available, and errors when retrieval fails. Allow the user to revise shipment information.
 
-**Acceptance:** multiple quotes can be shown with accurate association to the input shipment.
+- **Idempotent request & retryable execution:** Repeating the same rate request with the same key and identical shipment details reuses the persisted shipment request rather than creating duplicate records. Failed, timed-out or expired rate executions can be retried under the same key and request identity; edited shipment details start a new request with a fresh key.
+- **Durable business record vs. browser draft trade-off:** The backend persists `shipment_requests` independently of third-party providers for customer attribution, support traceability and provider-outage resilience (accepting PII storage, retention and schema maintenance responsibilities). A 24-hour browser draft (`localStorage`) improves navigation and reload recovery (restore inputs and active rate key), but is convenience state subject to clearing, expiry and shared-device exposure, never a substitute for the backend record.
+
+**Acceptance:** multiple quotes can be shown with accurate association to the input shipment; failed or expired rate lookups can be retried under the same request identity without duplicating the shipment request.
 
 ### FR-03 Rate Comparison and Selection (P0; sort/detail P1)
 

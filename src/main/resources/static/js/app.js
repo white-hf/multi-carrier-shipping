@@ -5,6 +5,9 @@
 
   const $ = id => document.getElementById(id);
   const $all = sel => [...document.querySelectorAll(sel)];
+  const draftStorage = 'shipping.rateDraft.v1';
+  let rateOperation = null;
+  let rateBusy = false;
   const activeStorage = 'shipping.activeBooking.v1';
   const mockStorage = 'shipping.mockMode.v1';
   const clientIdStorage = 'shipping.clientId.v1';
@@ -130,6 +133,8 @@
       return;
     }
     mode(e.target.checked);
+    rateOperation = null;
+    saveDraft();
   });
 
   // Unit system toggle (Imperial IN/LB vs Metric CM/KG)
@@ -151,6 +156,7 @@
           ? 'One package · metric measurements (cm / kg)'
           : 'One package · imperial measurements (in / lb)';
     }
+    saveDraft();
     state.revision++;
     if (state.quotes.length && !state.key) {
       state.quotes = [];
@@ -452,7 +458,10 @@
   };
 
   const api = {
-    quotes: data => mock ? demo.quotes() : http('/api/quotes', { method: 'POST', body: data }),
+    quotes: (data, key) => mock
+        ? demo.quotes()
+        : http('/api/quotes', { method: 'POST', body: data, headers: { 'Idempotency-Key': key } }),
+    quoteStatus: id => http('/api/quotes/' + encodeURIComponent(id)),
     booking: (quote, key) => mock
         ? demo.booking(quote, key)
         : http('/api/bookings', { method: 'POST', body: { quoteId: quote }, headers: { 'Idempotency-Key': key } }),
@@ -587,6 +596,9 @@
     if (err instanceof HttpError) {
       if (err.code === 'QUOTE_EXPIRED' || err.code === 'QUOTE_NOT_BOOKABLE') {
         return 'Quote is no longer available. Please obtain new shipping rates.';
+      }
+      if (err.code === 'REQUEST_DATE_EXPIRED') {
+        return 'The saved shipping date has passed. Request new shipping rates for today.';
       }
       if (err.fieldErrors.length) {
         return err.message + ' ' + err.fieldErrors.map(f => `${f.field || f.name || 'Field'}: ${f.message || 'invalid'}`).join('; ');
@@ -905,8 +917,76 @@
     else showPending(`Booking ${state.bookingId}: ${data.status || 'PENDING_CONFIRMATION'}. Do not create another shipment.`);
   }
 
+  // Local drafts improve navigation only. The backend owns the durable customer request;
+  // neither browser storage nor a third-party provider is our business system of record.
+  // Do not store credentials, labels or booking responses in this draft.
+  function saveDraft() {
+    const fields = {};
+    for (const field of $('shipping-form').elements) {
+      if (field.name) {
+        fields[field.name] = field.type === 'checkbox' ? field.checked : field.value;
+      }
+    }
+    try {
+      localStorage.setItem(draftStorage, JSON.stringify({
+        savedAt: Date.now(),
+        mock,
+        unitSystem: state.unitSystem,
+        fields,
+        operation: rateOperation
+      }));
+    } catch {
+      // Storage may be disabled; server-side request idempotency still applies.
+    }
+  }
+
+  function restoreDraft() {
+    try {
+      const draft = JSON.parse(localStorage.getItem(draftStorage) || 'null');
+      if (!draft || Date.now() - draft.savedAt > 86400000) {
+        localStorage.removeItem(draftStorage);
+        return;
+      }
+      for (const [name, value] of Object.entries(draft.fields || {})) {
+        const field = $('shipping-form').elements.namedItem(name);
+        if (!field) continue;
+        if (field.type === 'checkbox') field.checked = !!value;
+        else field.value = value;
+      }
+      if (draft.mock === mock) rateOperation = draft.operation;
+      setUnitSystem(draft.unitSystem);
+    } catch {
+      localStorage.removeItem(draftStorage);
+    }
+  }
+
+  function displayRates(data, req) {
+    if (data.state === 'RATING') {
+      notice('Rates are still being retrieved. Click Get Rates again to check or retry safely.', 'info');
+      return;
+    }
+    if (data.state === 'RATE_FAILED' || data.state === 'QUOTES_EXPIRED') {
+      notice(data.state === 'RATE_FAILED'
+          ? 'Rates could not be retrieved. Click Get Rates to retry the saved request.'
+          : 'These rates have expired. Click Get Rates to refresh them.', 'info');
+      return;
+    }
+    if (!Array.isArray(data.quotes)) throw Error('Invalid /api/quotes response: quotes[] missing');
+    state.request = req;
+    state.requestId = data.requestId;
+    state.quotes = data.quotes;
+    state.selected = null;
+    routes();
+    renderQuotes();
+    go(2);
+    if (!state.quotes.length) {
+      notice('No shipping rates available. Please edit shipment details.', 'info');
+    }
+  }
+
   // Step 1 form events
   $('shipping-form').addEventListener('input', () => {
+    saveDraft();
     state.revision++;
     if (state.quotes.length && !state.key) {
       state.quotes = [];
@@ -920,9 +1000,11 @@
       notice('A shipment submission is already active; resolve it before starting another.');
       return;
     }
+    if (rateBusy) return;
     const form = e.currentTarget;
     if (!validate(form)) return;
     const rev = ++state.revision;
+    rateBusy = true;
     busy('get-rates-btn', true, 'Getting shipping rates…');
     startLoadingBanner(
       'Retrieving live carrier quotes…',
@@ -930,26 +1012,43 @@
     );
     try {
       const req = inputPayload(form);
-      const response = await api.quotes(req);
-      if (rev !== state.revision) return;
-      const data = response.data;
-      if (!Array.isArray(data.quotes)) throw Error('Invalid /api/quotes response: quotes[] missing');
-      state.request = req;
-      state.requestId = data.requestId;
-      state.quotes = data.quotes;
-      state.selected = null;
-      routes();
-      renderQuotes();
-      go(2);
-      if (!state.quotes.length) {
-        notice('No shipping rates available. Please edit shipment details.', 'info');
+      // Save identity before sending: a lost HTTP response must reuse the same key.
+      const signature = JSON.stringify(req);
+      if (!rateOperation || rateOperation.signature !== signature) {
+        const key = crypto.randomUUID
+            ? crypto.randomUUID()
+            : `rate-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        rateOperation = { key, signature, requestId: null };
       }
+      const operation = rateOperation;
+      saveDraft();
+      let response = await api.quotes(req, operation.key);
+      operation.requestId = response.data.requestId;
+      saveDraft();
+      // Status reads never trigger a provider request. Retries remain user initiated.
+      for (let i = 0; !mock && response.data.state === 'RATING' && i < 5; i++) {
+        await delay(2000);
+        if (rev !== state.revision) return;
+        response = await api.quoteStatus(operation.requestId);
+      }
+      if (rev !== state.revision) return;
+      displayRates(response.data, req);
     } catch (err) {
       if (rev === state.revision) {
-        if (err instanceof HttpError) showFieldErrors(err.fieldErrors);
+        if (err instanceof HttpError) {
+          showFieldErrors(err.fieldErrors);
+          if (rateOperation && err.payload?.operation?.id) {
+            rateOperation.requestId = err.payload.operation.id;
+          }
+          if (err.code === 'REQUEST_DATE_EXPIRED') {
+            rateOperation = null;
+          }
+          saveDraft();
+        }
         notice(errorText(err));
       }
     } finally {
+      rateBusy = false;
       stopLoadingBanner();
       busy('get-rates-btn', false);
     }
@@ -1100,6 +1199,8 @@
   });
 
   function reset() {
+    rateOperation = null;
+    localStorage.removeItem(draftStorage);
     pollToken++;
     clearActive();
     state.request = null;
@@ -1131,6 +1232,9 @@
       go(Number(el.dataset.back));
     });
   });
+
+  restoreDraft();
+  $all('.unit-btn').forEach(btn => btn.addEventListener('click', saveDraft));
 
   // Restore active submission on page reload and eagerly initialize the 2-hour Guest Token
   if (!mock) {

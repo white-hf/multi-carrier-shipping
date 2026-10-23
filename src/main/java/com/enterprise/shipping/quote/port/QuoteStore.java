@@ -1,12 +1,28 @@
 package com.enterprise.shipping.quote.port;
 
-import com.enterprise.shipping.shared.domain.ShippingIntent;
+import com.enterprise.shipping.quote.domain.RateRequest;
 import com.enterprise.shipping.quote.domain.ShippingQuote;
-import java.util.*;
+import java.util.List;
+import java.util.Optional;
 
+/**
+ * Short committed writes only; no provider call runs inside a storage transaction.
+ */
 public interface QuoteStore {
-    void begin(String userId, String requestId, ShippingIntent intent, long now);
-    void complete(String userId, String requestId, List<ShippingQuote> quotes, long now);
-    void fail(String userId, String requestId, long now);
+
+    Optional<RateRequest> byKey(String userId, String key);
+
+    Optional<RateRequest> request(String userId, String requestId);
+
+    boolean insert(RateRequest request, long now);
+
+    boolean claim(RateRequest expected, RateRequest claimed, long now);
+
+    boolean complete(RateRequest expected, List<ShippingQuote> quotes, long now);
+
+    boolean fail(RateRequest expected, long now);
+
+    List<ShippingQuote> quotes(String userId, String requestId);
+
     Optional<ShippingQuote> find(String userId, String quoteId);
 }

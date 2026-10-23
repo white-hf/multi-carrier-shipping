@@ -91,4 +91,4 @@ Backend checks run with `./mvnw clean test`. Browser checks run separately with 
 
 [I5 — Shipping label actions](iterations/iteration-05-label-actions.md): browser-based label actions; accepted on 2026-10-23; see the [I5 summary](summaries/iteration-05-label-actions.md).
 
-[I6 — Durable requests and recoverable quotation attempts](iterations/iteration-06-request-idempotency.md): proposed for review only; implementation not started.
+[I6 — Idempotent requests and retryable rates](iterations/iteration-06-request-idempotency.md): user-scoped rate request idempotency, version-fenced retries, read-only quote status lookup and 24-hour browser draft recovery; accepted on 2026-10-23; see the [I6 summary](summaries/iteration-06-request-idempotency.md).

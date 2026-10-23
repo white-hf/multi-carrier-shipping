@@ -93,6 +93,4 @@ All four findings are closed by 123 passing backend tests and a separately passi
 
 [I5 — Shipping label actions](iteration-05-label-actions.md) adds browser-based view, download, print, email-draft and share actions to the confirmed-shipment screen. Accepted on 2026-10-23: 135 backend tests (including guest-token authentication) and the separate browser journey passed; see the [I5 summary](../summaries/iteration-05-label-actions.md). No backend email service or new API is introduced.
 
-## Proposed quotation-recovery iteration
-
-[I6 — Durable requests and recoverable quotation attempts](iteration-06-request-idempotency.md) is proposed for review after authentication and I5 integration. It separates immutable request creation from quotation attempts, adds request/attempt idempotency and status recovery, and preserves booking uniqueness across rate retries. No implementation is approved or started.
+[I6 — Idempotent requests and retryable rates](iteration-06-request-idempotency.md) adds user-scoped `Idempotency-Key` arbitration on `POST /api/quotes`, version-fenced retry of failed/overdue/expired rate executions under the same `request_id`, read-only `GET /api/quotes/{requestId}` status inspection, and 24-hour browser draft recovery while keeping the four-table model. Accepted on 2026-10-23: 145 backend tests and the separate browser journey passed; see the [I6 summary](../summaries/iteration-06-request-idempotency.md).

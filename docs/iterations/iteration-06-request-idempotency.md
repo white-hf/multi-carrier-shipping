@@ -1,89 +1,24 @@
-# Iteration 06 — Durable requests and recoverable quotation attempts
+# Iteration 06 — Idempotent requests and retryable rates
 
-Status: **Proposed — review required before implementation.**
-Date: 2026-10-23
-Dependencies: complete authentication integration and I5 label integration first. No implementation work is authorized by this document.
+Status: Accepted for the agreed demo scope on 2026-10-23. This replaces the earlier five-table/quote-attempt proposal.
 
-## Outcome
+## Trade-off and scope
 
-One logical shipment request keeps its identity across submission retries, quote failures and browser refreshes. Obtaining fresh rates creates a new quotation attempt against that request, rather than another shipment request. Booking's existing one-booking-per-request constraint then covers all quotation attempts for that same request.
+- **Backend business record (`shipment_requests`):** Retained independently of third-party providers to support customer attribution, support troubleshooting, and status inspection (`GET /api/quotes/{requestId}`) even when the upstream provider fails. Trade-off: requires storing address/contact PII, managing data retention, and maintaining schema migrations.
+- **Browser local draft (`localStorage`):** Restores form inputs and the active rate operation identity across page refreshes and navigation for 24 hours. Trade-off: subject to user clearing, expiration, and shared-device visibility, so it supplements rather than replaces backend persistence.
+- **Four application tables preserved:** No `quote_attempts` table or persisted `last_error_code` column is added. Specific upstream errors are logged and returned on the active HTTP response; later status reads expose `RATE_FAILED` and retry guidance.
 
-Identical details do not automatically mean the same shipment: two intentionally separate requests may legitimately have identical contents. Idempotency follows the operation key, not global payload matching.
+`POST /api/quotes` requires a user-scoped `Idempotency-Key`. Matching canonical content reuses the request. Changed content with the same key conflicts (`409 IDEMPOTENCY_CONFLICT`); no request-update API is introduced. Failed or abandoned rate execution can be retried with the same key after a version-fenced claim (`rate_version`). A live execution returns `202 Accepted` without another provider call. Valid completed quotes replay from storage; expired quotes (`QUOTES_EXPIRED`) may be refreshed under the same request.
 
-## Proposed flow and APIs
+Additive migration `V003__rate_request_idempotency.sql` adds `idempotency_key`, `content_fingerprint`, `rate_version` and `rate_deadline_at` to `shipment_requests` along with `uk_shipment_request_key` and `idx_request_quotes`. Legacy rows remain readable; keys are required for all new writes.
 
-```text
-Save immutable shipment request once
-    -> obtain rates: attempt A
-    -> lost response: replay/read attempt A
-    -> failed/expired rates: explicitly start attempt B on the same request
-    -> select a quote from the current successful attempt
-    -> existing booking API
-```
+`GET /api/quotes/{requestId}` reads owned progress/results and expires abandoned execution conditionally, never calling the provider. Quotes and state commit atomically; stale execution cannot publish offers.
 
-| API | Responsibility |
-| --- | --- |
-| `POST /api/shipment-requests` | Save the form with required `Idempotency-Key`; return the request identity. Same user/key/content replays it; changed content conflicts. |
-| `GET /api/shipment-requests/{requestId}` | Read the owned snapshot and current attempt summary; never call the provider. |
-| `POST /api/shipment-requests/{requestId}/quote-attempts` | Start or replay an attempt using its own required `Idempotency-Key`. A refresh or explicit retry after failure uses a new attempt key. |
-| `GET /api/shipment-requests/{requestId}/quote-attempts/{attemptId}` | Read persisted progress, offers or failure details; never initiate another provider call. |
+## Acceptance and verification
 
-The current `POST /api/quotes` form-submission contract is replaced. No compatibility endpoint is required for this project. `POST /api/bookings` and label endpoints remain unchanged.
-
-Request creation returns 201, or 200 on replay. A new attempt can retain the current synchronous provider wait: no queue, background rate worker or async job infrastructure is needed. Concurrent replay returns 202 while it is running and 200 once its persisted outcome is available. Provider failures may initially return 502/503/504, with recoverable operation identity; a subsequent status read/replay returns the persisted failed state without a provider call. The frontend must inspect the state, not equate HTTP 200 with successful rates.
-
-## Main code changes
-
-| Area | Change |
-| --- | --- |
-| Request domain/application | Introduce an immutable shipment-request lifecycle and application service. Normalize input, freeze server defaults on first save, fingerprint content, fast-read existing key and enforce database uniqueness before returning the snapshot. |
-| Quote application | Split `QuoteApplicationService.execute`: it no longer inserts a new form snapshot for every provider call. Resolve the existing owned request, claim a quotation attempt, call the provider outside a transaction, then commit the attempt result. |
-| Provider integration | Reuse `SingleProviderRateEngine`, rate timeouts, circuit breaker and bulkhead. No carrier API contract change or automatic provider retry is needed. |
-| Persistence | Replace `QuoteStore.begin/complete/fail` with explicit request claim/read and attempt claim/complete/fail operations. Finalization returns an applied/result outcome rather than silently ignoring a failed conditional update. |
-| Booking contract | Keep `QuoteSelectionPort` as the only quote dependency. Resolve only owned, unexpired quotes from the request's current successful attempt. A later attempt supersedes previous selection; booking uniqueness stays `(user_id, request_id)`. |
-| Frontend | Persist request key before saving, then request ID and attempt key/ID. Recover with the same keys after a lost response or reload. Offer explicit retry/refresh on the same request; edits create a new request/key and clear selection. |
-| Error handling | Include `shipmentRequestId`, `quoteAttemptId` and a status location when a claim was persisted. Distinguish these from the existing diagnostic error `requestId`. Never return another user's operation. |
-
-Keep request and quote-attempt responsibilities in the existing quote module initially, with domain types and separate application responsibilities. Do not add another deployable service or couple quote recovery to booking reconciliation.
-
-## Data changes — one additional table
-
-| Table | Proposed change |
-| --- | --- |
-| `shipment_requests` | Keep the address/package snapshot; add request idempotency key, content fingerprint, current attempt ID and version. Its existing state reflects only the current attempt (initially CREATED). |
-| `quote_attempts` — new | Store user/request/attempt IDs, attempt key, state, deadline, bounded error code, timestamps and version. States: RATING, READY, NO_RATES, FAILED. |
-| `shipment_quotes` | Add attempt ID; each offer belongs to exactly one request and attempt. Keep price, provider token and expiry immutable. |
-| `shipment_bookings` | No new idempotency table or duplicate shipment copy. Preserve the existing request/quote identities and uniqueness. |
-| `booking_reconciliation_tasks` | Unchanged; it remains responsible for uncertain chargeable creation, not rate querying. |
-
-The demo moves from four application tables to five. An extra small attempt row is written, but repeated quotations no longer duplicate the full address/package snapshot. Every new row carries `user_id`, preserving future user-based co-location.
-
-Required indexes/constraints:
-
-- Request uniqueness: `(user_id, request_idempotency_key)`.
-- Attempt uniqueness: `(user_id, request_id, attempt_key)`.
-- One running attempt per request: partial unique `(user_id, request_id)` where state = RATING in SQLite, backed by short claim transactions.
-- Owned attempt reads: `(user_id, request_id, attempt_id)`; quote reads/joins use owned request/attempt identity. Validate actual query plans before acceptance.
-
-If another key races with a running attempt, return `409 RATE_IN_PROGRESS` and that owned attempt's status location. The rejected attempt was not accepted; the frontend monitors the winner rather than submitting again. The same-key replay always resolves to its original attempt.
-
-Use a new versioned migration; do not edit applied V001/V002 or delete local data. Backfill a historical attempt for existing requests/quotes, preserve booking references, and reserve server-generated legacy keys for migrated snapshots. Test migration with existing bookings. Final SQL and backfill mechanics are implementation details to verify before applying the migration.
-
-## Failure and concurrency rules
-
-- Provider failure marks the attempt FAILED; successful empty results are NO_RATES. Both remain inspectable.
-- Commit offers and successful final state atomically. A failed database commit must not return a successful rates response.
-- Persist a deadline plus storage grace period. Recover overdue RATING rows lazily during status/retry handling using a conditional state/version update; no new scheduler is proposed. This is expiry bookkeeping, never a provider query.
-- If storage is unavailable, report STORE_UNAVAILABLE with known operation identity. Later reads can expire an abandoned attempt and allow an explicit new attempt.
-- Fence finalization so an expired/superseded attempt cannot publish stale offers or overwrite the current request state. Discard an in-flight result that lost its claim.
-- Once a new attempt is accepted, clear the old selection. A failed refresh must not silently restore old offers as if they were fresh. Same-key replay of an expired successful attempt remains the same result; new rates require a new attempt key.
-- Edits represent a new immutable request. This does not prove a previous uncertain shipment was not created; retain the existing manual-review guidance and never offer a new request as a retry workaround.
-- Authentication must retain a stable owner across token renewal for replay and recovery to work. Reuse its user-context interface; do not implement another identity system.
-
-## Acceptance and review decisions
-
-One vertical iteration with four checklist items: ST-601 request idempotency; ST-602 quotation attempts/status; ST-603 frontend recovery and selection rules; ST-604 migration/concurrency/failure/browser acceptance.
-
-Verify concurrent same-key request creation, changed-payload conflict, concurrent attempt claims, failure followed by explicit retry with the same request ID, lost successful response recovery without another provider call, restart/stale-attempt expiry, atomic persistence failure, late-result fencing, owner isolation and quote expiry. Verify that quotes from different attempts of the same request still permit only one booking. Include both normal and exceptional browser journeys.
-
-Before development, review: the four API contracts; one new attempt table; immutable edits creating a new request; superseding old quotes when a new attempt begins; and lazy expiry instead of a new background worker. No automatic creation retry, new login feature, message queue, cache or manual-resolution endpoint is included.
+Verified by **145 passing backend tests** (`./mvnw test`, including 9 cases in `RateRequestWorkflowTest` and 35 cases in `WorkflowApiTest`) and the **Playwright browser E2E journey** (`./mvnw test -Pbrowser-tests`):
+- Canonical same-key replay (`201` -> `200`), missing/invalid key rejection (`400`), and changed-content conflict (`409` with `operation.id` and `operation.statusUrl`).
+- Concurrent matching rate requests (1 provider call; followers receive `202 Accepted`).
+- Failure and explicit retry under the same key/requestId (`rate_version` incremented, zero `last_error_code` column), overdue deadline reclamation, stale completion fencing, and transactional rollback on quote insert failure.
+- Migration preservation of pre-existing `V001`/`V002` rows, four-table invariant, and SQLite index plan verification (`uk_shipment_request_key`, `idx_request_quotes`).
+- Browser 24h draft restoration across page reload, retry reusing the original key/requestId, and new key generation when shipment inputs are edited.

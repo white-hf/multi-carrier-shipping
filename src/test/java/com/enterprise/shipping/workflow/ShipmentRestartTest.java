@@ -42,7 +42,7 @@ class ShipmentRestartTest {
 
     void open() {
         source=SqliteDataSources.open(directory.resolve("workflow.db").toString(),"restart-test",2,3000,"db/workflow/bootstrap.sql");
-        WorkflowMigrations.migrate(source,"V001__quotes.sql","V002__bookings.sql");
+        WorkflowMigrations.migrate(source,"V001__quotes.sql","V002__bookings.sql","V003__rate_request_idempotency.sql");
         store=new JdbcShipmentStore(new JdbcTemplate(source));
     }
     ShipmentApplicationService service(ShipmentStore storage,ShipmentProviderPort provider,Clock clock) {

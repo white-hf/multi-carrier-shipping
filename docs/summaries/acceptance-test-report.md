@@ -68,3 +68,10 @@ The earlier 123-case count and eight-stage browser account above describe the I1
 ## I5 follow-up — 2026-10-23
 
 **Accepted for the agreed demo scope.** Backend regression: **135 passed**, zero failures/errors/skips. The separate browser journey passed label pending/error/ready/demo states, verified downloaded PDF bytes (`shipping-label.pdf` fixture), print-viewer dispatch, email-draft content, native file sharing/cancellation, download fallback, URL-only viewer fallback and reset/reload while retaining 2-hour Guest Token + Fingerprint authentication headers. Label actions never repeated shipment creation. See [I5 summary](iteration-05-label-actions.md) for evidence and native browser/OS limitations. No new backend API or chargeable sandbox creation was introduced.
+
+## I6 follow-up — 2026-10-23
+
+**Accepted for the agreed demo scope.** Backend suite: **145 passed**, zero failures/errors/skips (`./mvnw test`, including 9 cases in `RateRequestWorkflowTest` and 35 cases in `WorkflowApiTest`). The separate browser journey passed (`./mvnw test -Pbrowser-tests`).
+
+- **Idempotent Rate Requests & Retryable Execution (`V003__rate_request_idempotency.sql`, `RateRequest`, `ShippingIntentFingerprint`, `QuoteApplicationService`)**: `POST /api/quotes` requires `Idempotency-Key`, reuses the request on matching canonical content (`201` initial, `200` replay/retry, `202` in-flight), rejects changed content with `409 IDEMPOTENCY_CONFLICT`, exposes read-only `GET /api/quotes/{requestId}`, and fences retries via `rate_version` without adding a fifth table or `last_error_code` column.
+- **Browser Draft vs. Durable Business Record**: The frontend retains a 24-hour local draft (`localStorage`) that restores form inputs and the active rate `Idempotency-Key` across reloads, while the backend retains `shipment_requests` as the authoritative customer record. See [I6 summary](iteration-06-request-idempotency.md).

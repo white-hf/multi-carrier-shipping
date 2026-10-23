@@ -29,7 +29,7 @@ All `/api/quotes` and `/api/bookings/**` requests require a valid token and matc
 
 ## Rates
 
-`POST /api/quotes`
+`POST /api/quotes` with required `Idempotency-Key: <one-token-per-distinct-shipment-input>`:
 
 ```json
 {
@@ -41,7 +41,7 @@ All `/api/quotes` and `/api/bookings/**` requests require a valid token and matc
 
 Optional address fields: `companyName`, `addressLine2`, `email`, `residential` (false default). All 13 Canadian province/territory codes are supported. Optional `shippingDate` is `yyyy-MM-dd`; when omitted, the backend initializes it in the configured business timezone. Dimensions and weight must be positive. Alternative units: CM and KG.
 
-`201` returns:
+Initial completion returns `201` (with `Location: /api/quotes/{requestId}`); same-key replay or retry after `RATE_FAILED` / `QUOTES_EXPIRED` returns `200`; an already in-flight execution returns `202` with `Retry-After: 2`. `GET /api/quotes/{requestId}` reads current status (`RATING`, `READY`, `NO_RATES`, `RATE_FAILED`, `QUOTES_EXPIRED`) without calling the provider. Reusing a key with different shipment details returns `409 IDEMPOTENCY_CONFLICT`. When a rate operation already exists, error payloads include `"operation": {"id":"internal-request-id","statusUrl":"/api/quotes/internal-request-id"}`.
 
 ```json
 {
@@ -57,7 +57,7 @@ Optional address fields: `companyName`, `addressLine2`, `email`, `residential` (
 }
 ```
 
-Values above are illustrative. Empty successful results have `state: NO_RATES` and `quotes: []`. Provider quote tokens never appear in frontend responses. Editing any shipping input clears the selected quote. Ignore responses belonging to an older form revision. Do not invent transit estimates when null.
+Values above are illustrative. Empty successful results have `state: NO_RATES` and `quotes: []`. Provider quote tokens never appear in frontend responses. Editing any shipping input clears the selected quote and generates a fresh rate `Idempotency-Key`. A 24-hour local browser draft (`localStorage`) restores form inputs and the active rate operation key across reloads, while the backend retains the authoritative `shipment_requests` business record. Ignore responses belonging to an older form revision. Do not invent transit estimates when null.
 
 ## Create and read booking
 

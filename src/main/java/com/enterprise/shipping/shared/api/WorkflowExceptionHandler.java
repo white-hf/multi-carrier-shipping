@@ -1,15 +1,22 @@
 package com.enterprise.shipping.shared.api;
 
-import java.util.*;
-import org.slf4j.*;
+import java.net.URI;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import org.slf4j.MDC;
 import org.springframework.context.annotation.Profile;
-import org.springframework.core.annotation.Order;
 import org.springframework.core.Ordered;
-import org.springframework.http.*;
-import org.springframework.web.bind.*;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.core.annotation.Order;
 import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 /**
  * Maps standard exceptions and custom WorkflowExceptions to structured JSON errors.
@@ -22,7 +29,20 @@ public class WorkflowExceptionHandler {
 
     @ExceptionHandler(WorkflowException.class)
     public ResponseEntity<?> workflow(WorkflowException e) {
-        return error(e.status(), e.code(), List.of());
+        if (e.operation() == null) {
+            return error(e.status(), e.code(), List.of());
+        }
+
+        var body = new LinkedHashMap<String, Object>();
+        body.put("code", e.code());
+        body.put("message", e.code().replace('_', ' '));
+        body.put("requestId", Objects.toString(MDC.get("requestId"), "unassigned"));
+        body.put("fieldErrors", List.of());
+        body.put("operation", e.operation());
+
+        return ResponseEntity.status(e.status())
+                .location(URI.create(e.operation().statusUrl()))
+                .body(body);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

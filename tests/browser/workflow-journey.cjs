@@ -56,23 +56,38 @@ async function ctl(mode) {
     await page.fill('input[name="from.email"]', 'sender@example.com');
     await page.check('input[name="from.residential"]');
 
-    // 3. Provider error & NO_RATES empty state + backward navigation input preservation
+    // 3. Provider error, 24h draft restoration across reload, retry under same requestId & NO_RATES empty state
     await ctl('rate-error');
     await page.click('#get-rates-btn');
     await page.waitForFunction(() => !document.getElementById('notice').hidden && document.getElementById('notice').textContent.includes('PROVIDER_UNAVAILABLE'));
     assert.strictEqual(await page.isVisible('#step-1'), true);
+    const failedDraft = await page.evaluate(() => JSON.parse(localStorage.getItem('shipping.rateDraft.v1')));
+    assert.ok(failedDraft && failedDraft.operation && failedDraft.operation.key, 'Draft must retain rate Idempotency-Key');
+    assert.ok(failedDraft.operation.requestId, 'Draft must capture failed operation requestId');
 
+    // Reloading restores form fields and the original rate operation key from the 24h local draft
+    await page.reload({ waitUntil: 'networkidle' });
+    assert.strictEqual(await page.inputValue('input[name="from.email"]'), 'sender@example.com');
+    assert.strictEqual(await page.isChecked('input[name="from.residential"]'), true);
+    const restoredDraft = await page.evaluate(() => JSON.parse(localStorage.getItem('shipping.rateDraft.v1')));
+    assert.strictEqual(restoredDraft.operation.key, failedDraft.operation.key, 'Reload must preserve rate Idempotency-Key');
+
+    // Retrying after failure reuses the same key and requestId
     await ctl('empty-rates');
     await page.click('#get-rates-btn');
     await page.waitForSelector('#step-2:not([hidden])');
     assert.strictEqual(await page.textContent('#rates-count'), '0 shipping options available');
     assert.strictEqual(await page.isDisabled('#review-btn'), true);
+    const retriedDraft = await page.evaluate(() => JSON.parse(localStorage.getItem('shipping.rateDraft.v1')));
+    assert.strictEqual(retriedDraft.operation.key, failedDraft.operation.key);
+    assert.strictEqual(retriedDraft.operation.requestId, failedDraft.operation.requestId);
     await page.click('#step-2 [data-back="1"]');
     await page.waitForSelector('#step-1:not([hidden])');
     assert.strictEqual(await page.inputValue('input[name="from.email"]'), 'sender@example.com');
     assert.strictEqual(await page.isChecked('input[name="from.residential"]'), true);
 
-    // 4. Rate retrieval, sorting, selection, and edit invalidation
+    // 4. Editing shipment details starts a new rate request and retrieves quotes
+    await page.fill('input[name="from.streetAddress2"]', 'Suite 200');
     await ctl('normal');
     await page.click('#get-rates-btn');
     await page.waitForSelector('#step-2:not([hidden]) .rate-card');

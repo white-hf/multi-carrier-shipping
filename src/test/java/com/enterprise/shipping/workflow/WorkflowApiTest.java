@@ -198,7 +198,10 @@ class WorkflowApiTest {
         LABEL_BYTES.set("{}".getBytes(StandardCharsets.UTF_8));
     }
     JsonNode rates() throws Exception {
-        return mapper.readTree(mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content(INPUT))
+        return mapper.readTree(mvc.perform(post("/api/quotes")
+                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(INPUT))
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
     }
     @Test void persistsExactOffersAndDoesNotExposeProviderQuoteToken() throws Exception {
@@ -221,26 +224,26 @@ class WorkflowApiTest {
         for(String province:List.of("BC","AB","SK","MB","ON","QC","NB","NS","PE","NL","YT","NT","NU")) {
             String payload=INPUT.replace("\"province\":\"ON\"","\"province\":\""+province+"\"")
                     .replace("\"weight\":5","\"weight\":2.5,\"dimensionUnit\":\"CM\",\"weightUnit\":\"KG\"");
-            mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content(payload))
+            mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(payload))
                     .andExpect(status().isCreated());
             var sent=mapper.readTree(RATE_BODY.get());
             assertThat(sent.path("unitOfMeasurement").asText()).isEqualTo("METRIC");
             assertThat(sent.path("lineItems").get(0).path("weight").asText()).isEqualTo("2.5");
         }
         String mixed=INPUT.replace("\"weight\":5","\"weight\":10,\"dimensionUnit\":\"CM\",\"weightUnit\":\"LB\"");
-        mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content(mixed)).andExpect(status().isCreated());
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(mixed)).andExpect(status().isCreated());
         assertThat(mapper.readTree(RATE_BODY.get()).path("lineItems").get(0).path("weight").asText()).isEqualTo("4.5359237");
 
         String pastDate="{\"sender\":"+ADDRESS+",\"recipient\":"+ADDRESS+",\"parcel\":{\"length\":12,\"width\":10,\"height\":8,\"weight\":5},\"shippingDate\":\"2020-01-01\"}";
-        mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content(pastDate))
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(pastDate))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_SHIPPING_DATE"));
     }
     @Test void invalidFieldsNeverReachProvider() throws Exception {
-        mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content(INPUT.replace("\"weight\":5","\"weight\":0")))
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(INPUT.replace("\"weight\":5","\"weight\":0")))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fieldErrors[0].field").value("parcel.weight"));
-        mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content(INPUT.replace("M5V 3L9","12345")))
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(INPUT.replace("M5V 3L9","12345")))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fieldErrors[*].field").value(org.hamcrest.Matchers.hasItem("sender.postalCode")));
-        mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content("{malformed"))
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content("{malformed"))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
         assertThat(RATE_CALLS).hasValue(0);
     }
@@ -267,17 +270,17 @@ class WorkflowApiTest {
     }
     @Test void providerErrorsLeaveDurableFailedRequest() throws Exception {
         STATUS.set(500);
-        mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content(INPUT))
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(INPUT))
                 .andExpect(status().isBadGateway()).andExpect(jsonPath("$.code").value("PROVIDER_UNAVAILABLE"));
         assertThat(new JdbcTemplate(source).queryForObject("SELECT state FROM shipment_requests",String.class)).isEqualTo("RATE_FAILED");
 
         STATUS.set(401);
-        mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content(INPUT))
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(INPUT))
                 .andExpect(status().isBadGateway()).andExpect(jsonPath("$.code").value("PROVIDER_AUTHENTICATION_FAILED"));
 
         STATUS.set(200);
         RATE_RESPONSE.set("{\"availableRates\":[{\"quoteId\":\"q1\",\"carrierId\":\"1\",\"serviceId\":\"1\",\"totalCharge\":{\"amount\":100,\"currency\":\"USD\"}}]}");
-        mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content(INPUT))
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(INPUT))
                 .andExpect(status().isBadGateway()).andExpect(jsonPath("$.code").value("PROVIDER_INVALID_RESPONSE"));
     }
     @Test void createsConfirmedBookingAndReplaysIdempotentlyWithoutDuplicateSubmission() throws Exception {
@@ -597,12 +600,12 @@ class WorkflowApiTest {
         assertThat(CREATE_CALLS).hasValue(1);
     }
     @Test void enforcesSameOriginOnWritesAndExposesSafeMetricsAndIndexedQueryPlans() throws Exception {
-        mvc.perform(post("/api/quotes").header("Origin","https://evil.example.com")
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).header("Origin","https://evil.example.com")
                 .contentType(MediaType.APPLICATION_JSON).content(INPUT))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("ORIGIN_NOT_ALLOWED"));
 
-        mvc.perform(post("/api/quotes").header("Origin","http://localhost")
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).header("Origin","http://localhost")
                 .contentType(MediaType.APPLICATION_JSON).content(INPUT))
                 .andExpect(status().isCreated())
                 .andExpect(header().exists("X-Request-Id"))
@@ -625,18 +628,18 @@ class WorkflowApiTest {
                     .hasMessageContaining("Applied migration checksum changed");
         } finally {
             jdbc.update("UPDATE schema_migrations SET checksum=? WHERE version='V001__quotes.sql'",originalChecksum);
-            WorkflowMigrations.migrate(source,"V001__quotes.sql","V002__bookings.sql");
+            WorkflowMigrations.migrate(source,"V001__quotes.sql","V002__bookings.sql","V003__rate_request_idempotency.sql");
         }
     }
     @Test void rateCircuitBreakerOpeningDoesNotBlockBookingCreationCapacity() throws Exception {
         String quoteId=rates().path("quotes").get(0).path("quoteId").asText();
         STATUS.set(500);
         for(int i=0;i<4;i++) {
-            mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content(INPUT))
+            mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(INPUT))
                     .andExpect(status().isBadGateway());
         }
         int callsBeforeShortCircuit=RATE_CALLS.get();
-        mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content(INPUT))
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(INPUT))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value("PROVIDER_CAPACITY_EXCEEDED"));
         assertThat(RATE_CALLS).hasValue(callsBeforeShortCircuit);
@@ -645,6 +648,96 @@ class WorkflowApiTest {
                 .contentType(MediaType.APPLICATION_JSON).content("{\"quoteId\":\""+quoteId+"\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("CONFIRMED"));
+    }
+
+    @Test
+    void rateEndpointEnforcesIdempotencyReplayConflictFailureStatusAndRetry() throws Exception {
+        // 1. Missing or invalid Idempotency-Key on POST /api/quotes is rejected with 400
+        mvc.perform(post("/api/quotes").contentType(MediaType.APPLICATION_JSON).content(INPUT))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MISSING_IDEMPOTENCY_KEY"));
+        mvc.perform(post("/api/quotes")
+                        .header("Idempotency-Key", "invalid key with spaces")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(INPUT))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_IDEMPOTENCY_KEY"));
+        assertThat(RATE_CALLS).hasValue(0);
+
+        // 2. First request returns 201 Created; same-key replay returns 200 OK without calling provider
+        var createdBody = mvc.perform(post("/api/quotes")
+                        .header("Idempotency-Key", "rate-idem-001")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(INPUT))
+                .andExpect(status().isCreated())
+                .andExpect(header().exists("Location"))
+                .andExpect(jsonPath("$.state").value("READY"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String requestId = mapper.readTree(createdBody).path("requestId").asText();
+        assertThat(RATE_CALLS).hasValue(1);
+
+        mvc.perform(post("/api/quotes")
+                        .header("Idempotency-Key", "rate-idem-001")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(INPUT))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requestId").value(requestId))
+                .andExpect(jsonPath("$.state").value("READY"));
+        assertThat(RATE_CALLS).hasValue(1);
+
+        mvc.perform(get("/api/quotes/" + requestId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requestId").value(requestId))
+                .andExpect(jsonPath("$.state").value("READY"))
+                .andExpect(jsonPath("$.quotes").isArray());
+        assertThat(RATE_CALLS).hasValue(1);
+
+        // 3. Reusing the same key with changed parcel weight returns 409 IDEMPOTENCY_CONFLICT + operation location
+        mvc.perform(post("/api/quotes")
+                        .header("Idempotency-Key", "rate-idem-001")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(INPUT.replace("\"weight\":5", "\"weight\":9")))
+                .andExpect(status().isConflict())
+                .andExpect(header().string("Location", "/api/quotes/" + requestId))
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_CONFLICT"))
+                .andExpect(jsonPath("$.operation.id").value(requestId))
+                .andExpect(jsonPath("$.operation.statusUrl").value("/api/quotes/" + requestId));
+        assertThat(RATE_CALLS).hasValue(1);
+
+        // 4. Failed rate execution returns 502 with operation metadata, GET shows RATE_FAILED, and same-key retry succeeds
+        STATUS.set(500);
+        var failedBody = mvc.perform(post("/api/quotes")
+                        .header("Idempotency-Key", "rate-retry-002")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(INPUT))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.code").value("PROVIDER_UNAVAILABLE"))
+                .andExpect(jsonPath("$.operation.id").isNotEmpty())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        String failedRequestId = mapper.readTree(failedBody).path("operation").path("id").asText();
+        assertThat(RATE_CALLS).hasValue(2);
+
+        mvc.perform(get("/api/quotes/" + failedRequestId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requestId").value(failedRequestId))
+                .andExpect(jsonPath("$.state").value("RATE_FAILED"))
+                .andExpect(jsonPath("$.quotes").isEmpty());
+        assertThat(RATE_CALLS).hasValue(2);
+
+        STATUS.set(200);
+        mvc.perform(post("/api/quotes")
+                        .header("Idempotency-Key", "rate-retry-002")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(INPUT))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.requestId").value(failedRequestId))
+                .andExpect(jsonPath("$.state").value("READY"))
+                .andExpect(jsonPath("$.quotes").isNotEmpty());
+        assertThat(RATE_CALLS).hasValue(3);
     }
 
     @Test
@@ -695,6 +788,7 @@ class WorkflowApiTest {
         var alphaQuotesResp = mvc.perform(post("/api/quotes")
                         .header("Authorization", "Bearer " + alphaToken)
                         .header("X-Client-Fingerprint", fpAlpha)
+                        .header("Idempotency-Key", "alpha-rate-key-01")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(INPUT))
                 .andExpect(status().isCreated())
