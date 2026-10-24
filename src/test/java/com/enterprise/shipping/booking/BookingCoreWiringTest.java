@@ -1,5 +1,7 @@
 package com.enterprise.shipping.booking;
 
+import com.enterprise.shipping.booking.application.BookingCommand;
+
 import com.enterprise.shipping.Application;
 import com.enterprise.shipping.booking.domain.*;
 import com.enterprise.shipping.booking.port.CarrierBookingPort;

@@ -168,15 +168,15 @@ public class HighFanOutAggregationEngine implements com.enterprise.shipping.quot
         String id = adapter.getCarrierId();
         try (MDC.MDCCloseable ignored = MDC.putCloseable("requestId", requestId)) {
             // Local admission failures must not count as remote carrier failures.
-            List<CarrierQuote> quotes = bulkheads.bulkhead(id).executeCallable(() ->
-                    breakers.circuitBreaker(id).executeCallable(() -> {
+            List<CarrierQuote> quotes = com.enterprise.shipping.shared.infrastructure.http.OutboundCallExecutor.call(
+                    bulkheads.bulkhead(id), breakers.circuitBreaker(id), () -> {
                         long remaining = deadline - System.nanoTime();
                         if (remaining <= 0) throw new CarrierFailureException(OutcomeCode.TIMEOUT);
                         var value = adapter.fetchQuotes(request, Math.max(1, TimeUnit.NANOSECONDS.toMillis(remaining)));
                         validateQuotes(id, value);
                         if (System.nanoTime() > deadline) throw new CarrierFailureException(OutcomeCode.TIMEOUT);
                         return value;
-                    }));
+                    });
             return new Result(id, quotes.isEmpty() ? OutcomeCode.NO_SERVICES : OutcomeCode.SUCCESS, quotes);
         } catch (BulkheadFullException ex) { return new Result(id, OutcomeCode.CAPACITY_REJECTED, List.of()); }
         catch (CallNotPermittedException ex) { return new Result(id, OutcomeCode.CIRCUIT_OPEN, List.of()); }

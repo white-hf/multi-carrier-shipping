@@ -1,5 +1,7 @@
 package com.enterprise.shipping.demo.booking;
 
+import com.enterprise.shipping.booking.application.BookingCommand;
+
 import com.enterprise.shipping.booking.application.BookingRequestHasher;
 import com.enterprise.shipping.booking.domain.*;
 import com.fasterxml.jackson.core.JsonProcessingException;

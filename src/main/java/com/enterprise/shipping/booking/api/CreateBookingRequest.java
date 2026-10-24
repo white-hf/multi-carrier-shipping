@@ -1,6 +1,6 @@
 package com.enterprise.shipping.booking.api;
 
-import com.enterprise.shipping.booking.domain.BookingCommand;
+import com.enterprise.shipping.booking.application.BookingCommand;
 import com.enterprise.shipping.shared.api.ParcelRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;

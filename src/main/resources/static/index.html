@@ -69,216 +69,264 @@
 
         <div id="notice" class="notice" role="alert" hidden></div>
 
+        <!-- Multi-Stage Slow API Progress Card -->
         <div id="loading-banner" class="loading-banner" role="status" aria-live="polite" hidden>
-          <span class="spinner" aria-hidden="true"></span>
-          <div class="loading-text">
-            <strong id="loading-title">Processing request…</strong>
-            <span id="loading-subtitle">Live carrier sandbox responses typically take 8–20 seconds.</span>
+          <div class="loading-progress-bar">
+            <div class="loading-progress-fill" id="loading-progress-fill"></div>
           </div>
-          <span class="loading-timer" id="loading-timer">0s</span>
+          <div class="loading-main">
+            <span class="spinner" aria-hidden="true"></span>
+            <div class="loading-text">
+              <strong id="loading-title">Fetching live rates from Canada Post…</strong>
+              <span id="loading-subtitle">Comparing real-time transit times and CAD rates across supported carriers.</span>
+              <div class="loading-stages" id="loading-stages">
+                <span class="stage-pill active">Canada Post</span>
+                <span class="stage-pill">Purolator</span>
+                <span class="stage-pill">FedEx</span>
+                <span class="stage-pill">UPS</span>
+              </div>
+            </div>
+            <div class="loading-timer-box">
+              <span class="pulse-dot" aria-hidden="true"></span>
+              <span class="loading-timer" id="loading-timer">0s</span>
+            </div>
+          </div>
         </div>
 
-        <!-- STEP 1: SHIPPING DETAILS -->
+        <!-- STEP 1: SHIPPING DETAILS (SINGLE-SCREEN TABBED WORKSTATION) -->
         <section id="step-1">
           <form id="shipping-form" novalidate>
-            <div class="address-grid">
-              <!-- Sender Panel -->
-              <section class="panel">
-                <div class="panel-head">
-                  <span class="panel-icon origin">↗</span>
-                  <div>
-                    <h2>Sender information</h2>
-                    <p>Origin contact &amp; pickup address</p>
-                  </div>
-                </div>
+            <div class="detail-tabs" role="tablist" aria-label="Shipment detail sections">
+              <button type="button" class="detail-tab active" role="tab" aria-selected="true" data-detail-tab="1" id="detail-tab-btn-1">
+                <span class="detail-tab-icon origin">↗</span>
+                <span class="detail-tab-body">
+                  <span class="detail-tab-title">1. Sender (Origin)</span>
+                  <span class="detail-tab-sub" id="tab-summary-from">John · Toronto, ON</span>
+                </span>
+                <span class="detail-tab-status" id="tab-status-1">✓</span>
+              </button>
 
-                <div class="form-section-label">Contact details</div>
-                <div class="form-grid">
-                  <label class="field">
-                    Contact name <em>*</em>
-                    <input required name="from.attention" value="John" autocomplete="section-from name">
-                  </label>
-                  <label class="field">
-                    Phone number <em>*</em>
-                    <input required name="from.phone" value="4165550100" autocomplete="section-from tel">
-                  </label>
-                  <label class="field">
-                    Company name <small>Optional</small>
-                    <input name="from.companyName" placeholder="Company name" value="Test Sender" autocomplete="section-from organization">
-                  </label>
-                  <label class="field">
-                    Email <small>Optional</small>
-                    <input type="email" name="from.email" placeholder="sender@company.com" maxlength="254" autocomplete="section-from email">
-                  </label>
-                </div>
+              <button type="button" class="detail-tab" role="tab" aria-selected="false" data-detail-tab="2" id="detail-tab-btn-2">
+                <span class="detail-tab-icon destination">↘</span>
+                <span class="detail-tab-body">
+                  <span class="detail-tab-title">2. Recipient (Destination)</span>
+                  <span class="detail-tab-sub" id="tab-summary-to">Receiver · Halifax, NS</span>
+                </span>
+                <span class="detail-tab-status" id="tab-status-2">✓</span>
+              </button>
 
-                <div class="form-section-label">Origin address</div>
-                <div class="form-grid">
-                  <label class="field full">
-                    Street address <em>*</em>
-                    <input required name="from.streetAddress" value="100 King St W" autocomplete="section-from address-line1">
-                  </label>
-                  <label class="field full">
-                    Address line 2 <small>Optional</small>
-                    <input name="from.streetAddress2" placeholder="Suite, apartment, unit, floor" autocomplete="section-from address-line2">
-                  </label>
-                  <label class="field">
-                    City <em>*</em>
-                    <input required name="from.city" value="Toronto" autocomplete="section-from address-level2">
-                  </label>
-                  <label class="field">
-                    Province <em>*</em>
-                    <select required name="from.state">
-                      <option value="ON" selected>Ontario (ON)</option>
-                      <option value="NS">Nova Scotia (NS)</option>
-                      <option value="BC">British Columbia (BC)</option>
-                      <option value="AB">Alberta (AB)</option>
-                      <option value="QC">Quebec (QC)</option>
-                      <option value="MB">Manitoba (MB)</option>
-                      <option value="SK">Saskatchewan (SK)</option>
-                      <option value="NB">New Brunswick (NB)</option>
-                      <option value="NL">Newfoundland &amp; Labrador (NL)</option>
-                      <option value="PE">Prince Edward Island (PE)</option>
-                      <option value="NT">Northwest Territories (NT)</option>
-                      <option value="NU">Nunavut (NU)</option>
-                      <option value="YT">Yukon (YT)</option>
-                    </select>
-                  </label>
-                  <label class="field">
-                    Postal code <em>*</em>
-                    <input required name="from.postalCode" value="M5X 1A9" placeholder="A1A 1A1" autocomplete="section-from postal-code">
-                  </label>
-                  <label class="field">
-                    Country
-                    <input value="Canada (CA)" disabled>
-                  </label>
-                  <label class="residential-field full">
-                    <input type="checkbox" name="from.residential">
-                    <span>This origin is a residential address</span>
-                  </label>
-                </div>
-              </section>
-
-              <!-- Recipient Panel -->
-              <section class="panel">
-                <div class="panel-head">
-                  <span class="panel-icon destination">↘</span>
-                  <div>
-                    <h2>Recipient information</h2>
-                    <p>Destination contact &amp; delivery address</p>
-                  </div>
-                </div>
-
-                <div class="form-section-label">Contact details</div>
-                <div class="form-grid">
-                  <label class="field">
-                    Contact name <em>*</em>
-                    <input required name="to.attention" value="Receiver" autocomplete="section-to name">
-                  </label>
-                  <label class="field">
-                    Phone number <em>*</em>
-                    <input required name="to.phone" value="9025550100" autocomplete="section-to tel">
-                  </label>
-                  <label class="field">
-                    Company name <small>Optional</small>
-                    <input name="to.companyName" placeholder="Company name" value="Test Receiver" autocomplete="section-to organization">
-                  </label>
-                  <label class="field">
-                    Email <small>Optional</small>
-                    <input type="email" name="to.email" placeholder="recipient@company.com" maxlength="254" autocomplete="section-to email">
-                  </label>
-                </div>
-
-                <div class="form-section-label">Destination address</div>
-                <div class="form-grid">
-                  <label class="field full">
-                    Street address <em>*</em>
-                    <input required name="to.streetAddress" value="2000 Barrington St" autocomplete="section-to address-line1">
-                  </label>
-                  <label class="field full">
-                    Address line 2 <small>Optional</small>
-                    <input name="to.streetAddress2" placeholder="Suite, apartment, unit, floor" autocomplete="section-to address-line2">
-                  </label>
-                  <label class="field">
-                    City <em>*</em>
-                    <input required name="to.city" value="Halifax" autocomplete="section-to address-level2">
-                  </label>
-                  <label class="field">
-                    Province <em>*</em>
-                    <select required name="to.state">
-                      <option value="ON">Ontario (ON)</option>
-                      <option value="NS" selected>Nova Scotia (NS)</option>
-                      <option value="BC">British Columbia (BC)</option>
-                      <option value="AB">Alberta (AB)</option>
-                      <option value="QC">Quebec (QC)</option>
-                      <option value="MB">Manitoba (MB)</option>
-                      <option value="SK">Saskatchewan (SK)</option>
-                      <option value="NB">New Brunswick (NB)</option>
-                      <option value="NL">Newfoundland &amp; Labrador (NL)</option>
-                      <option value="PE">Prince Edward Island (PE)</option>
-                      <option value="NT">Northwest Territories (NT)</option>
-                      <option value="NU">Nunavut (NU)</option>
-                      <option value="YT">Yukon (YT)</option>
-                    </select>
-                  </label>
-                  <label class="field">
-                    Postal code <em>*</em>
-                    <input required name="to.postalCode" value="B3J 3K1" placeholder="A1A 1A1" autocomplete="section-to postal-code">
-                  </label>
-                  <label class="field">
-                    Country
-                    <input value="Canada (CA)" disabled>
-                  </label>
-                  <label class="residential-field full">
-                    <input type="checkbox" name="to.residential">
-                    <span>This destination is a residential address</span>
-                  </label>
-                </div>
-              </section>
+              <button type="button" class="detail-tab" role="tab" aria-selected="false" data-detail-tab="3" id="detail-tab-btn-3">
+                <span class="detail-tab-icon package">□</span>
+                <span class="detail-tab-body">
+                  <span class="detail-tab-title">3. Package Details</span>
+                  <span class="detail-tab-sub" id="tab-summary-pkg">5 lb · 12 × 10 × 8 in</span>
+                </span>
+                <span class="detail-tab-status" id="tab-status-3">✓</span>
+              </button>
             </div>
 
-            <!-- Package Panel -->
-            <section class="panel package-panel">
-              <div class="panel-head package-head">
-                <div class="panel-head-left">
-                  <span class="panel-icon package">□</span>
-                  <div>
-                    <h2>Package details</h2>
-                    <p id="package-unit-subtitle">One package · imperial measurements (in / lb)</p>
+            <div class="tab-viewport">
+              <div class="tab-track" id="detail-tab-track" data-active-tab="1">
+                <!-- TAB PANE 1: SENDER -->
+                <section class="panel tab-pane" role="tabpanel" data-tab-pane="1" aria-labelledby="detail-tab-btn-1">
+                  <div class="panel-head">
+                    <span class="panel-icon origin">↗</span>
+                    <div>
+                      <h2>Sender information</h2>
+                      <p>Origin contact &amp; pickup address in Canada</p>
+                    </div>
                   </div>
-                </div>
-                <div class="unit-toggle" role="group" aria-label="Measurement units">
-                  <button type="button" class="unit-btn active" data-unit="IMPERIAL">Imperial (in / lb)</button>
-                  <button type="button" class="unit-btn" data-unit="METRIC">Metric (cm / kg)</button>
-                </div>
-              </div>
 
-              <div class="package-grid">
-                <label class="field">
-                  Length <em>*</em>
-                  <input name="length" required type="number" min="0.01" step="any" value="12">
-                  <span class="unit" data-dim-unit>in</span>
-                </label>
-                <label class="field">
-                  Width <em>*</em>
-                  <input name="width" required type="number" min="0.01" step="any" value="10">
-                  <span class="unit" data-dim-unit>in</span>
-                </label>
-                <label class="field">
-                  Height <em>*</em>
-                  <input name="height" required type="number" min="0.01" step="any" value="8">
-                  <span class="unit" data-dim-unit>in</span>
-                </label>
-                <label class="field">
-                  Weight <em>*</em>
-                  <input name="weight" required type="number" min="0.01" step="any" value="5">
-                  <span class="unit" data-weight-unit>lb</span>
-                </label>
-              </div>
-            </section>
+                  <div class="form-grid">
+                    <label class="field">
+                      Contact name <em>*</em>
+                      <input required name="from.attention" maxlength="128" value="John" autocomplete="section-from name">
+                    </label>
+                    <label class="field">
+                      Phone number <em>*</em>
+                      <input required name="from.phone" maxlength="32" value="4165550100" autocomplete="section-from tel">
+                    </label>
+                    <label class="field">
+                      Company name <small>Optional</small>
+                      <input name="from.companyName" maxlength="200" placeholder="Company name" value="Test Sender" autocomplete="section-from organization">
+                    </label>
+                    <label class="field">
+                      Email <small>Optional</small>
+                      <input type="email" name="from.email" placeholder="sender@company.com" maxlength="254" autocomplete="section-from email">
+                    </label>
+                    <label class="field">
+                      Street address <em>*</em>
+                      <input required name="from.streetAddress" maxlength="255" value="100 King St W" autocomplete="section-from address-line1">
+                    </label>
+                    <label class="field">
+                      Address line 2 <small>Optional</small>
+                      <input name="from.streetAddress2" maxlength="255" placeholder="Suite, unit, floor" autocomplete="section-from address-line2">
+                    </label>
+                    <label class="field">
+                      City <em>*</em>
+                      <input required name="from.city" maxlength="128" value="Toronto" autocomplete="section-from address-level2">
+                    </label>
+                    <label class="field">
+                      Province <em>*</em>
+                      <select required name="from.state">
+                        <option value="ON" selected>Ontario (ON)</option>
+                        <option value="NS">Nova Scotia (NS)</option>
+                        <option value="BC">British Columbia (BC)</option>
+                        <option value="AB">Alberta (AB)</option>
+                        <option value="QC">Quebec (QC)</option>
+                        <option value="MB">Manitoba (MB)</option>
+                        <option value="SK">Saskatchewan (SK)</option>
+                        <option value="NB">New Brunswick (NB)</option>
+                        <option value="NL">Newfoundland &amp; Labrador (NL)</option>
+                        <option value="PE">Prince Edward Island (PE)</option>
+                        <option value="NT">Northwest Territories (NT)</option>
+                        <option value="NU">Nunavut (NU)</option>
+                        <option value="YT">Yukon (YT)</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      Postal code <em>*</em>
+                      <input required name="from.postalCode" maxlength="20" value="M5X 1A9" placeholder="A1A 1A1" autocomplete="section-from postal-code">
+                    </label>
+                    <label class="field">
+                      Country
+                      <input value="Canada (CA)" disabled>
+                    </label>
+                    <label class="residential-field full">
+                      <input type="checkbox" name="from.residential">
+                      <span>This origin is a residential address</span>
+                    </label>
+                  </div>
+                </section>
 
-            <div class="action-row end">
-              <span class="small-note">Your shipment details are validated and saved as an immutable rating snapshot.</span>
+                <!-- TAB PANE 2: RECIPIENT -->
+                <section class="panel tab-pane" role="tabpanel" data-tab-pane="2" aria-labelledby="detail-tab-btn-2" hidden>
+                  <div class="panel-head">
+                    <span class="panel-icon destination">↘</span>
+                    <div>
+                      <h2>Recipient information</h2>
+                      <p>Destination contact &amp; delivery address in Canada</p>
+                    </div>
+                  </div>
+
+                  <div class="form-grid">
+                    <label class="field">
+                      Contact name <em>*</em>
+                      <input required name="to.attention" maxlength="128" value="Receiver" autocomplete="section-to name">
+                    </label>
+                    <label class="field">
+                      Phone number <em>*</em>
+                      <input required name="to.phone" maxlength="32" value="9025550100" autocomplete="section-to tel">
+                    </label>
+                    <label class="field">
+                      Company name <small>Optional</small>
+                      <input name="to.companyName" maxlength="200" placeholder="Company name" value="Test Receiver" autocomplete="section-to organization">
+                    </label>
+                    <label class="field">
+                      Email <small>Optional</small>
+                      <input type="email" name="to.email" placeholder="recipient@company.com" maxlength="254" autocomplete="section-to email">
+                    </label>
+                    <label class="field">
+                      Street address <em>*</em>
+                      <input required name="to.streetAddress" maxlength="255" value="2000 Barrington St" autocomplete="section-to address-line1">
+                    </label>
+                    <label class="field">
+                      Address line 2 <small>Optional</small>
+                      <input name="to.streetAddress2" maxlength="255" placeholder="Suite, unit, floor" autocomplete="section-to address-line2">
+                    </label>
+                    <label class="field">
+                      City <em>*</em>
+                      <input required name="to.city" maxlength="128" value="Halifax" autocomplete="section-to address-level2">
+                    </label>
+                    <label class="field">
+                      Province <em>*</em>
+                      <select required name="to.state">
+                        <option value="ON">Ontario (ON)</option>
+                        <option value="NS" selected>Nova Scotia (NS)</option>
+                        <option value="BC">British Columbia (BC)</option>
+                        <option value="AB">Alberta (AB)</option>
+                        <option value="QC">Quebec (QC)</option>
+                        <option value="MB">Manitoba (MB)</option>
+                        <option value="SK">Saskatchewan (SK)</option>
+                        <option value="NB">New Brunswick (NB)</option>
+                        <option value="NL">Newfoundland &amp; Labrador (NL)</option>
+                        <option value="PE">Prince Edward Island (PE)</option>
+                        <option value="NT">Northwest Territories (NT)</option>
+                        <option value="NU">Nunavut (NU)</option>
+                        <option value="YT">Yukon (YT)</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      Postal code <em>*</em>
+                      <input required name="to.postalCode" maxlength="20" value="B3J 3K1" placeholder="A1A 1A1" autocomplete="section-to postal-code">
+                    </label>
+                    <label class="field">
+                      Country
+                      <input value="Canada (CA)" disabled>
+                    </label>
+                    <label class="residential-field full">
+                      <input type="checkbox" name="to.residential">
+                      <span>This destination is a residential address</span>
+                    </label>
+                  </div>
+                </section>
+
+                <!-- TAB PANE 3: PACKAGE -->
+                <section class="panel tab-pane" role="tabpanel" data-tab-pane="3" aria-labelledby="detail-tab-btn-3" hidden>
+                  <div class="panel-head package-head">
+                    <div class="panel-head-left">
+                      <span class="panel-icon package">□</span>
+                      <div>
+                        <h2>Package details</h2>
+                        <p id="package-unit-subtitle">One package · imperial measurements (in / lb)</p>
+                      </div>
+                    </div>
+                    <div class="unit-toggle" role="group" aria-label="Measurement units">
+                      <button type="button" class="unit-btn active" data-unit="IMPERIAL">Imperial (in / lb)</button>
+                      <button type="button" class="unit-btn" data-unit="METRIC">Metric (cm / kg)</button>
+                    </div>
+                  </div>
+
+                  <div class="package-grid">
+                    <label class="field">
+                      Length <em>*</em>
+                      <input name="length" required type="number" min="0.1" max="10000" step="any" value="12">
+                      <span class="unit" data-dim-unit>in</span>
+                    </label>
+                    <label class="field">
+                      Width <em>*</em>
+                      <input name="width" required type="number" min="0.1" max="10000" step="any" value="10">
+                      <span class="unit" data-dim-unit>in</span>
+                    </label>
+                    <label class="field">
+                      Height <em>*</em>
+                      <input name="height" required type="number" min="0.1" max="10000" step="any" value="8">
+                      <span class="unit" data-dim-unit>in</span>
+                    </label>
+                    <label class="field">
+                      Weight <em>*</em>
+                      <input name="weight" required type="number" min="0.1" max="10000" step="any" value="5">
+                      <span class="unit" data-weight-unit>lb</span>
+                    </label>
+                  </div>
+
+                  <div class="package-quick-summary" id="package-quick-summary">
+                    Route preview: <strong>Toronto, ON (M5X 1A9) → Halifax, NS (B3J 3K1)</strong>
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            <div class="action-row step1-action-bar sticky-action-bar">
+              <div class="tab-nav-group">
+                <button class="button secondary" type="button" id="prev-tab-btn" hidden>
+                  ← Previous section
+                </button>
+                <button class="button secondary" type="button" id="next-tab-btn">
+                  Next: Recipient <span>→</span>
+                </button>
+              </div>
+              <div class="sticky-selection-summary" id="step1-sticky-summary">Toronto, ON → Halifax, NS · 5 lb (12×10×8 in)</div>
               <button class="button primary" type="submit" id="get-rates-btn">
                 Compare shipping rates <span>→</span>
               </button>
@@ -333,12 +381,12 @@
           </div>
         </section>
 
-        <!-- STEP 3: REVIEW & CONFIRMATION -->
+        <!-- STEP 3: REVIEW & CONFIRMATION (COMPACT SINGLE-SCREEN REVIEW) -->
         <section id="step-3" hidden>
           <div id="review-view">
             <div class="review-grid">
-              <section class="panel">
-                <div class="panel-head">
+              <section class="panel review-panel-compact">
+                <div class="panel-head compact-head">
                   <span class="panel-icon package">✓</span>
                   <div>
                     <h2>Review your shipment</h2>
@@ -346,10 +394,17 @@
                   </div>
                 </div>
 
-                <div class="review-block">
-                  <small>SHIPMENT ROUTE &amp; PACKAGE</small>
-                  <strong id="review-route"></strong>
-                  <p id="review-package"></p>
+                <div class="review-top-strip">
+                  <div class="review-strip-item">
+                    <small>SHIPMENT ROUTE &amp; PACKAGE</small>
+                    <strong id="review-route"></strong>
+                    <p id="review-package"></p>
+                  </div>
+                  <div class="review-strip-item">
+                    <small>SELECTED SERVICE</small>
+                    <div class="review-service-title" id="review-service"></div>
+                    <p id="review-transit" class="muted-line"></p>
+                  </div>
                 </div>
 
                 <div class="review-addresses">
@@ -369,18 +424,12 @@
                   </div>
                 </div>
 
-                <div class="review-block">
-                  <small>SELECTED SERVICE</small>
-                  <div class="review-service-title" id="review-service"></div>
-                  <p id="review-transit" class="muted-line"></p>
-                </div>
-
                 <div class="subtle-warning">
                   Confirm this chargeable shipment once. If confirmation is delayed, check the existing booking rather than creating another.
                 </div>
               </section>
 
-              <aside class="panel order-summary">
+              <aside class="panel order-summary review-panel-compact">
                 <h2>Order summary</h2>
                 <div class="breakdown-row">
                   <span>Base charge</span>

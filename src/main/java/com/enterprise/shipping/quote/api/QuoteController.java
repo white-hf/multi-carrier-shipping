@@ -2,7 +2,7 @@ package com.enterprise.shipping.quote.api;
 
 import com.enterprise.shipping.shared.domain.ShippingMarketPolicy;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import com.enterprise.shipping.quote.domain.QuoteCommand;
+import com.enterprise.shipping.quote.application.QuoteCommand;
 import com.enterprise.shipping.quote.config.QuoteProperties;
 import com.enterprise.shipping.shared.api.ApiResponse;
 import com.enterprise.shipping.quote.domain.QuoteComparison;

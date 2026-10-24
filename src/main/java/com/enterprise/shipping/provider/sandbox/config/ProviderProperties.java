@@ -1,4 +1,4 @@
-package com.enterprise.shipping.integration.config;
+package com.enterprise.shipping.provider.sandbox.config;
 
 import jakarta.validation.constraints.*;
 import java.net.URI;

@@ -1,6 +1,6 @@
 package com.enterprise.shipping.booking.port;
 
-import com.enterprise.shipping.booking.domain.BookingCommand;
+import com.enterprise.shipping.booking.application.BookingCommand;
 import com.enterprise.shipping.booking.domain.CarrierReceipt;
 
 /** Remote side effects must never participate in a local database transaction. */

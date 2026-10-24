@@ -1,5 +1,7 @@
 package com.enterprise.shipping.quote;
 
+import com.enterprise.shipping.quote.application.QuoteCommand;
+
 import com.enterprise.shipping.quote.infrastructure.monitoring.MicrometerQuoteObserver;
 import com.enterprise.shipping.shared.domain.ShipmentParcel;
 import com.enterprise.shipping.quote.port.CarrierRatePort;

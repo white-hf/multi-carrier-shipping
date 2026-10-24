@@ -39,13 +39,24 @@ async function ctl(mode) {
     });
     assert.strictEqual(unauthStatus, 401, 'Unauthenticated API call without Guest Token must return 401');
 
-    // 2. Client-side & server-side field validation + input retention
+    // 2. Client-side & server-side field validation across 3-Tab workstation + input retention
+    // Empty recipient field while on Sender tab must switch to and display Recipient tab (not Package tab)
+    await page.click('#detail-tab-btn-2');
+    await page.fill('input[name="to.city"]', '');
+    await page.click('#detail-tab-btn-1');
+    await page.click('#get-rates-btn');
+    assert.strictEqual(await page.isVisible('[data-tab-pane="2"]'), true, 'Recipient tab pane must be visible on recipient error');
+    assert.strictEqual(await page.isVisible('[data-tab-pane="3"]'), false, 'Package tab pane must stay hidden');
+    await page.fill('input[name="to.city"]', 'Halifax');
+
+    await page.click('#detail-tab-btn-3');
     await page.fill('input[name="weight"]', '0');
     await page.click('#get-rates-btn');
     assert.strictEqual(await page.isVisible('#notice'), true);
     assert.strictEqual((await ctl('stats')).rateCalls, 0);
 
     await page.fill('input[name="weight"]', '5');
+    await page.click('#detail-tab-btn-1');
     await page.fill('input[name="from.postalCode"]', '12345');
     await page.click('#get-rates-btn');
     await page.waitForSelector('input[name="from.postalCode"][aria-invalid="true"]');
@@ -109,6 +120,7 @@ async function ctl(mode) {
 
     // Edit details invalidates previous selection and requires fresh rates
     await page.click('#step-2 [data-back="1"]');
+    await page.click('#detail-tab-btn-3');
     await page.fill('input[name="weight"]', '6');
     await page.click('#get-rates-btn');
     await page.waitForSelector('#step-2:not([hidden]) .rate-card');

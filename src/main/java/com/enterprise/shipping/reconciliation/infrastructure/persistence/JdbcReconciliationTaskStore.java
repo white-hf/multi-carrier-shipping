@@ -19,8 +19,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 /** Single-statement task writes; task ownership never grants access to booking rows. */
 public final class JdbcReconciliationTaskStore implements ReconciliationTaskStore {
     private static final Logger log = LoggerFactory.getLogger(JdbcReconciliationTaskStore.class);
-    public static final String DUE_SQL = """
-            SELECT * FROM booking_reconciliation_tasks
+    private static final String TASK_COLUMNS =
+            "task_id, booking_id, booking_locator, carrier_id, carrier_context_reference, customer_reference, "
+            + "state, available_at, attempts, lease_token, version, last_error_code, result_type, "
+            + "carrier_booking_id, tracking_number, label_url, created_at, updated_at";
+    public static final String DUE_SQL = "SELECT " + TASK_COLUMNS + """
+             FROM booking_reconciliation_tasks
             WHERE state IN ('WAITING','RUNNING','RESULT_PENDING') AND available_at<=?
             ORDER BY available_at, task_id LIMIT ?
             """;
@@ -40,7 +44,7 @@ public final class JdbcReconciliationTaskStore implements ReconciliationTaskStor
         return db(() -> jdbc.query(DUE_SQL, JdbcReconciliationTaskStore::map, now, limit));
     }
     @Override public Optional<ReconciliationTask> find(String id) {
-        return db(() -> jdbc.query("SELECT * FROM booking_reconciliation_tasks WHERE task_id=?",
+        return db(() -> jdbc.query("SELECT " + TASK_COLUMNS + " FROM booking_reconciliation_tasks WHERE task_id=?",
                 JdbcReconciliationTaskStore::map, id)).stream().findFirst();
     }
     @Override public Optional<ReconciliationTask> claim(ReconciliationTask task, String token, long now, long expires) {

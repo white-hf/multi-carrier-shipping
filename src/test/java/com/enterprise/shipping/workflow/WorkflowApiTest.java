@@ -1,11 +1,11 @@
 package com.enterprise.shipping.workflow;
 
 import com.enterprise.shipping.Application;
-import com.enterprise.shipping.integration.config.ProviderProperties;
+import com.enterprise.shipping.provider.sandbox.config.ProviderProperties;
 import com.enterprise.shipping.quote.contract.QuoteSelectionPort;
 import com.enterprise.shipping.reconciliation.application.PendingShipmentDiscovery;
 import com.enterprise.shipping.shared.api.WorkflowException;
-import com.enterprise.shipping.shared.identity.GuestSessionTokenService;
+import com.enterprise.shipping.auth.application.GuestSessionTokenService;
 import com.enterprise.shipping.shared.infrastructure.persistence.WorkflowMigrations;
 import com.fasterxml.jackson.databind.*;
 import com.sun.net.httpserver.*;
@@ -79,7 +79,7 @@ class WorkflowApiTest {
     static final AtomicReference<String> LABEL_CONTENT_TYPE=new AtomicReference<>("application/json");
     static final AtomicReference<byte[]> LABEL_BYTES=new AtomicReference<>("{}".getBytes(StandardCharsets.UTF_8));
     static final AtomicReference<JdbcTemplate> TEST_JDBC=new AtomicReference<>();
-    static final AtomicReference<com.enterprise.shipping.integration.SandboxShippingAdapter> TEST_ADAPTER=new AtomicReference<>();
+    static final AtomicReference<com.enterprise.shipping.provider.sandbox.SandboxProviderClient> TEST_ADAPTER=new AtomicReference<>();
     static final Path DB;
     static final String DEFAULT_RATES="""
         {"availableRates":[
@@ -171,8 +171,9 @@ class WorkflowApiTest {
     @Autowired QuoteSelectionPort selections;
     @Autowired PendingShipmentDiscovery discovery;
     @Autowired ProviderProperties providerProperties;
+    @Autowired com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort recoveryCapabilities;
     @Autowired MeterRegistry meterRegistry;
-    @Autowired com.enterprise.shipping.integration.SandboxShippingAdapter adapter;
+    @Autowired com.enterprise.shipping.provider.sandbox.SandboxProviderClient adapter;
     static final String ADDRESS="""
         {"contactName":"Test User","addressLine1":"100 Test Street","city":"Toronto","province":"ON",
          "postalCode":"M5V 3L9","countryCode":"CA","phone":"4165550100"}
@@ -241,6 +242,10 @@ class WorkflowApiTest {
     @Test void invalidFieldsNeverReachProvider() throws Exception {
         mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(INPUT.replace("\"weight\":5","\"weight\":0")))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fieldErrors[0].field").value("parcel.weight"));
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(INPUT.replace("\"weight\":5","\"weight\":5.12345")))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fieldErrors[0].field").value("parcel.weight"));
+        mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(INPUT.replace("Test User", "A".repeat(129))))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fieldErrors[*].field").value(org.hamcrest.Matchers.hasItem("sender.contactName")));
         mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content(INPUT.replace("M5V 3L9","12345")))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.fieldErrors[*].field").value(org.hamcrest.Matchers.hasItem("sender.postalCode")));
         mvc.perform(post("/api/quotes").header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON).content("{malformed"))
@@ -547,12 +552,12 @@ class WorkflowApiTest {
                 .andExpect(jsonPath("$.shipmentId").value("123"));
     }
     @Test void providerCapabilitiesAreLocalAndScopedToThePersistedAccount() {
-        var capability=adapter.capabilities(providerProperties.providerId(),providerProperties.accountAlias());
+        var capability=recoveryCapabilities.capabilities(providerProperties.providerId(),providerProperties.accountAlias());
         assertThat(capability.authoritativeLookup()).isEqualTo(
                 com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort.Support.UNSUPPORTED);
         assertThat(capability.creationIdempotency()).isEqualTo(
                 com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort.Support.UNVERIFIED);
-        assertThat(adapter.capabilities("another-provider","another-account").authoritativeLookup()).isEqualTo(
+        assertThat(recoveryCapabilities.capabilities("another-provider","another-account").authoritativeLookup()).isEqualTo(
                 com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort.Support.UNVERIFIED);
         assertThat(CREATE_CALLS).hasValue(0);
         assertThat(LOOKUP_CALLS).hasValue(0);
@@ -616,8 +621,13 @@ class WorkflowApiTest {
         assertThat(meterRegistry.find("shipping.carrier.transport.latency").timers()).isNotEmpty();
 
         var jdbc=new JdbcTemplate(source);
-        var plan=String.join(" ",jdbc.query("EXPLAIN QUERY PLAN SELECT * FROM shipment_bookings WHERE status IN ('PENDING','PENDING_INQUIRY') AND submission_deadline_at<=? AND (submission_deadline_at,booking_id)>(?,?) ORDER BY submission_deadline_at,booking_id LIMIT 10",
-                (rs,n)->rs.getString("detail"),1000L,-1L,""));
+        var plan=String.join(" ",jdbc.query("""
+                EXPLAIN QUERY PLAN SELECT booking_id, status FROM shipment_bookings
+                WHERE status IN ('PENDING','PENDING_INQUIRY')
+                  AND submission_deadline_at <= ?
+                  AND (submission_deadline_at > ? OR (submission_deadline_at = ? AND booking_id > ?))
+                ORDER BY submission_deadline_at, booking_id LIMIT 10
+                """, (rs,n)->rs.getString("detail"), 1000L, -1L, -1L, ""));
         assertThat(plan).contains("idx_workflow_unresolved");
 
         String originalChecksum=jdbc.queryForObject("SELECT checksum FROM schema_migrations WHERE version='V001__quotes.sql'",String.class);
@@ -628,7 +638,7 @@ class WorkflowApiTest {
                     .hasMessageContaining("Applied migration checksum changed");
         } finally {
             jdbc.update("UPDATE schema_migrations SET checksum=? WHERE version='V001__quotes.sql'",originalChecksum);
-            WorkflowMigrations.migrate(source,"V001__quotes.sql","V002__bookings.sql","V003__rate_request_idempotency.sql");
+            WorkflowMigrations.migrate(source,"V001__quotes.sql","V002__bookings.sql","V003__rate_request_idempotency.sql","V004__portable_schema_baseline.sql");
         }
     }
     @Test void rateCircuitBreakerOpeningDoesNotBlockBookingCreationCapacity() throws Exception {

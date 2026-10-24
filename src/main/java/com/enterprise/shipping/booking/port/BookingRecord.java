@@ -1,5 +1,7 @@
 package com.enterprise.shipping.booking.port;
 
+import com.enterprise.shipping.booking.application.BookingCommand;
+
 import com.enterprise.shipping.booking.domain.*;
 
 /** Business state plus storage coordination metadata; no serialized request/response snapshots. */

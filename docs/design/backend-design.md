@@ -1,6 +1,6 @@
 # Shipping workflow — backend technical design
 
-**Version:** 0.6  
+**Version:** 0.7  
 **Status:** Demo design baseline through I4; implementation evidence is recorded in iteration summaries  
 **Date:** 2026-10-23  
 **Inputs:** [PRD v1.3](../prd/shipping-workflow.md), [requirements review](../prd/requirements-review.md), [delivery plan](../iterations/delivery-plan.md).
@@ -397,3 +397,7 @@ The automated workflow restart checks close and reopen a file-backed SQLite data
 ### I4 — Manual-review behavior
 
 The status API returns `MANUAL_REVIEW` explicitly; same-key replay returns the existing booking with HTTP 200 and no `Retry-After`. The frontend displays the booking reference and support guidance, hides retry/recreation controls for that operation, and stops polling. Refresh preserves manual review and may perform one current-status read. No new login, table, process, resolution endpoint, automatic refund, creation retry or background label polling is introduced. Unknown remote outcomes still require verification outside the application.
+
+## Module organization update (I8)
+
+The agreed target for provider boundaries, shared outbound infrastructure and domain responsibilities is defined in [Module boundaries](module-boundaries.md). It supersedes package-placement descriptions where they conflict; implemented and verified in I8. See the [I8 summary](../summaries/iteration-08-module-boundaries.md).

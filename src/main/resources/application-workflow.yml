@@ -2,6 +2,7 @@ shipping:
   market:
     default-country: CA
     comparison-currency: CAD
+    supported-carriers: ${SHIPPING_MARKET_SUPPORTED_CARRIERS:Canada Post,Purolator,FedEx,UPS,DHL Express,Canpar,Loomis Express}
     postal-code-patterns:
       CA: '[A-Z]\d[A-Z]\d[A-Z]\d'
   demo-user-id: ${SHIPPING_DEMO_USER_ID:demo-user}

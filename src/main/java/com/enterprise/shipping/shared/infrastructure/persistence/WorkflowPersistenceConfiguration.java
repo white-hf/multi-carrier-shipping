@@ -26,7 +26,8 @@ public class WorkflowPersistenceConfiguration {
                     source,
                     "V001__quotes.sql",
                     "V002__bookings.sql",
-                    "V003__rate_request_idempotency.sql"
+                    "V003__rate_request_idempotency.sql",
+                    "V004__portable_schema_baseline.sql"
             );
             return source;
         } catch (RuntimeException failure) {

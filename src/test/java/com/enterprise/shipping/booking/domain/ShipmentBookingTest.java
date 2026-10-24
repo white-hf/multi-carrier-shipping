@@ -1,5 +1,7 @@
 package com.enterprise.shipping.booking.domain;
 
+import com.enterprise.shipping.booking.application.BookingResponse;
+
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;

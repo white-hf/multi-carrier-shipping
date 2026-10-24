@@ -266,18 +266,16 @@ public class QuoteApplicationService implements QuoteSelectionPort {
         var q = store.find(userId, quoteId)
                 .orElseThrow(WorkflowException::missing);
 
-        var request = store.request(userId, q.requestId())
+        // Fetch only the request state column rather than deserializing the full address/parcel snapshot
+        var requestState = store.requestState(userId, q.requestId())
                 .orElseThrow(WorkflowException::missing);
-        if (request.state() != RateRequest.State.READY) {
+        if (requestState != RateRequest.State.READY) {
             throw new WorkflowException("QUOTE_NOT_BOOKABLE", HttpStatus.CONFLICT);
         }
-        if (q.providerQuoteId() == null || q.providerQuoteId().isBlank()) {
-            throw new WorkflowException("QUOTE_NOT_BOOKABLE", HttpStatus.CONFLICT);
-        }
-
-        // Add a 5-second buffer margin before quote expiration to prevent race conditions during submission
-        if (q.expiresAt() <= clock.millis() + 5000) {
-            throw new WorkflowException("QUOTE_EXPIRED", HttpStatus.CONFLICT);
+        switch (q.eligibility(clock.millis(), 5000)) {
+            case NOT_BOOKABLE -> throw new WorkflowException("QUOTE_NOT_BOOKABLE", HttpStatus.CONFLICT);
+            case EXPIRED -> throw new WorkflowException("QUOTE_EXPIRED", HttpStatus.CONFLICT);
+            case BOOKABLE -> { /* The exact accepted quote is returned below. */ }
         }
 
         return new Selection(

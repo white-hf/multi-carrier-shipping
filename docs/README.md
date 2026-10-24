@@ -92,3 +92,7 @@ Backend checks run with `./mvnw clean test`. Browser checks run separately with 
 [I5 — Shipping label actions](iterations/iteration-05-label-actions.md): browser-based label actions; accepted on 2026-10-23; see the [I5 summary](summaries/iteration-05-label-actions.md).
 
 [I6 — Idempotent requests and retryable rates](iterations/iteration-06-request-idempotency.md): user-scoped rate request idempotency, version-fenced retries, read-only quote status lookup and 24-hour browser draft recovery; accepted on 2026-10-23; see the [I6 summary](summaries/iteration-06-request-idempotency.md).
+
+[I7 — RDBMS-agnostic schema and portable JDBC persistence](iterations/iteration-07-portable-persistence.md): ANSI SQL portable schema (`V004`), explicit column projections (no `SELECT *`), dialect-free JDBC stores and end-to-end Web/Domain/DB validation alignment; accepted on 2026-10-23; see the [I7 summary](summaries/iteration-07-portable-persistence.md).
+
+[I8 — Module boundaries and shared outbound infrastructure](iterations/iteration-08-module-boundaries.md): implementation verified; awaiting user acceptance. See [module design](design/module-boundaries.md) and [I8 summary](summaries/iteration-08-module-boundaries.md).

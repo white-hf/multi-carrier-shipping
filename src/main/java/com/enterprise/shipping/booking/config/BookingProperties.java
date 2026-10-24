@@ -1,5 +1,7 @@
 package com.enterprise.shipping.booking.config;
 
+import com.enterprise.shipping.booking.application.BookingCommand;
+
 import jakarta.validation.constraints.*;
 import java.util.Locale;
 import java.util.Set;

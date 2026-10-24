@@ -94,3 +94,9 @@ All four findings are closed by 123 passing backend tests and a separately passi
 [I5 — Shipping label actions](iteration-05-label-actions.md) adds browser-based view, download, print, email-draft and share actions to the confirmed-shipment screen. Accepted on 2026-10-23: 135 backend tests (including guest-token authentication) and the separate browser journey passed; see the [I5 summary](../summaries/iteration-05-label-actions.md). No backend email service or new API is introduced.
 
 [I6 — Idempotent requests and retryable rates](iteration-06-request-idempotency.md) adds user-scoped `Idempotency-Key` arbitration on `POST /api/quotes`, version-fenced retry of failed/overdue/expired rate executions under the same `request_id`, read-only `GET /api/quotes/{requestId}` status inspection, and 24-hour browser draft recovery while keeping the four-table model. Accepted on 2026-10-23: 145 backend tests and the separate browser journey passed; see the [I6 summary](../summaries/iteration-06-request-idempotency.md).
+
+[I7 — RDBMS-agnostic schema and portable JDBC persistence](iteration-07-portable-persistence.md) migrates the four workflow tables to portable ANSI SQL types and composite indexes (`V004`), removes `SELECT *` and SQLite-specific clauses from JDBC stores, and aligns Web UI, Bean Validation (`@Digits(8,4)`, `@Size`), and database column boundaries. Accepted on 2026-10-23: 146 backend tests and the separate browser journey passed; see the [I7 summary](../summaries/iteration-07-portable-persistence.md).
+
+## I8 — Module boundaries and shared outbound infrastructure
+
+Implementation verified; awaiting user acceptance. [I8 plan](iteration-08-module-boundaries.md) covers provider bridges, shared HTTP resilience/observability and domain responsibility cleanup. Public APIs, four-table data model and frontend remain unchanged.

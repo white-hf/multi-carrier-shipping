@@ -1,7 +1,7 @@
-package com.enterprise.shipping.shared.api;
+package com.enterprise.shipping.auth.infrastructure;
 
-import com.enterprise.shipping.shared.identity.GuestSessionTokenService;
-import com.enterprise.shipping.shared.identity.TimeOrderedIds;
+import com.enterprise.shipping.auth.application.GuestSessionTokenService;
+import com.enterprise.shipping.auth.api.WorkflowAuthController;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
@@ -15,22 +15,25 @@ import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 /**
- * Enforces request correlation, Cross-Origin write protection, and 2-hour fingerprint-bound
- * Guest/User token authentication on all workflow API endpoints.
+ * Enforces same-origin writes and fingerprint-bound token authentication.
+ * The shared tracing filter runs first so rejected requests retain diagnostic context.
  */
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE + 20)
 @Profile("workflow")
-public class WorkflowRequestFilter extends OncePerRequestFilter {
+public class WorkflowAuthenticationFilter extends OncePerRequestFilter {
 
     public static final String AUTHENTICATED_USER_ATTR = "shipping.authenticatedUserId";
 
     private final GuestSessionTokenService tokens;
     private final boolean requireToken;
 
-    public WorkflowRequestFilter(
+    public WorkflowAuthenticationFilter(
             GuestSessionTokenService tokens,
             @Value("${shipping.auth.require-token:true}") boolean requireToken) {
         this.tokens = tokens;
@@ -48,55 +51,48 @@ public class WorkflowRequestFilter extends OncePerRequestFilter {
             HttpServletResponse response,
             FilterChain chain) throws ServletException, IOException {
 
-        // 1. Assign diagnostic correlation ID and no-store security headers
-        String id = TimeOrderedIds.next();
-        response.setHeader("X-Request-Id", id);
-        response.setHeader("Cache-Control", "no-store");
-        response.setHeader("X-Content-Type-Options", "nosniff");
-
-        try (var ignored = MDC.putCloseable("requestId", id)) {
-            // 2. Reject cross-origin browser writes
-            String origin = request.getHeader("Origin");
-            if (!Set.of("GET", "HEAD", "OPTIONS").contains(request.getMethod())
-                    && origin != null
-                    && !sameOrigin(origin, request)) {
-                writeJsonError(response, 403, "ORIGIN_NOT_ALLOWED", id);
-                return;
-            }
-
-            // 3. Allow the guest token issuance endpoint to proceed after same-origin check
-            if ("/api/auth/guest".equals(request.getRequestURI())) {
-                chain.doFilter(request, response);
-                return;
-            }
-
-            // 4. Extract Bearer token and client fingerprint (fallback to SameSite=Strict cookies on GET)
-            String token = extractBearerToken(request);
-            String fingerprint = request.getHeader("X-Client-Fingerprint");
-            if ("GET".equals(request.getMethod())) {
-                if (token == null) {
-                    token = extractCookie(request, WorkflowAuthController.TOKEN_COOKIE);
-                }
-                if (fingerprint == null || fingerprint.isBlank()) {
-                    fingerprint = extractCookie(request, WorkflowAuthController.FINGERPRINT_COOKIE);
-                }
-            }
-
-            boolean credentialsPresented = request.getHeader("Authorization") != null
-                    || request.getHeader("X-Client-Fingerprint") != null
-                    || token != null;
-
-            if (credentialsPresented || requireToken) {
-                Optional<String> verifiedUser = tokens.verifyAndResolveUser(token, fingerprint);
-                if (verifiedUser.isEmpty()) {
-                    writeJsonError(response, 401, "UNAUTHORIZED", id);
-                    return;
-                }
-                request.setAttribute(AUTHENTICATED_USER_ATTR, verifiedUser.get());
-            }
-
-            chain.doFilter(request, response);
+        String id = MDC.get("requestId");
+        // 2. Reject cross-origin browser writes
+        String origin = request.getHeader("Origin");
+        if (!Set.of("GET", "HEAD", "OPTIONS").contains(request.getMethod())
+                && origin != null
+                && !sameOrigin(origin, request)) {
+            writeJsonError(response, 403, "ORIGIN_NOT_ALLOWED", id);
+            return;
         }
+
+        // 3. Allow the guest token issuance endpoint to proceed after same-origin check
+        if ("/api/auth/guest".equals(request.getRequestURI())) {
+            chain.doFilter(request, response);
+            return;
+        }
+
+        // 4. Extract Bearer token and client fingerprint (fallback to SameSite=Strict cookies on GET)
+        String token = extractBearerToken(request);
+        String fingerprint = request.getHeader("X-Client-Fingerprint");
+        if ("GET".equals(request.getMethod())) {
+            if (token == null) {
+                token = extractCookie(request, WorkflowAuthController.TOKEN_COOKIE);
+            }
+            if (fingerprint == null || fingerprint.isBlank()) {
+                fingerprint = extractCookie(request, WorkflowAuthController.FINGERPRINT_COOKIE);
+            }
+        }
+
+        boolean credentialsPresented = request.getHeader("Authorization") != null
+                || request.getHeader("X-Client-Fingerprint") != null
+                || token != null;
+
+        if (credentialsPresented || requireToken) {
+            Optional<String> verifiedUser = tokens.verifyAndResolveUser(token, fingerprint);
+            if (verifiedUser.isEmpty()) {
+                writeJsonError(response, 401, "UNAUTHORIZED", id);
+                return;
+            }
+            request.setAttribute(AUTHENTICATED_USER_ATTR, verifiedUser.get());
+        }
+
+        chain.doFilter(request, response);
     }
 
     private String extractBearerToken(HttpServletRequest request) {

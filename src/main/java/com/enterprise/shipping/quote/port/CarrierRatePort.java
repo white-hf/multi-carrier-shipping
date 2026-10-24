@@ -1,7 +1,7 @@
 package com.enterprise.shipping.quote.port;
 
 import com.enterprise.shipping.quote.domain.CarrierQuote;
-import com.enterprise.shipping.quote.domain.QuoteCommand;
+import com.enterprise.shipping.quote.application.QuoteCommand;
 import java.util.List;
 
 /** Isolates carrier-specific transport and payloads from the rate comparison domain. */

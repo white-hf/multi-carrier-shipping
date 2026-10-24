@@ -1,4 +1,6 @@
-package com.enterprise.shipping.quote.domain;
+package com.enterprise.shipping.quote.application;
+
+import com.enterprise.shipping.quote.domain.*;
 
 import com.enterprise.shipping.shared.domain.ShipmentParcel;
 import java.util.Objects;

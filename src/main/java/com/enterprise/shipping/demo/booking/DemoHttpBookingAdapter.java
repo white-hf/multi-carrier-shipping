@@ -1,6 +1,6 @@
 package com.enterprise.shipping.demo.booking;
 
-import com.enterprise.shipping.booking.domain.BookingCommand;
+import com.enterprise.shipping.booking.application.BookingCommand;
 import com.enterprise.shipping.booking.domain.CarrierReceipt;
 import com.enterprise.shipping.booking.port.CarrierBookingPort;
 import com.enterprise.shipping.booking.contract.recovery.Recovery.Evidence;

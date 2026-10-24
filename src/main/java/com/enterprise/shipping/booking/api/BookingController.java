@@ -1,5 +1,7 @@
 package com.enterprise.shipping.booking.api;
 
+import com.enterprise.shipping.booking.application.BookingResponse;
+
 import com.enterprise.shipping.booking.application.BookingService;
 import com.enterprise.shipping.booking.domain.*;
 import com.enterprise.shipping.shared.api.ApiResponse;

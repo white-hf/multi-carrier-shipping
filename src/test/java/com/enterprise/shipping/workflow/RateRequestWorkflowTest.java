@@ -99,7 +99,8 @@ class RateRequestWorkflowTest {
                 source,
                 "V001__quotes.sql",
                 "V002__bookings.sql",
-                "V003__rate_request_idempotency.sql"
+                "V003__rate_request_idempotency.sql",
+                "V004__portable_schema_baseline.sql"
         );
         jdbc = new JdbcTemplate(source);
         store = new JdbcQuoteStore(jdbc, new TransactionTemplate(new DataSourceTransactionManager(source)));
@@ -369,18 +370,19 @@ class RateRequestWorkflowTest {
                         recipient_province, recipient_postal_code, recipient_country_code, recipient_phone, recipient_email, recipient_residential,
                         length, width, height, weight, dimension_unit, weight_unit, package_type, shipping_date, state, created_at, updated_at
                     ) VALUES (
-                        'legacy-req-1', 'user', 'Sender', null, '100 King St', null, 'Toronto', 'ON', 'M5V 3L9', 'CA', '4165550100', null, '0',
-                        'Recipient', null, '200 Queen St', null, 'Halifax', 'NS', 'B3J 3K1', 'CA', '9025550100', null, '0',
-                        '12', '10', '8', '5', 'IN', 'LB', 'PACKAGE', '2026-10-23', 'READY', 1000, 1000
+                        'legacy-req-1', 'user', 'Sender', 'Sender Co', '100 King St', 'Suite 500', 'Toronto', 'ON', 'M5V 3L9', 'CA', '4165550100', 'sender@example.com', '0',
+                        'Recipient', 'Recipient Co', '200 Queen St', 'Apt 2B', 'Halifax', 'NS', 'B3J 3K1', 'CA', '9025550100', 'recipient@example.com', '1',
+                        '12.5', '10.25', '8.125', '5.75', 'IN', 'LB', 'PACKAGE', '2026-10-23', 'READY', 1000, 1000
                     )
                     """);
 
-            // Apply V003 migration onto the populated V001/V002 database
+            // Apply V003 and V004 migrations onto the populated V001/V002 database
             WorkflowMigrations.migrate(
                     legacySource,
                     "V001__quotes.sql",
                     "V002__bookings.sql",
-                    "V003__rate_request_idempotency.sql"
+                    "V003__rate_request_idempotency.sql",
+                    "V004__portable_schema_baseline.sql"
             );
 
             var upgradedStore = new JdbcQuoteStore(
@@ -390,7 +392,16 @@ class RateRequestWorkflowTest {
             var legacyRow = upgradedStore.request("user", "legacy-req-1").orElseThrow();
             assertThat(legacyRow.key()).isNull();
             assertThat(legacyRow.version()).isZero();
+            assertThat(legacyRow.deadline()).isNull();
             assertThat(legacyRow.state()).isEqualTo(RateRequest.State.READY);
+            assertThat(legacyRow.intent().sender().companyName()).isEqualTo("Sender Co");
+            assertThat(legacyRow.intent().sender().addressLine2()).isEqualTo("Suite 500");
+            assertThat(legacyRow.intent().sender().email()).isEqualTo("sender@example.com");
+            assertThat(legacyRow.intent().sender().residential()).isFalse();
+            assertThat(legacyRow.intent().recipient().residential()).isTrue();
+            assertThat(legacyRow.intent().parcel().length()).isEqualTo(new BigDecimal("12.5"));
+            assertThat(legacyRow.intent().parcel().height()).isEqualTo(new BigDecimal("8.125"));
+            assertThat(upgradedStore.requestState("user", "legacy-req-1")).contains(RateRequest.State.READY);
 
             // Exactly 4 application tables plus schema_migrations metadata
             var tables = legacyJdbc.queryForList(
@@ -406,7 +417,7 @@ class RateRequestWorkflowTest {
             );
 
             var keyPlan = String.join(" ", legacyJdbc.query(
-                    "EXPLAIN QUERY PLAN SELECT * FROM shipment_requests WHERE user_id = ? AND idempotency_key = ?",
+                    "EXPLAIN QUERY PLAN SELECT request_id, state FROM shipment_requests WHERE user_id = ? AND idempotency_key = ?",
                     (rs, n) -> rs.getString("detail"),
                     "user",
                     "key-1"
@@ -414,13 +425,45 @@ class RateRequestWorkflowTest {
             assertThat(keyPlan).contains("uk_shipment_request_key");
 
             var quotesPlan = String.join(" ", legacyJdbc.query(
-                    "EXPLAIN QUERY PLAN SELECT * FROM shipment_quotes WHERE user_id = ? AND request_id = ?",
+                    "EXPLAIN QUERY PLAN SELECT quote_id, total_minor FROM shipment_quotes WHERE user_id = ? AND request_id = ?",
                     (rs, n) -> rs.getString("detail"),
                     "user",
                     "legacy-req-1"
             ));
             assertThat(quotesPlan).contains("idx_request_quotes");
         }
+    }
+
+    @Test
+    void preservesFullWebInputRoundTripAndClearsDeadlineWhenCompleted() {
+        var richSender = new ShippingAddress(
+                "Alice Sender", "Acme Logistics Ltd.", "100 King St W", "Floor 12, Suite 1200",
+                "Toronto", "ON", "M5X 1A9", "CA", "+1 (416) 555-0199", "alice@acme.ca", true
+        );
+        var richRecipient = new ShippingAddress(
+                "Bob Receiver", "Maritime Imports Inc.", "2000 Barrington St", "Unit 4B",
+                "Halifax", "NS", "B3J 3K1", "CA", "902-555-0100", "bob@maritime.ca", false
+        );
+        var richIntent = new ShippingIntent(
+                richSender,
+                richRecipient,
+                new ShippingIntent.Package(
+                        new BigDecimal("12.3456"),
+                        new BigDecimal("10.5000"),
+                        new BigDecimal("8.25"),
+                        DimensionUnit.CM,
+                        new BigDecimal("5.125"),
+                        WeightUnit.KG,
+                        "PACKAGE"
+                ),
+                LocalDate.of(2026, 10, 23)
+        );
+
+        var created = service().create("user", "rich-roundtrip-key", richIntent);
+        var saved = store.request("user", created.result().requestId()).orElseThrow();
+        assertThat(saved.intent()).isEqualTo(richIntent);
+        assertThat(saved.deadline()).isNull();
+        assertThat(saved.state()).isEqualTo(RateRequest.State.READY);
     }
 
     int count(String table) {

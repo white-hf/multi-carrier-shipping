@@ -1,6 +1,6 @@
 package com.enterprise.shipping.booking.application;
 
-import com.enterprise.shipping.booking.domain.BookingCommand;
+import com.enterprise.shipping.booking.application.BookingCommand;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;

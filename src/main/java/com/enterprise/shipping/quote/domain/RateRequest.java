@@ -7,7 +7,7 @@ import java.util.Objects;
  * Represents one durable customer shipping intent.
  *
  * Rate execution state and version can advance on explicit retry or quote-expiry refresh
- * without creating a duplicate customer request record.
+ * without creating a duplicate customer request record. Active deadline is null when not RATING.
  */
 public record RateRequest(
         String userId,
@@ -17,7 +17,7 @@ public record RateRequest(
         ShippingIntent intent,
         State state,
         long version,
-        long deadline) {
+        Long deadline) {
 
     public enum State { RATING, READY, NO_RATES, RATE_FAILED }
 
@@ -31,7 +31,7 @@ public record RateRequest(
     }
 
     public boolean overdue(long now) {
-        return state == State.RATING && deadline <= now;
+        return state == State.RATING && deadline != null && deadline <= now;
     }
 
     public boolean mayClaim(long now, boolean quotesExpired) {

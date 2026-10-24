@@ -1,4 +1,6 @@
-package com.enterprise.shipping.booking.domain;
+package com.enterprise.shipping.booking.application;
+
+import com.enterprise.shipping.booking.domain.*;
 
 import com.enterprise.shipping.shared.domain.ShipmentParcel;
 import java.util.Locale;

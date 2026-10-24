@@ -4,7 +4,7 @@ import com.enterprise.shipping.quote.config.QuoteProperties;
 import com.enterprise.shipping.quote.port.CarrierRatePort;
 import com.enterprise.shipping.quote.domain.CarrierQuote;
 import com.enterprise.shipping.quote.domain.OutcomeCode;
-import com.enterprise.shipping.quote.domain.QuoteCommand;
+import com.enterprise.shipping.quote.application.QuoteCommand;
 import com.enterprise.shipping.quote.domain.CarrierFailureException;
 import com.enterprise.shipping.shared.infrastructure.monitoring.MonitorCarrierApi;
 import com.enterprise.shipping.shared.infrastructure.http.CarrierTransportFailures;

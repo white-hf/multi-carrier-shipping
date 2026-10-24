@@ -14,6 +14,8 @@ public interface QuoteStore {
 
     Optional<RateRequest> request(String userId, String requestId);
 
+    Optional<RateRequest.State> requestState(String userId, String requestId);
+
     boolean insert(RateRequest request, long now);
 
     boolean claim(RateRequest expected, RateRequest claimed, long now);

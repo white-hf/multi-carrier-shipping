@@ -1,4 +1,6 @@
-package com.enterprise.shipping.booking.domain;
+package com.enterprise.shipping.booking.application;
+
+import com.enterprise.shipping.booking.domain.*;
 
 /** Read projection reconstructed from persisted business state for reads and idempotent replay. */
 public record BookingResponse(String bookingId, BookingStatus status, String carrierId,

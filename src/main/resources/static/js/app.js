@@ -15,6 +15,7 @@
 
   const state = {
     step: 1,
+    detailTab: 1,
     unitSystem: 'IMPERIAL',
     request: null,
     requestId: null,
@@ -33,7 +34,16 @@
     labelBusy: false,
     guestToken: null,
     guestUserId: null,
-    fingerprint: null
+    fingerprint: null,
+    supportedCarriers: [
+      'Canada Post',
+      'Purolator',
+      'FedEx',
+      'UPS',
+      'DHL Express',
+      'Canpar',
+      'Loomis Express'
+    ]
   };
 
   let mock = location.protocol === 'file:'
@@ -82,12 +92,71 @@
     el.className = 'notice ' + (kind === 'info' ? 'info' : '');
   }
 
-  function startLoadingBanner(title, subtitle) {
+  function renderStagePills(items, activeIndex) {
+    const stagesEl = $('loading-stages');
+    if (!stagesEl) return;
+    stagesEl.innerHTML = items.map((label, idx) => {
+      const cls = idx < activeIndex ? 'done' : idx === activeIndex ? 'active' : '';
+      const prefix = idx < activeIndex ? '✓ ' : '';
+      return `<span class="stage-pill ${cls}">${prefix}${esc(label)}</span>`;
+    }).join('');
+  }
+
+  function startRateLoadingBanner() {
     const banner = $('loading-banner');
     if (!banner) return;
-    $('loading-title').textContent = title;
-    $('loading-subtitle').textContent = subtitle;
+    const carriers = Array.isArray(state.supportedCarriers) && state.supportedCarriers.length
+        ? state.supportedCarriers
+        : ['Canada Post', 'Purolator', 'FedEx', 'UPS'];
+
+    let idx = 0;
+    $('loading-title').textContent = `Fetching live quotes from ${carriers[0]}…`;
+    $('loading-subtitle').textContent = `Checking real-time rates and transit times across ${carriers.join(', ')}.`;
     $('loading-timer').textContent = '0s';
+    renderStagePills(carriers, 0);
+
+    const fill = $('loading-progress-fill');
+    if (fill) fill.style.width = '18%';
+    banner.hidden = false;
+
+    const startedAt = Date.now();
+    clearInterval(loadingInterval);
+    loadingInterval = setInterval(() => {
+      const elapsedMs = Date.now() - startedAt;
+      const elapsedSec = Math.floor(elapsedMs / 1000);
+      $('loading-timer').textContent = `${elapsedSec}s`;
+
+      const nextIdx = Math.min(carriers.length - 1, Math.floor(elapsedMs / 1800));
+      if (nextIdx !== idx) {
+        idx = nextIdx;
+        $('loading-title').textContent = `Fetching live quotes from ${carriers[idx]}…`;
+        renderStagePills(carriers, idx);
+      }
+      if (fill) {
+        const pct = Math.min(94, 18 + Math.round(((idx + 1) / carriers.length) * 68) + Math.min(8, elapsedSec));
+        fill.style.width = `${pct}%`;
+      }
+    }, 400);
+  }
+
+  function startBookingLoadingBanner(carrierName, serviceName) {
+    const banner = $('loading-banner');
+    if (!banner) return;
+    const carrierLabel = carrierName || 'selected carrier';
+    const serviceLabel = serviceName || 'shipping service';
+    const steps = [
+      `Connecting to ${carrierLabel}`,
+      `Confirming ${serviceLabel}`,
+      `Issuing ${carrierLabel} tracking number`
+    ];
+
+    $('loading-title').textContent = `Booking your shipment with ${carrierLabel}…`;
+    $('loading-subtitle').textContent = `Submitting your parcel details to ${carrierLabel} and generating your waybill.`;
+    $('loading-timer').textContent = '0s';
+    renderStagePills(steps, 0);
+
+    const fill = $('loading-progress-fill');
+    if (fill) fill.style.width = '24%';
     banner.hidden = false;
 
     const startedAt = Date.now();
@@ -95,7 +164,12 @@
     loadingInterval = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startedAt) / 1000);
       $('loading-timer').textContent = `${elapsed}s`;
-    }, 500);
+      const stepIdx = elapsed < 2 ? 0 : elapsed < 7 ? 1 : 2;
+      renderStagePills(steps, stepIdx);
+      if (fill) {
+        fill.style.width = `${Math.min(94, 28 + elapsed * 6)}%`;
+      }
+    }, 400);
   }
 
   function stopLoadingBanner() {
@@ -171,6 +245,77 @@
     });
   });
 
+  // Step 1 single-screen 3-Tab navigation & live summary badges
+  function setDetailTab(tab) {
+    const n = Math.min(3, Math.max(1, Number(tab) || 1));
+    state.detailTab = n;
+    const track = $('detail-tab-track');
+    if (track) track.dataset.activeTab = String(n);
+    $all('.detail-tab').forEach(btn => {
+      const active = Number(btn.dataset.detailTab) === n;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-selected', String(active));
+    });
+    $all('.tab-pane').forEach(pane => {
+      pane.hidden = Number(pane.dataset.tabPane) !== n;
+    });
+    const prevBtn = $('prev-tab-btn');
+    const nextBtn = $('next-tab-btn');
+    if (prevBtn) prevBtn.hidden = n === 1;
+    if (nextBtn) {
+      nextBtn.hidden = n === 3;
+      nextBtn.innerHTML = n === 1
+          ? 'Next: Recipient <span>→</span>'
+          : 'Next: Package <span>→</span>';
+    }
+  }
+
+  function updateTabSummaries() {
+    const form = $('shipping-form');
+    if (!form) return;
+    const v = name => String(form.elements.namedItem(name)?.value || '').trim();
+    const isMetric = state.unitSystem === 'METRIC';
+    const dUnit = isMetric ? 'cm' : 'in';
+    const wUnit = isMetric ? 'kg' : 'lb';
+
+    if ($('tab-summary-from')) {
+      $('tab-summary-from').textContent = `${v('from.attention') || 'Sender'} · ${v('from.city') || 'City'}, ${v('from.state') || 'ON'}`;
+    }
+    if ($('tab-summary-to')) {
+      $('tab-summary-to').textContent = `${v('to.attention') || 'Recipient'} · ${v('to.city') || 'City'}, ${v('to.state') || 'NS'}`;
+    }
+    if ($('tab-summary-pkg')) {
+      $('tab-summary-pkg').textContent = `${v('weight') || '0'} ${wUnit} · ${v('length') || '0'} × ${v('width') || '0'} × ${v('height') || '0'} ${dUnit}`;
+    }
+    if ($('package-quick-summary')) {
+      $('package-quick-summary').innerHTML = `Route preview: <strong>${esc(v('from.city') || 'Origin')}, ${esc(v('from.state'))} (${esc(v('from.postalCode').toUpperCase())}) → ${esc(v('to.city') || 'Destination')}, ${esc(v('to.state'))} (${esc(v('to.postalCode').toUpperCase())})</strong>`;
+    }
+    if ($('step1-sticky-summary')) {
+      $('step1-sticky-summary').textContent = `${v('from.city') || 'Origin'}, ${v('from.state') || 'ON'} → ${v('to.city') || 'Destination'}, ${v('to.state') || 'NS'} · ${v('weight') || '0'} ${wUnit} (${v('length') || '0'}×${v('width') || '0'}×${v('height') || '0'} ${dUnit})`;
+    }
+  }
+
+  $all('.detail-tab').forEach(btn => {
+    btn.addEventListener('click', () => setDetailTab(btn.dataset.detailTab));
+  });
+
+  if ($('prev-tab-btn')) {
+    $('prev-tab-btn').addEventListener('click', () => setDetailTab(state.detailTab - 1));
+  }
+  if ($('next-tab-btn')) {
+    $('next-tab-btn').addEventListener('click', () => setDetailTab(state.detailTab + 1));
+  }
+
+  // Automatically bring any focused input's tab pane into view
+  $all('.tab-pane').forEach(pane => {
+    pane.addEventListener('focusin', () => {
+      const paneTab = Number(pane.dataset.tabPane);
+      if (paneTab && paneTab !== state.detailTab) {
+        setDetailTab(paneTab);
+      }
+    });
+  });
+
   // Step navigation & interactive stepper
   function go(n) {
     state.step = n;
@@ -239,16 +384,41 @@
   function validate(form) {
     clearFieldErrors();
     let first = null;
-    for (const input of form.querySelectorAll('[required]')) {
-      const wrong = !input.checkValidity()
-          || !String(input.value || '').trim()
-          || (input.type === 'number' && !(Number(input.value) > 0));
+    for (const input of form.querySelectorAll('input, select')) {
+      if (input.disabled || input.type === 'checkbox') continue;
+      const raw = String(input.value || '').trim();
+      const isRequired = input.hasAttribute('required');
+      let wrong = false;
+      if (isRequired && (!raw || !input.checkValidity())) {
+        wrong = true;
+      } else if (!isRequired && raw && !input.checkValidity()) {
+        wrong = true;
+      } else if (input.type === 'number') {
+        const num = Number(raw);
+        wrong = !(num > 0 && num <= 10000) || !/^\d+(\.\d{1,4})?$/.test(raw);
+      }
       input.classList.toggle('invalid', wrong);
-      if (wrong && !first) first = input;
+      if (wrong) {
+        const pane = input.closest('[data-tab-pane]');
+        if (pane) {
+          const tabNum = Number(pane.dataset.tabPane);
+          const tabBtn = $(`detail-tab-btn-${tabNum}`);
+          if (tabBtn) tabBtn.classList.add('has-error');
+          const statusEl = $(`tab-status-${tabNum}`);
+          if (statusEl) statusEl.textContent = '!';
+        }
+        if (!first) first = input;
+      }
     }
     if (first) {
-      first.focus();
-      notice('Please complete all required fields. Measurements must be greater than zero.');
+      const pane = first.closest('[data-tab-pane]');
+      if (pane) {
+        setDetailTab(Number(pane.dataset.tabPane));
+      }
+      first.focus({ preventScroll: true });
+      notice(first.type === 'number'
+          ? 'Please enter valid positive package dimensions and weight (for standard parcels: 0.1–150 lb / 0.1–68 kg, max 108 in / 274 cm per side).'
+          : 'Please complete all highlighted required fields before requesting shipping rates.');
       return false;
     }
     return true;
@@ -315,6 +485,9 @@
           if (remainingMs > 60000) {
             state.guestToken = cached.token;
             state.guestUserId = cached.userId;
+            if (Array.isArray(cached.supportedCarriers) && cached.supportedCarriers.length) {
+              state.supportedCarriers = cached.supportedCarriers;
+            }
             const avatar = $('user-avatar');
             if (avatar && cached.userId) avatar.title = `Guest session: ${cached.userId}`;
             return cached;
@@ -341,11 +514,15 @@
       if (!res.ok || !data.token) {
         throw new HttpError(res.status, data);
       }
+      if (Array.isArray(data.supportedCarriers) && data.supportedCarriers.length) {
+        state.supportedCarriers = data.supportedCarriers;
+      }
       const session = {
         token: data.token,
         userId: data.userId,
         expiresAt: data.expiresAt,
-        fingerprint: fp
+        fingerprint: fp,
+        supportedCarriers: state.supportedCarriers
       };
       sessionStorage.setItem(guestSessionStorage, JSON.stringify(session));
       state.guestToken = session.token;
@@ -566,6 +743,11 @@
     document.querySelectorAll('.field-error').forEach(e => e.remove());
     document.querySelectorAll('.invalid').forEach(e => e.classList.remove('invalid'));
     document.querySelectorAll('[aria-invalid]').forEach(e => e.removeAttribute('aria-invalid'));
+    document.querySelectorAll('.detail-tab.has-error').forEach(e => e.classList.remove('has-error'));
+    for (let i = 1; i <= 3; i++) {
+      const st = $(`tab-status-${i}`);
+      if (st) st.textContent = '✓';
+    }
   }
 
   function showFieldErrors(errors) {
@@ -576,6 +758,7 @@
       addressLine2: 'streetAddress2',
       province: 'state'
     };
+    let firstInvalidTab = null;
     for (const error of errors) {
       const pieces = (error.field || '').split('.');
       const name = pieces[0] === 'parcel'
@@ -589,6 +772,19 @@
       message.className = 'field-error';
       message.textContent = error.message || 'Invalid value';
       input.parentElement.appendChild(message);
+
+      const pane = input.closest('[data-tab-pane]');
+      if (pane) {
+        const tabNum = Number(pane.dataset.tabPane);
+        if (!firstInvalidTab) firstInvalidTab = tabNum;
+        const tabBtn = $(`detail-tab-btn-${tabNum}`);
+        if (tabBtn) tabBtn.classList.add('has-error');
+        const statusEl = $(`tab-status-${tabNum}`);
+        if (statusEl) statusEl.textContent = '!';
+      }
+    }
+    if (firstInvalidTab) {
+      setDetailTab(firstInvalidTab);
     }
   }
 
@@ -972,6 +1168,16 @@
       return;
     }
     if (!Array.isArray(data.quotes)) throw Error('Invalid /api/quotes response: quotes[] missing');
+    const discoveredCarriers = [...new Set(data.quotes.map(q => carrier(q)).filter(Boolean))];
+    if (discoveredCarriers.length) {
+      const merged = [...state.supportedCarriers];
+      for (const c of discoveredCarriers) {
+        if (!merged.some(existing => existing.toLowerCase() === c.toLowerCase())) {
+          merged.push(c);
+        }
+      }
+      state.supportedCarriers = merged;
+    }
     state.request = req;
     state.requestId = data.requestId;
     state.quotes = data.quotes;
@@ -986,6 +1192,7 @@
 
   // Step 1 form events
   $('shipping-form').addEventListener('input', () => {
+    updateTabSummaries();
     saveDraft();
     state.revision++;
     if (state.quotes.length && !state.key) {
@@ -1006,10 +1213,7 @@
     const rev = ++state.revision;
     rateBusy = true;
     busy('get-rates-btn', true, 'Getting shipping rates…');
-    startLoadingBanner(
-      'Retrieving live carrier quotes…',
-      'Querying carrier services for your route. Sandbox responses typically take 8–20 seconds.'
-    );
+    startRateLoadingBanner();
     try {
       const req = inputPayload(form);
       // Save identity before sending: a lost HTTP response must reuse the same key.
@@ -1117,10 +1321,7 @@
     saveActive();
     state.creating = true;
     busy('create-btn', true, 'Creating shipment…');
-    startLoadingBanner(
-      'Booking shipment with provider…',
-      'Please wait for provider confirmation. If the outcome is uncertain, keep this booking and follow the status guidance.'
-    );
+    startBookingLoadingBanner(carrier(state.selected), service(state.selected));
     try {
       const resp = await api.booking(quoteId(state.selected), state.key);
       handleBooking(resp.data);
@@ -1234,7 +1435,11 @@
   });
 
   restoreDraft();
-  $all('.unit-btn').forEach(btn => btn.addEventListener('click', saveDraft));
+  updateTabSummaries();
+  $all('.unit-btn').forEach(btn => btn.addEventListener('click', () => {
+    updateTabSummaries();
+    saveDraft();
+  }));
 
   // Restore active submission on page reload and eagerly initialize the 2-hour Guest Token
   if (!mock) {

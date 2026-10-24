@@ -1,10 +1,13 @@
-package com.enterprise.shipping.shared.api;
+package com.enterprise.shipping.auth.api;
 
-import com.enterprise.shipping.shared.identity.GuestSessionTokenService;
+import com.enterprise.shipping.auth.application.GuestSessionTokenService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
@@ -24,11 +27,27 @@ public class WorkflowAuthController {
 
     public static final String TOKEN_COOKIE = "shipping_guest_token";
     public static final String FINGERPRINT_COOKIE = "shipping_guest_fp";
+    private static final List<String> DEFAULT_SUPPORTED_CARRIERS = List.of(
+            "Canada Post", "Purolator", "FedEx", "UPS", "DHL Express", "Canpar", "Loomis Express"
+    );
 
     private final GuestSessionTokenService tokens;
+    private final List<String> supportedCarriers;
 
     public WorkflowAuthController(GuestSessionTokenService tokens) {
+        this(tokens, DEFAULT_SUPPORTED_CARRIERS);
+    }
+
+    @Autowired
+    public WorkflowAuthController(
+            GuestSessionTokenService tokens,
+            @Value("${shipping.market.supported-carriers:Canada Post,Purolator,FedEx,UPS,DHL Express,Canpar,Loomis Express}")
+            List<String> supportedCarriers) {
         this.tokens = tokens;
+        List<String> cleaned = supportedCarriers == null
+                ? List.of()
+                : supportedCarriers.stream().map(String::strip).filter(s -> !s.isEmpty()).toList();
+        this.supportedCarriers = cleaned.isEmpty() ? DEFAULT_SUPPORTED_CARRIERS : cleaned;
     }
 
     public record GuestAuthRequest(
@@ -74,7 +93,8 @@ public class WorkflowAuthController {
                         "userId", issued.userId(),
                         "mode", "GUEST",
                         "expiresAt", issued.expiresAt().toString(),
-                        "ttlSeconds", issued.ttlSeconds()
+                        "ttlSeconds", issued.ttlSeconds(),
+                        "supportedCarriers", supportedCarriers
                 ));
     }
 }

@@ -1,5 +1,9 @@
 package com.enterprise.shipping.booking;
 
+import com.enterprise.shipping.booking.application.BookingCommand;
+
+import com.enterprise.shipping.booking.application.BookingResponse;
+
 import com.enterprise.shipping.shared.infrastructure.persistence.SqliteDataSources;
 import com.enterprise.shipping.shared.domain.ShipmentParcel;
 import com.enterprise.shipping.booking.contract.recovery.Recovery.*;

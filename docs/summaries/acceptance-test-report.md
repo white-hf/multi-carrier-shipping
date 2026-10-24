@@ -75,3 +75,10 @@ The earlier 123-case count and eight-stage browser account above describe the I1
 
 - **Idempotent Rate Requests & Retryable Execution (`V003__rate_request_idempotency.sql`, `RateRequest`, `ShippingIntentFingerprint`, `QuoteApplicationService`)**: `POST /api/quotes` requires `Idempotency-Key`, reuses the request on matching canonical content (`201` initial, `200` replay/retry, `202` in-flight), rejects changed content with `409 IDEMPOTENCY_CONFLICT`, exposes read-only `GET /api/quotes/{requestId}`, and fences retries via `rate_version` without adding a fifth table or `last_error_code` column.
 - **Browser Draft vs. Durable Business Record**: The frontend retains a 24-hour local draft (`localStorage`) that restores form inputs and the active rate `Idempotency-Key` across reloads, while the backend retains `shipment_requests` as the authoritative customer record. See [I6 summary](iteration-06-request-idempotency.md).
+
+## I7 follow-up — 2026-10-23
+
+**Accepted for the agreed demo scope.** Backend suite: **146 passed**, zero failures/errors/skips (`./mvnw test`, including 10 cases in `RateRequestWorkflowTest` and 35 cases in `WorkflowApiTest`). The separate browser journey passed (`./mvnw test -Pbrowser-tests`).
+
+- **RDBMS-Agnostic ANSI SQL Schema (`V004__portable_schema_baseline.sql`)**: Standardized bounded ANSI SQL types (`VARCHAR(N)`, `CHAR(N)`, `BIGINT`, `DECIMAL(12,4)`, `SMALLINT`), renamed `parcel_*` columns, cleared inactive `rate_deadline_at` to `NULL`, and replaced SQLite partial indexes with portable composite indexes while preserving all existing rows across `V001 → V004`.
+- **Explicit Column Projections & Dialect-Free JDBC Stores**: Eliminated all `SELECT *` queries across repositories (including single-column `SELECT state` in `QuoteStore.requestState` during booking quote resolution), replaced `ON CONFLICT DO NOTHING` and tuple `>` with portable ANSI SQL and `UniqueConstraints.isUniqueViolation`, and aligned Web UI, `@Digits(8,4)` / `@Size` validation, and database column constraints for lossless round-trip storage. See [I7 summary](iteration-07-portable-persistence.md).

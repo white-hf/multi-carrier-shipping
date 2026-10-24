@@ -1,4 +1,4 @@
-package com.enterprise.shipping.shared.identity;
+package com.enterprise.shipping.auth.application;
 
 import com.enterprise.shipping.shared.api.WorkflowException;
 import java.nio.charset.StandardCharsets;

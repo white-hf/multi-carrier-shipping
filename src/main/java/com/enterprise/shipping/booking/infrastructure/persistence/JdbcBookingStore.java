@@ -1,5 +1,7 @@
 package com.enterprise.shipping.booking.infrastructure.persistence;
 
+import com.enterprise.shipping.booking.application.BookingCommand;
+
 import com.enterprise.shipping.booking.domain.*;
 import com.enterprise.shipping.booking.contract.recovery.Recovery.*;
 import com.enterprise.shipping.booking.port.BookingStore;
@@ -27,22 +29,27 @@ public final class JdbcBookingStore implements BookingStore {
                 AND (created_at, booking_id)>(?,?)
             ORDER BY created_at, booking_id LIMIT ?
             """;
+    private static final String BOOKING_COLUMNS =
+            "booking_id, owner_type, owner_id, idempotency_key, request_hash, order_reference, carrier_id, "
+            + "service_level, origin_postal_code, destination_postal_code, origin_country_code, destination_country_code, "
+            + "weight_kg, length_cm, width_cm, height_cm, booking_locator, carrier_context_reference, customer_reference, "
+            + "status, carrier_booking_id, tracking_number, label_url, error_code, created_at, updated_at, submission_deadline_at, version";
     private final JdbcTemplate jdbc;
 
     public JdbcBookingStore(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
     @Override public Optional<BookingRecord> find(BookingOwner owner, String key) {
-        return query("SELECT * FROM shipment_bookings WHERE owner_type=? AND owner_id=? AND idempotency_key=?",
+        return query("SELECT " + BOOKING_COLUMNS + " FROM shipment_bookings WHERE owner_type=? AND owner_id=? AND idempotency_key=?",
                 owner.type(), owner.id(), key).stream().findFirst();
     }
 
     @Override public Optional<BookingRecord> findById(BookingOwner owner, String id) {
-        return query("SELECT * FROM shipment_bookings WHERE owner_type=? AND owner_id=? AND booking_id=?",
+        return query("SELECT " + BOOKING_COLUMNS + " FROM shipment_bookings WHERE owner_type=? AND owner_id=? AND booking_id=?",
                 owner.type(), owner.id(), id).stream().findFirst();
     }
 
     @Override public Optional<BookingRecord> findForRecovery(Reference reference) {
-        return query("SELECT * FROM shipment_bookings WHERE booking_id=? AND booking_locator=?",
+        return query("SELECT " + BOOKING_COLUMNS + " FROM shipment_bookings WHERE booking_id=? AND booking_locator=?",
                 reference.bookingId(), reference.bookingLocator()).stream().findFirst();
     }
 
