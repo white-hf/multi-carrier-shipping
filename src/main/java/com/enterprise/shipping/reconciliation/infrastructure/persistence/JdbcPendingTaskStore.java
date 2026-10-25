@@ -1,7 +1,7 @@
 package com.enterprise.shipping.reconciliation.infrastructure.persistence;
 
+import com.enterprise.shipping.booking.contract.ManualReviewReason;
 import com.enterprise.shipping.booking.contract.ShipmentRecoveryPort.Candidate;
-import com.enterprise.shipping.booking.domain.ManualReviewReason;
 import com.enterprise.shipping.reconciliation.port.PendingTaskStore;
 import com.enterprise.shipping.shared.identity.TimeOrderedIds;
 import com.enterprise.shipping.shared.infrastructure.persistence.UniqueConstraints;

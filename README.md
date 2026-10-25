@@ -2,133 +2,158 @@
 
 # Multi-Carrier Shipping — Designing for Failure
 
-An independent shipping application demonstrating resilient reads and safe external writes. The web workflow compares provider quotations, selects an exact offer, creates a shipment and retrieves its label. A separate simulator demonstrates direct-carrier fan-out and inquiry recovery.
+A modular-monolith Canadian domestic shipping platform demonstrating resilient multi-carrier rate aggregation, idempotent external shipment creation, capability-aware recovery, and microservice-ready module isolation.
 
-**Java 17 · Spring Boot · Spring JDBC · SQLite · Resilience4j · Micrometer · HTML · Bootstrap 5 · Vanilla JavaScript**
+**Java 17 · Spring Boot 3.2 · Spring JDBC · ANSI SQL / SQLite · Resilience4j · Micrometer · HTML5 / CSS3 / Vanilla JavaScript**
 
-## Current web workflow
+## Quick Navigation
 
-Use the `workflow` profile for the integrated product. Rates use a single shipping-provider adapter behind `RateComparisonPort`; the application persists immutable shipment input and exact quotation selection. Booking commits a user-scoped idempotency claim before quote-only external creation. Unknown outcomes remain pending/manual review because the provider's reference-lookup guarantee is unverified. Labels use an existing shipment identity, one frontend retrieval attempt and manual retry.
+- **[System Component Architecture & Module Boundaries](docs/design/module-boundaries.md)** — Full English component design, governing principles (**Unidirectional Dependency, ADP, DIP, Published Contracts**), Mermaid & ASCII architecture diagrams, hexagonal intra-module layering, and microservice extraction blueprint.
+- **[Backend Technical Design](docs/design/backend-design.md)** — Domain invariants, idempotency state machines, 4-table ANSI SQL schema, and failure recovery design.
+- **[Application API Contract](docs/design/application-api.md)** — REST endpoints, 2-hour fingerprint-bound guest authentication, and structured error envelopes.
+- **[Acceptance & E2E Test Report](docs/summaries/acceptance-test-report.md)** — Verification evidence across 103 backend unit/integration/architecture tests, Playwright Chromium E2E tests, and live ShipTime Sandbox verification.
 
-External credentials stay in local backend configuration. This profile can create chargeable shipments against the configured provider; the separate `demo` profile uses synthetic integrations. The UI defaults to backend mode, with an explicitly marked mock preview option.
+---
 
-[Local setup](docs/runbooks/workflow-setup.md) · [Frontend API contract](docs/design/application-api.md) · [Backend design](docs/design/backend-design.md) · [Delivery plan](docs/iterations/delivery-plan.md)
+## 1. System Module Architecture
 
-**Delivery status:** I1, I2, and I3 implementation, frontend integration, backend API/SQLite/concurrency tests, Playwright headless Chromium E2E browser acceptance against a controlled local HTTP provider stub (103 passing tests), and live end-to-end verification against the external ShipTime Sandbox are complete.
-
-## Existing simulator reference
-
-The numbered sections below describe the separate `demo` profile and its engineering patterns, not an assertion that the real provider supports the simulator's recovery guarantees.
-
-## 1. Rate Comparison: Bound Latency and Isolate Failures
-
-A quote request fans out to independent carrier APIs. One carrier might respond in **200 ms**, while another takes **4,000 ms** or never responds. At an illustrative **100 requests/second × 12 carriers**, outbound demand reaches **1,200 calls/second** before retries.
-
-- **Asynchronous fan-out / scatter-gather:** bounded per-carrier `ThreadPoolExecutor` workers and `ExecutorCompletionService` run calls concurrently and collect completed results. The implementation uses Java 17 platform threads and Spring `WebClient`.
-- **Global timeout budget:** monotonic request and per-carrier deadlines, transport timeouts, and cooperative cancellation bound waiting. Available quotes survive a slow or failed dependency; responses distinguish complete, partial, and failed comparisons.
-- **Circuit breakers:** independent Resilience4j breakers track carrier failures/slow calls and admit limited recovery probes. Local capacity rejection is excluded from breaker failure accounting.
-- **Bulkhead isolation:** per-carrier semaphore limits, bounded workers with no task backlog, and dedicated Reactor Netty connection pools prevent one carrier from consuming another carrier's allocated capacity.
-
-The request workflow keeps no durable quote state. Replicas can serve requests independently; outbound limits and circuit-breaker state are currently local to each instance. Fleet-wide carrier quotas require additional coordination.
-
-## 2. Shipment Creation: Preserve Correctness Across Uncertain Outcomes
-
-A carrier can accept a shipment while its response is lost. A timeout therefore means **unknown outcome**, not failed creation. Retrying the side effect blindly could create a duplicate shipment or charge.
-
-- **Durable idempotency:** a unique owner/key constraint arbitrates the initial claim. A normalized request fingerprint rejects changed intent under the same key; matching retries return persisted business state.
-- **Short atomic database writes:** persist the claim before the carrier call. No database transaction spans network I/O; conditional version checks guard subsequent business transitions.
-- **Explicit state machine:** the `ShipmentBooking` aggregate controls `PENDING`, `CONFIRMED`, `FAILED`, `PENDING_INQUIRY`, and `MANUAL_REVIEW`, including receipt validation and terminal-state rules.
-- **Inquiry-only reconciliation:** an independent module discovers uncertain or abandoned bookings, persists carrier/account/reference identity, and performs lookup without resubmitting. Its own table owns leases, retry backoff, attempts, and durable observations. Normal successful bookings create no recovery task.
-- **Failure-safe result delivery:** saved observations survive restart or a lost acknowledgement. Repeated delivery is handled idempotently by the booking-owned recovery interface; stale task writes are fenced by lease token and version.
-
-These mechanisms provide durable local coordination and eventual outcome reconciliation. They do not make a database and an external carrier one atomic distributed transaction; remote guarantees depend on the carrier's idempotency and lookup contract. The demo creates no real shipment or charge.
-
-## 3. Module Boundaries and Horizontal Scaling
-
-| Boundary | Implemented | Extension point |
-| --- | --- | --- |
-| Quote requests | Stateless request orchestration; per-instance resource limits | Add replicas while budgeting aggregate carrier capacity |
-| Booking data | UUIDv7 identities, owner-scoped uniqueness, immutable booking locator, version-guarded writes behind `BookingStore` | Add a production database and shard routing; route each owner's idempotency scope consistently |
-| Recovery | Separate task ownership; neutral `BookingRecoveryPort`; no cross-module table joins or writes | Extract a worker process and replace in-process calls with an authenticated transport |
-| Carrier integration | Separate rate, submission, and inquiry ports | Add carrier adapters without changing core workflows |
-
-`quote`, `booking`, and `reconciliation` own their workflows and configuration. `booking/contract` defines communication with recovery; module/shared configuration wires deployment resources; `shared` supplies reusable infrastructure and value types; `demo` contains simulated integrations.
-
-**Current deployment:** one modular application with local SQLite storage. Shard routing, cross-shard uniqueness, multi-host deployment, and remote recovery transport are design extensions, not implemented features. A UUID alone does not route requests or preserve owner/key uniqueness across shards.
-
-The wider service layout below provides design context; the implemented scope is rate comparison, booking, reconciliation, and local observability.
-
-[![Illustrative multi-carrier shipping platform](assets/platform-architecture.svg)](assets/platform-architecture.svg)
+The codebase is organized by vertical **business bounded contexts** (`auth`, `quote`, `booking`, `reconciliation`), an isolated external protocol layer (`provider.sandbox`), a deployment composition root (`runtime`), and a reusable technical foundation (`shared`). Cross-module communication occurs **exclusively through published `contract` interfaces** (`quote.contract.QuoteSelectionPort`, `booking.contract.ShipmentRecoveryPort`), enforced on every build by [`ModuleBoundariesTest`](src/test/java/com/enterprise/shipping/shipping/ModuleBoundariesTest.java).
 
 ```mermaid
-classDiagram
-    class HighFanOutAggregationEngine
-    class CarrierRatePort {
-        <<interface>>
-    }
-    class BookingService
-    class ShipmentBooking
-    class CarrierBookingPort {
-        <<interface>>
-    }
-    class BookingRecoveryPort {
-        <<interface>>
-    }
-    class BookingRecoveryService
-    class ReconciliationWorker
-    class CarrierInquiryPort {
-        <<interface>>
-    }
-    HighFanOutAggregationEngine --> CarrierRatePort
-    BookingService --> ShipmentBooking
-    BookingService --> CarrierBookingPort
-    BookingRecoveryPort <|.. BookingRecoveryService
-    BookingRecoveryService --> ShipmentBooking
-    ReconciliationWorker --> BookingRecoveryPort
-    ReconciliationWorker --> CarrierInquiryPort
+flowchart TB
+    subgraph Client["Browser Client (Single-Screen 3-Tab Workstation)"]
+        UI["HTML5 / CSS3 / Vanilla JS\n(Guest Token + 24h Draft + Carrier Progress)"]
+    end
+
+    subgraph WebBoundary["HTTP Security & Diagnostics Boundary"]
+        Trace["shared.api\nShippingRequestTracingFilter\nShippingExceptionHandler"]
+        AuthFilter["auth.infrastructure\nShippingAuthenticationFilter"]
+    end
+
+    subgraph BusinessModules["Vertical Business Bounded Contexts (Modular Monolith)"]
+        direction LR
+
+        subgraph AuthMod["auth Module"]
+            AuthAPI["auth.api\nShippingAuthController"]
+            AuthApp["auth.application\nGuestSessionTokenService"]
+        end
+
+        subgraph QuoteMod["quote Module"]
+            QuoteAPI["quote.api\nShippingQuoteController"]
+            QuoteApp["quote.application\nQuoteApplicationService"]
+            QuoteContract["quote.contract\nQuoteSelectionPort"]
+            RatePort["quote.port\nRateComparisonPort"]
+            SingleEngine["quote.application\nSingleProviderRateEngine"]
+            FanOutEngine["quote.application\nHighFanOutAggregationEngine"]
+            QuoteStore["quote.infrastructure.persistence\nJdbcQuoteStore"]
+            QuoteBridge["quote.infrastructure.provider\nSandboxRateAdapter"]
+        end
+
+        subgraph BookingMod["booking Module"]
+            BookAPI["booking.api\nShippingBookingController"]
+            BookApp["booking.application\nShipmentApplicationService\nShipmentRecoveryService"]
+            BookContract["booking.contract\nShipmentRecoveryPort\nManualReviewReason"]
+            BookDomain["booking.domain\nShipmentBooking"]
+            BookStore["booking.infrastructure.persistence\nJdbcShipmentStore"]
+            BookBridge["booking.infrastructure.provider\nSandboxShipmentAdapter\nSandboxLabelAdapter"]
+        end
+
+        subgraph ReconMod["reconciliation Module"]
+            ReconApp["reconciliation.application\nPendingShipmentDiscovery"]
+            ReconStore["reconciliation.infrastructure.persistence\nJdbcPendingTaskStore"]
+            ReconBridge["reconciliation.infrastructure.provider\nSandboxRecoveryAdapter"]
+        end
+    end
+
+    subgraph RuntimeRoot["Deployment Composition Root"]
+        Runtime["runtime\nSandboxConfiguration"]
+    end
+
+    subgraph ProviderLayer["External Provider Protocol Layer"]
+        ProviderClient["provider.sandbox\nSandboxProviderClient\nSandboxPayloadMapper"]
+    end
+
+    subgraph SharedKernel["shared Technical Foundation & Value Kernel"]
+        SharedDomain["shared.domain\nShippingIntent / ShippingAddress\nShippingMarketPolicy / ShippingException"]
+        SharedHttp["shared.infrastructure.http\nOutboundOperation / OutboundCallExecutor\nOutboundDeadline / CarrierHttpClientFactory"]
+        SharedDB["shared.infrastructure.persistence\nShippingMigrations / UniqueConstraints\nSqliteDataSources"]
+        SharedIdentity["shared.identity\nUserContext / TimeOrderedIds"]
+    end
+
+    subgraph Storage["Isolated Module Tables (ANSI SQL)"]
+        QDB[("shipment_requests\nshipment_quotes")]
+        BDB[("shipment_bookings")]
+        RDB[("booking_reconciliation_tasks")]
+    end
+
+    UI --> Trace --> AuthFilter
+    AuthFilter --> AuthAPI --> AuthApp
+    AuthFilter --> QuoteAPI --> QuoteApp
+    AuthFilter --> BookAPI --> BookApp
+
+    BookApp ==>|"Contract Call Only"| QuoteContract
+    QuoteApp -.->|"implements"| QuoteContract
+    ReconApp ==>|"Contract Call Only"| BookContract
+    BookApp -.->|"implements"| BookContract
+
+    QuoteApp --> RatePort
+    SingleEngine -.->|"implements"| RatePort
+    FanOutEngine -.->|"implements"| RatePort
+
+    QuoteApp --> QuoteStore --> QDB
+    BookApp --> BookStore --> BDB
+    ReconApp --> ReconStore --> RDB
+
+    SingleEngine --> QuoteBridge
+    BookApp --> BookBridge
+    ReconApp --> ReconBridge
+
+    QuoteBridge --> ProviderClient
+    BookBridge --> ProviderClient
+    ReconBridge --> ProviderClient
+    Runtime -.->|"wires"| ProviderClient
+
+    ProviderClient --> SharedHttp
+    QuoteStore --> SharedDB
+    BookStore --> SharedDB
+    ReconStore --> SharedDB
 ```
 
-## 4. Observability: Explain the Failure, Preserve the Workflow
+---
 
-- **Operational logs:** quote request IDs and booking/task IDs link workflow events with carrier outcomes, state transitions, retries, and safe failure types. Parcel payloads, credentials, and raw idempotency keys are excluded from application logs.
-- **Explicit errors:** HTTP mapping distinguishes invalid input, idempotency conflicts, unavailable storage, capacity rejection, dependency failure, and timeouts. Per-carrier outcomes explain missing quotes; an uncertain booking is returned as pending rather than a definitive rejection.
-- **Decoupled metrics:** Spring AOP instruments carrier transport; observer ports keep Micrometer out of application decisions. Prometheus exposes latency histograms, capacity, outcomes, and reconciliation events with bounded labels. Instrumentation failures do not change business results.
+## 2. Core Engineering Pillars
 
-Centralized logging, alert rules, and end-to-end distributed tracing are architecture extensions; the local demo exposes logs and metrics.
+### 2.1 Rate Comparison: Idempotent Snapshots & Dual Rate Strategies
+- **Idempotent Rate Requests (`QuoteApplicationService`):** Persists canonical customer shipping intent (`Idempotency-Key` + SHA-256 `content_fingerprint`) before invoking external rate providers. Supports safe replays, version-fenced retries on failed/expired quotes, and read-only status inspection (`GET /api/quotes/{requestId}`).
+- **Pluggable Rate Engines (`RateComparisonPort`):**
+  - `SingleProviderRateEngine`: Queries a multi-carrier shipping aggregator (`SandboxProviderClient`) in a single bounded call.
+  - `HighFanOutAggregationEngine`: Performs scatter-gather fan-out across direct carrier adapters (`CarrierRatePort`) with per-carrier `ThreadPoolExecutor` isolation, Resilience4j bulkheads/circuit breakers, and monotonic deadline cancellation.
 
-## 5. Run and Verify
+### 2.2 Shipment Creation: Claim-Before-Call & Safe Recovery
+- **Durable Claim-Before-Call (`ShipmentApplicationService`):** Commits a short transaction inserting a `PENDING` booking claim guarded by `UNIQUE(user_id, idempotency_key)` and `UNIQUE(user_id, request_id)` prior to any external HTTP POST.
+- **Explicit State Machine (`ShipmentBooking`):** Enforces legal transitions across `PENDING`, `CONFIRMED`, `FAILED`, `PENDING_INQUIRY`, and `MANUAL_REVIEW`.
+- **Capability-Aware Reconciliation (`PendingShipmentDiscovery`):** Scans overdue unresolved bookings via `ShipmentRecoveryPort` using keyset pagination, evaluates provider lookup capabilities via `RecoveryCapabilityPort`, registers deduplicated `PAUSED` tasks, and escalates unrecoverable bookings to `MANUAL_REVIEW` without ever re-POSTing a chargeable shipment creation.
 
-**Requirements:** JDK 17. The `demo` profile supplies simulated carriers, synthetic prices, configurable failure modes, and a fixed local owner.
+### 2.3 Portable Persistence & Zero-Join Data Isolation
+- **Four Application Tables (`db/shipping/V001..V004`):** `shipment_requests`, `shipment_quotes`, `shipment_bookings`, and `booking_reconciliation_tasks` (plus `schema_migrations`).
+- **RDBMS-Agnostic ANSI SQL:** Uses standard `VARCHAR`, `DECIMAL(12,4)`, `BIGINT`, composite indexes, explicit column projections (zero `SELECT *`), and portable SQLState/vendor unique-constraint detection (`UniqueConstraints`).
+
+---
+
+## 3. Run and Verify
 
 ```sh
+# Run all 103 backend unit, SQLite persistence, concurrency, and architecture boundary tests
 ./mvnw test
-./mvnw spring-boot:run -Dspring-boot.run.profiles=demo
+
+# Run Playwright headless Chromium end-to-end browser journey
+./mvnw test -Pbrowser-tests
 ```
 
-```sh
-curl -sS http://127.0.0.1:8080/api/shipping/quotes \
-  -H 'Content-Type: application/json' \
-  -d '{"originPostalCode":"L6K 3V3","destinationPostalCode":"M5V 2T6","weight":1,"weightUnit":"KG","dimensionUnit":"CM","length":10,"width":10,"height":10}'
-```
-
-| Scenario | Expected result |
-| --- | --- |
-| Both carriers available | `200 / COMPLETE`; quotes sorted by price |
-| One carrier times out | `200 / PARTIAL`; healthy-carrier results retained |
-| Both carriers fail | `502 / FAILED`; explicit dependency outcomes |
-| Repeated booking with identical owner/key/intent | Same booking identity; no additional submission |
-| Carrier accepts but submission response is lost | `202 / PENDING_INQUIRY`, followed by inquiry-based recovery |
-
-**Latest code validation:** clean package build with **103 passing tests**, including workflow API/SQLite/concurrency/Playwright E2E acceptance, concurrent claims, timeout/restart recovery, stale lease fencing, lost acknowledgements, UUIDv7 generation, and JDBC query plans. These are correctness checks, not production throughput benchmarks.
-
-Metrics: `http://127.0.0.1:9091/actuator/prometheus`.
-
-[Demo commands and recovery walkthrough](demo.md)
-
-Code entry points: [rate engine](src/main/java/com/enterprise/shipping/quote/application/HighFanOutAggregationEngine.java) · [booking service](src/main/java/com/enterprise/shipping/booking/application/BookingService.java) · [booking aggregate](src/main/java/com/enterprise/shipping/booking/domain/ShipmentBooking.java) · [recovery worker](src/main/java/com/enterprise/shipping/reconciliation/application/ReconciliationWorker.java) · [transport monitoring](src/main/java/com/enterprise/shipping/shared/infrastructure/monitoring/CarrierMonitoringAspect.java)
-
-Engineering references: [timeouts and backoff](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/) · [idempotent APIs](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/) · [Resilience4j](https://resilience4j.readme.io/docs/circuitbreaker).
-
-Product iteration: [requirements, prototype and delivery workflow](docs/README.md). The agreed design and roadmap govern the web workflow; simulator behavior is not evidence of provider acceptance.
-
-Manual product walkthrough: [startup and acceptance guide](docs/runbooks/manual-acceptance.md). Start with `./scripts/start-workflow.sh`; local credentials stay in the ignored `.env`.
+### Code Entry Points
+- **Architecture Fitness Tests:** [`ModuleBoundariesTest`](src/test/java/com/enterprise/shipping/shipping/ModuleBoundariesTest.java)
+- **Quote Module:** [`ShippingQuoteController`](src/main/java/com/enterprise/shipping/quote/api/ShippingQuoteController.java) · [`QuoteApplicationService`](src/main/java/com/enterprise/shipping/quote/application/QuoteApplicationService.java) · [`SingleProviderRateEngine`](src/main/java/com/enterprise/shipping/quote/application/SingleProviderRateEngine.java) · [`HighFanOutAggregationEngine`](src/main/java/com/enterprise/shipping/quote/application/HighFanOutAggregationEngine.java)
+- **Booking Module:** [`ShippingBookingController`](src/main/java/com/enterprise/shipping/booking/api/ShippingBookingController.java) · [`ShipmentApplicationService`](src/main/java/com/enterprise/shipping/booking/application/ShipmentApplicationService.java) · [`ShipmentBooking`](src/main/java/com/enterprise/shipping/booking/domain/ShipmentBooking.java)
+- **Reconciliation Module:** [`PendingShipmentDiscovery`](src/main/java/com/enterprise/shipping/reconciliation/application/PendingShipmentDiscovery.java) · [`RecoveryCapabilityPort`](src/main/java/com/enterprise/shipping/reconciliation/port/RecoveryCapabilityPort.java)
+- **Auth Module:** [`ShippingAuthController`](src/main/java/com/enterprise/shipping/auth/api/ShippingAuthController.java) · [`GuestSessionTokenService`](src/main/java/com/enterprise/shipping/auth/application/GuestSessionTokenService.java) · [`ShippingAuthenticationFilter`](src/main/java/com/enterprise/shipping/auth/infrastructure/ShippingAuthenticationFilter.java)
+- **Provider & Shared Transport:** [`SandboxProviderClient`](src/main/java/com/enterprise/shipping/provider/sandbox/SandboxProviderClient.java) · [`OutboundOperation`](src/main/java/com/enterprise/shipping/shared/infrastructure/http/OutboundOperation.java) · [`OutboundCallExecutor`](src/main/java/com/enterprise/shipping/shared/infrastructure/http/OutboundCallExecutor.java)

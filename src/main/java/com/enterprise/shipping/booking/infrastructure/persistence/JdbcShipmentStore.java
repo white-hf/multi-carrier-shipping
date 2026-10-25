@@ -117,7 +117,7 @@ public final class JdbcShipmentStore implements ShipmentStore {
 
     @Override
     public List<Record> overdue(long now, long afterDeadline, String afterId, int limit) {
-        // Portable ANSI keyset pagination using composite index idx_workflow_unresolved
+        // Portable ANSI keyset pagination using composite index idx_shipping_unresolved
         String sql = "SELECT " + BOOKING_SELECT_COLUMNS + """
                  FROM shipment_bookings
                 WHERE status IN ('PENDING', 'PENDING_INQUIRY')

@@ -14,7 +14,9 @@ docs/
 │   ├── README.md
 │   └── shipping-workflow.html
 ├── design/
-│   └── backend-design.md
+│   ├── module-boundaries.md
+│   ├── backend-design.md
+│   └── application-api.md
 ├── iterations/
 │   └── delivery-plan.md
 ├── summaries/       Implementation evidence and iteration retrospectives
@@ -28,8 +30,9 @@ The iteration directory contains the reviewed roadmap. The backend design is the
 1. [Shipping workflow PRD](prd/shipping-workflow.md) — users, scope, functional requirements, business rules and acceptance journey.
 2. [Prototype guide](prototypes/README.md) and [interactive HTML](prototypes/shipping-workflow.html) — visual flow, with mock-only behavior clearly identified.
 3. [Requirements review](prd/requirements-review.md) — understanding, execution-only code observations, inconsistencies and open decisions.
-4. [Backend technical design](design/backend-design.md) — target architecture, module contracts, data model, application APIs and failure handling; agreed baseline; actual integration behavior remains subject to verification.
-5. [Delivery plan](iterations/delivery-plan.md) — three end-to-end slices; detailed scope follows backend-design discussion.
+4. [System component architecture & module boundaries](design/module-boundaries.md) — modular monolith structure, 5 governing principles, Mermaid & ASCII architecture diagrams, hexagonal intra-module layering, and microservice extraction blueprint.
+5. [Backend technical design](design/backend-design.md) — target architecture, module contracts, data model, application APIs and failure handling; agreed baseline; actual integration behavior remains subject to verification.
+6. [Delivery plan](iterations/delivery-plan.md) — three end-to-end slices; detailed scope follows backend-design discussion.
 
 ## Agile document ownership
 

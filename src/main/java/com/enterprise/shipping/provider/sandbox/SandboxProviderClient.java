@@ -4,7 +4,6 @@ import com.enterprise.shipping.provider.sandbox.config.ProviderProperties;
 import com.enterprise.shipping.provider.sandbox.model.ProviderModels.*;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundOperation;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundDeadline;
-import com.enterprise.shipping.shared.api.WorkflowException;
 import com.enterprise.shipping.shared.domain.*;
 import com.enterprise.shipping.shared.infrastructure.monitoring.MonitorCarrierApi;
 import com.enterprise.shipping.shared.infrastructure.http.CarrierHttpClientFactory;
@@ -57,7 +56,7 @@ public class SandboxProviderClient {
         // Shared construction, isolated instances. Automatic transport retries stay disabled.
         var resource = new OutboundOperation("provider-" + operation, p.baseUrl(), capacity, timeout,
                 4 * 1024 * 1024, CarrierHttpClientFactory.TransportRetry.DISABLED,
-                e -> e instanceof WorkflowException w && w.status().is4xxClientError());
+                e -> e instanceof ShippingException s && s.isClientError());
         operations.put(operation, resource);
         return resource.client().mutate()
                 .defaultHeaders(h -> h.setBasicAuth(p.username(), p.password())).build();
@@ -76,7 +75,7 @@ public class SandboxProviderClient {
         return guarded("rates", () -> {
             long remaining = deadline - System.nanoTime();
             if (remaining <= 0) {
-                throw new WorkflowException("PROVIDER_TIMEOUT", HttpStatus.GATEWAY_TIMEOUT);
+                throw ShippingException.gatewayTimeout("PROVIDER_TIMEOUT");
             }
 
             var response = post(rates, "/rest/rates", payloads.rateRequest(intent), deadline);
@@ -141,7 +140,7 @@ public class SandboxProviderClient {
                 return CreationOutcome.rejection();
             }
             if (status != 200 && status != 201) {
-                throw new WorkflowException("SHIPMENT_OUTCOME_UNKNOWN", HttpStatus.ACCEPTED);
+                throw ShippingException.accepted("SHIPMENT_OUTCOME_UNKNOWN");
             }
 
             try {
@@ -209,7 +208,7 @@ public class SandboxProviderClient {
 
     private void requireContext(String providerId, String accountAlias) {
         if (!p.providerId().equals(providerId) || !p.accountAlias().equals(accountAlias)) {
-            throw new WorkflowException("PROVIDER_CONTEXT_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE);
+            throw ShippingException.serviceUnavailable("PROVIDER_CONTEXT_UNAVAILABLE");
         }
     }
 
@@ -244,14 +243,13 @@ public class SandboxProviderClient {
         return operations.get(operation).execute(work);
     }
 
-    private static WorkflowException protocol() {
-        return new WorkflowException("PROVIDER_INVALID_RESPONSE", HttpStatus.BAD_GATEWAY);
+    private static ShippingException protocol() {
+        return ShippingException.badGateway("PROVIDER_INVALID_RESPONSE");
     }
 
-    private static WorkflowException readFailure(int status) {
-        return new WorkflowException(
-                status == 401 || status == 403 ? "PROVIDER_AUTHENTICATION_FAILED" : "PROVIDER_UNAVAILABLE",
-                HttpStatus.BAD_GATEWAY
+    private static ShippingException readFailure(int status) {
+        return ShippingException.badGateway(
+                status == 401 || status == 403 ? "PROVIDER_AUTHENTICATION_FAILED" : "PROVIDER_UNAVAILABLE"
         );
     }
 

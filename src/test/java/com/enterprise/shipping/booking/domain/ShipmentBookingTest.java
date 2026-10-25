@@ -1,7 +1,6 @@
 package com.enterprise.shipping.booking.domain;
 
-import com.enterprise.shipping.booking.application.BookingResponse;
-
+import com.enterprise.shipping.booking.contract.ManualReviewReason;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -111,12 +110,16 @@ class ShipmentBookingTest {
             case MANUAL_REVIEW -> { booking.markOutcomeUnknown(); booking.requireManualReview(); }
             default -> throw new AssertionError("Unexpected test state");
         }
-        var before = BookingResponse.from(booking);
+        var beforeStatus = booking.status();
+        var beforeReceipt = booking.receipt();
+        var beforeError = booking.errorCode();
         assertThatThrownBy(() -> booking.confirm(receipt())).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> booking.reject(RejectionReason.CARRIER_REJECTED)).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(booking::markOutcomeUnknown).isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(booking::requireManualReview).isInstanceOf(IllegalStateException.class);
-        assertThat(BookingResponse.from(booking)).isEqualTo(before);
+        assertThat(booking.status()).isEqualTo(beforeStatus);
+        assertThat(booking.receipt()).isEqualTo(beforeReceipt);
+        assertThat(booking.errorCode()).isEqualTo(beforeError);
     }
 
     static Stream<CarrierReceipt> invalidReceipts() {

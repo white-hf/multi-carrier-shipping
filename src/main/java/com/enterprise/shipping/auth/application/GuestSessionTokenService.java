@@ -1,6 +1,6 @@
 package com.enterprise.shipping.auth.application;
 
-import com.enterprise.shipping.shared.api.WorkflowException;
+import com.enterprise.shipping.shared.domain.ShippingException;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
@@ -13,7 +13,6 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
-import org.springframework.http.HttpStatus;
 
 /**
  * Issues and verifies stateless HMAC-SHA256 session tokens bound to a client fingerprint.
@@ -47,10 +46,10 @@ public final class GuestSessionTokenService {
      */
     public IssuedToken issueGuestToken(String clientId, String fingerprint) {
         if (clientId == null || !SAFE_IDENTIFIER.matcher(clientId.strip()).matches()) {
-            throw new WorkflowException("INVALID_CLIENT_ID", HttpStatus.BAD_REQUEST);
+            throw ShippingException.badRequest("INVALID_CLIENT_ID");
         }
         if (fingerprint == null || !SAFE_IDENTIFIER.matcher(fingerprint.strip()).matches()) {
-            throw new WorkflowException("INVALID_CLIENT_FINGERPRINT", HttpStatus.BAD_REQUEST);
+            throw ShippingException.badRequest("INVALID_CLIENT_FINGERPRINT");
         }
 
         // Derive a deterministic, non-reversible guest identity so raw client tokens are never exposed
@@ -66,7 +65,7 @@ public final class GuestSessionTokenService {
             throw new IllegalArgumentException("Invalid user ID");
         }
         if (fingerprint == null || !SAFE_IDENTIFIER.matcher(fingerprint.strip()).matches()) {
-            throw new WorkflowException("INVALID_CLIENT_FINGERPRINT", HttpStatus.BAD_REQUEST);
+            throw ShippingException.badRequest("INVALID_CLIENT_FINGERPRINT");
         }
 
         long expiresAtMillis = clock.millis() + tokenTtl.toMillis();

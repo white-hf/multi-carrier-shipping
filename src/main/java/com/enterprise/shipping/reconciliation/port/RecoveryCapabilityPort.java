@@ -1,7 +1,7 @@
 package com.enterprise.shipping.reconciliation.port;
 
 import java.util.Objects;
-import com.enterprise.shipping.booking.domain.ManualReviewReason;
+import com.enterprise.shipping.booking.contract.ManualReviewReason;
 
 /** Local provider/account capabilities only. This port cannot create or retry a shipment. */
 public interface RecoveryCapabilityPort {

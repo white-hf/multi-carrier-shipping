@@ -1,10 +1,10 @@
 package com.enterprise.shipping.booking.application;
 
+import com.enterprise.shipping.booking.contract.ManualReviewReason;
 import com.enterprise.shipping.booking.contract.ShipmentRecoveryPort;
 import com.enterprise.shipping.booking.port.ShipmentStore;
 import java.util.List;
 import com.enterprise.shipping.booking.domain.BookingStatus;
-import com.enterprise.shipping.booking.domain.ManualReviewReason;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

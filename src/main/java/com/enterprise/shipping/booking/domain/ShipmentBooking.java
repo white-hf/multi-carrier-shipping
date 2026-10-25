@@ -1,5 +1,6 @@
 package com.enterprise.shipping.booking.domain;
 
+import com.enterprise.shipping.booking.contract.ManualReviewReason;
 import java.util.Objects;
 
 /**

@@ -1,29 +1,37 @@
 package com.enterprise.shipping.booking.application;
 
-import com.enterprise.shipping.booking.port.*;
-import com.enterprise.shipping.booking.domain.*;
+import com.enterprise.shipping.booking.domain.BookingStatus;
+import com.enterprise.shipping.booking.domain.CarrierReceipt;
+import com.enterprise.shipping.booking.domain.RejectionReason;
+import com.enterprise.shipping.booking.domain.ShipmentBooking;
+import com.enterprise.shipping.booking.port.LabelProviderPort;
+import com.enterprise.shipping.booking.port.ShipmentProviderPort;
+import com.enterprise.shipping.booking.port.ShipmentStore;
+import com.enterprise.shipping.booking.port.ShippingBookingObserver;
 import com.enterprise.shipping.quote.contract.QuoteSelectionPort;
+import com.enterprise.shipping.shared.domain.ShippingException;
 import com.enterprise.shipping.shared.identity.TimeOrderedIds;
-import com.enterprise.shipping.shared.api.WorkflowException;
-import org.springframework.http.HttpStatus;
-import org.slf4j.*;
-import java.time.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.*;
+import java.time.Clock;
+import java.time.Duration;
+import java.util.HexFormat;
+import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Orchestrates shipment booking creations and replays under strict idempotency.
- * 
- * Enforces a claim-before-call pattern where a unique database claim is committed 
- * prior to making any external HTTP call. This safeguards against duplicate submissions 
+ *
+ * Enforces a claim-before-call pattern where a unique database claim is committed
+ * prior to making any external HTTP call. This safeguards against duplicate submissions
  * and handles ambiguous external outcomes with eventual-consistency recovery states.
  */
 @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NEVER)
 public class ShipmentApplicationService {
     private static final Logger log = LoggerFactory.getLogger(ShipmentApplicationService.class);
 
-    private final ShipmentWorkflowObserver observer;
+    private final ShippingBookingObserver observer;
     private final ShipmentStore store;
     private final QuoteSelectionPort quotes;
     private final ShipmentProviderPort provider;
@@ -38,7 +46,7 @@ public class ShipmentApplicationService {
             LabelProviderPort labels,
             Clock clock,
             Duration timeout,
-            ShipmentWorkflowObserver observer) {
+            ShippingBookingObserver observer) {
         this.store = store;
         this.quotes = quotes;
         this.provider = provider;
@@ -55,7 +63,7 @@ public class ShipmentApplicationService {
     public Submission create(String user, String key, String quoteId) {
         // 1. Enforce strict syntactic format on the incoming idempotency key
         if (key == null || !key.matches("[A-Za-z0-9._:-]{1,64}")) {
-            throw new WorkflowException("INVALID_IDEMPOTENCY_KEY", HttpStatus.BAD_REQUEST);
+            throw ShippingException.badRequest("INVALID_IDEMPOTENCY_KEY");
         }
 
         // 2. Perform a fast read optimized for common replay cases
@@ -71,7 +79,7 @@ public class ShipmentApplicationService {
         long now = clock.millis();
 
         // 4. Commit a unique booking claim in its own short database transaction.
-        // If a concurrent thread or alternative key has already submitted this request_id, 
+        // If a concurrent thread or alternative key has already submitted this request_id,
         // the unique index constraints will abort the insertion, protecting against race conditions.
         var claim = new ShipmentStore.Record(
                 user, id, key, hash, selection, BookingStatus.PENDING,
@@ -88,8 +96,8 @@ public class ShipmentApplicationService {
 
             // Same request_id booked by a different key or quote is a terminal conflict.
             var existing = store.byRequest(user, selection.requestId())
-                    .orElseThrow(() -> new WorkflowException("STORE_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE));
-            return new Submission(view(existing), HttpStatus.CONFLICT, "SHIPMENT_ALREADY_SUBMITTED");
+                    .orElseThrow(() -> ShippingException.serviceUnavailable("STORE_UNAVAILABLE"));
+            return new Submission(view(existing), 409, "SHIPMENT_ALREADY_SUBMITTED");
         }
 
         // 5. Winners proceed to invoke the external logistics provider
@@ -126,7 +134,7 @@ public class ShipmentApplicationService {
         // This defends against late-arriving responses clashing with out-of-order discovery runs.
         if (!store.outcome(claim, booking, clock.millis())) {
             var latest = store.byId(user, id)
-                    .orElseThrow(WorkflowException::missing);
+                    .orElseThrow(ShippingException::missing);
             if ((latest.status() == BookingStatus.PENDING_INQUIRY || latest.status() == BookingStatus.MANUAL_REVIEW)
                     && booking.status() == BookingStatus.CONFIRMED) {
                 store.outcome(latest, booking, clock.millis());
@@ -137,41 +145,41 @@ public class ShipmentApplicationService {
         var result = get(user, id);
         log.info("Shipment result bookingId={} status={}", id, result.status());
 
-        ShipmentWorkflowObserver.Outcome outcomeTag = result.status().equals("CONFIRMED")
-                ? ShipmentWorkflowObserver.Outcome.CONFIRMED
+        ShippingBookingObserver.Outcome outcomeTag = result.status().equals("CONFIRMED")
+                ? ShippingBookingObserver.Outcome.CONFIRMED
                 : result.status().equals("REJECTED")
-                        ? ShipmentWorkflowObserver.Outcome.REJECTED
-                        : ShipmentWorkflowObserver.Outcome.UNKNOWN;
-        observer.record(ShipmentWorkflowObserver.Operation.SUBMIT, outcomeTag, System.nanoTime() - started);
+                        ? ShippingBookingObserver.Outcome.REJECTED
+                        : ShippingBookingObserver.Outcome.UNKNOWN;
+        observer.record(ShippingBookingObserver.Operation.SUBMIT, outcomeTag, System.nanoTime() - started);
 
-        HttpStatus httpStatus = result.status().equals("CONFIRMED")
-                ? HttpStatus.CREATED
+        int statusCode = result.status().equals("CONFIRMED")
+                ? 201
                 : result.status().equals("REJECTED")
-                        ? HttpStatus.UNPROCESSABLE_ENTITY
-                        : HttpStatus.ACCEPTED;
-        return new Submission(result, httpStatus, null);
+                        ? 422
+                        : 202;
+        return new Submission(result, statusCode, null);
     }
 
     private Submission replay(ShipmentStore.Record row, String hash) {
         if (!hash.equals(row.hash())) {
-            observer.record(ShipmentWorkflowObserver.Operation.CONFLICT, ShipmentWorkflowObserver.Outcome.ERROR, 0);
-            throw new WorkflowException("IDEMPOTENCY_CONFLICT", HttpStatus.CONFLICT);
+            observer.record(ShippingBookingObserver.Operation.CONFLICT, ShippingBookingObserver.Outcome.ERROR, 0);
+            throw ShippingException.conflict("IDEMPOTENCY_CONFLICT");
         }
 
-        ShipmentWorkflowObserver.Outcome outcomeTag = row.status() == BookingStatus.CONFIRMED
-                ? ShipmentWorkflowObserver.Outcome.CONFIRMED
+        ShippingBookingObserver.Outcome outcomeTag = row.status() == BookingStatus.CONFIRMED
+                ? ShippingBookingObserver.Outcome.CONFIRMED
                 : row.status() == BookingStatus.FAILED
-                        ? ShipmentWorkflowObserver.Outcome.REJECTED
-                        : ShipmentWorkflowObserver.Outcome.UNKNOWN;
-        observer.record(ShipmentWorkflowObserver.Operation.REPLAY, outcomeTag, 0);
+                        ? ShippingBookingObserver.Outcome.REJECTED
+                        : ShippingBookingObserver.Outcome.UNKNOWN;
+        observer.record(ShippingBookingObserver.Operation.REPLAY, outcomeTag, 0);
 
-        HttpStatus httpStatus = row.status().isTerminal() || row.status() == BookingStatus.MANUAL_REVIEW
-                ? HttpStatus.OK : HttpStatus.ACCEPTED;
-        return new Submission(view(row), httpStatus, null);
+        int statusCode = row.status().isTerminal() || row.status() == BookingStatus.MANUAL_REVIEW
+                ? 200 : 202;
+        return new Submission(view(row), statusCode, null);
     }
 
     public View get(String user, String id) {
-        return view(store.byId(user, id).orElseThrow(WorkflowException::missing));
+        return view(store.byId(user, id).orElseThrow(ShippingException::missing));
     }
 
     /**
@@ -180,14 +188,14 @@ public class ShipmentApplicationService {
      */
     public LabelProviderPort.Label label(String user, String id) {
         var row = store.byId(user, id)
-                .orElseThrow(WorkflowException::missing);
+                .orElseThrow(ShippingException::missing);
         if (row.status() != BookingStatus.CONFIRMED) {
-            throw new WorkflowException("SHIPMENT_NOT_CONFIRMED", HttpStatus.CONFLICT);
+            throw ShippingException.conflict("SHIPMENT_NOT_CONFIRMED");
         }
 
         // Return the cached label URL immediately if it exists and matches safety hosts
         if (row.labelUrl() != null && labels.allowedUrl(row.labelUrl())) {
-            observer.record(ShipmentWorkflowObserver.Operation.LABEL, ShipmentWorkflowObserver.Outcome.AVAILABLE, 0);
+            observer.record(ShippingBookingObserver.Operation.LABEL, ShippingBookingObserver.Outcome.AVAILABLE, 0);
             return new LabelProviderPort.Label(null, null, row.labelUrl());
         }
 
@@ -200,10 +208,10 @@ public class ShipmentApplicationService {
         );
         var label = labels.fetch(identity);
 
-        ShipmentWorkflowObserver.Outcome outcomeTag = label == null
-                ? ShipmentWorkflowObserver.Outcome.PENDING
-                : ShipmentWorkflowObserver.Outcome.AVAILABLE;
-        observer.record(ShipmentWorkflowObserver.Operation.LABEL, outcomeTag, System.nanoTime() - started);
+        ShippingBookingObserver.Outcome outcomeTag = label == null
+                ? ShippingBookingObserver.Outcome.PENDING
+                : ShippingBookingObserver.Outcome.AVAILABLE;
+        observer.record(ShippingBookingObserver.Operation.LABEL, outcomeTag, System.nanoTime() - started);
 
         if (label != null) {
             store.label(user, id, label.url(), clock.millis());
@@ -255,5 +263,5 @@ public class ShipmentApplicationService {
             String errorCode,
             String statusUrl) {}
 
-    public record Submission(View booking, HttpStatus httpStatus, String code) {}
+    public record Submission(View booking, int statusCode, String code) {}
 }

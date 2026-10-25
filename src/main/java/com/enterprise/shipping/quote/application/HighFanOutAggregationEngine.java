@@ -1,11 +1,11 @@
 package com.enterprise.shipping.quote.application;
 
+import com.enterprise.shipping.shared.domain.ShippingException;
 import com.enterprise.shipping.shared.domain.ShippingMarketPolicy;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import com.enterprise.shipping.quote.port.CarrierRatePort;
+import com.enterprise.shipping.quote.port.QuoteCommand;
 import com.enterprise.shipping.quote.config.QuoteProperties;
 import com.enterprise.shipping.quote.domain.*;
-import com.enterprise.shipping.quote.domain.CarrierFailureException;
 import io.github.resilience4j.bulkhead.*;
 import io.github.resilience4j.circuitbreaker.*;
 import com.enterprise.shipping.quote.port.QuoteObserver;
@@ -13,7 +13,6 @@ import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
-import org.springframework.stereotype.Service;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -22,9 +21,6 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Collects independent carrier results against one request deadline on Java 17.
  * Each carrier owns bounded workers; a slow dependency cannot consume another's capacity.
  */
-@Service
-@ConditionalOnProperty(name = "shipping.quote.enabled", havingValue = "true")
-@org.springframework.context.annotation.Profile("!workflow")
 public class HighFanOutAggregationEngine implements com.enterprise.shipping.quote.port.RateComparisonPort {
     private static final long WORKER_IDLE_TIMEOUT_SECONDS = 30;
 
@@ -70,10 +66,9 @@ public class HighFanOutAggregationEngine implements com.enterprise.shipping.quot
                 intent.sender().countryCode(),intent.recipient().countryCode());
         long remaining=Math.max(1,TimeUnit.NANOSECONDS.toMillis(deadlineNanos-System.nanoTime()));
         var result=executeFanOutRates(new QuoteCommand(parcel),remaining);
-        if(result.status()==ComparisonStatus.FAILED) throw new com.enterprise.shipping.shared.api.WorkflowException(
-                "PROVIDER_UNAVAILABLE",org.springframework.http.HttpStatus.BAD_GATEWAY);
+        if(result.status()==ComparisonStatus.FAILED) throw ShippingException.badGateway("PROVIDER_UNAVAILABLE");
         return result.successfulQuotes().stream().map(q->new com.enterprise.shipping.quote.domain.ShippingQuote(null,null,
-                "direct-carrier-demo","demo-account",null,q.carrierId(),q.carrierName(),q.serviceLevel(),q.serviceLevel(),
+                "direct-carrier-fanout","carrier-account",null,q.carrierId(),q.carrierName(),q.serviceLevel(),q.serviceLevel(),
                 q.rate().movePointRight(2).longValueExact(),q.currency(),q.estimatedDeliveryDays(),System.currentTimeMillis()+60000)).toList();
     }
 

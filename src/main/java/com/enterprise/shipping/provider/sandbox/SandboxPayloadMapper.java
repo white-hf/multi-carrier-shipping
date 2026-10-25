@@ -1,17 +1,15 @@
 package com.enterprise.shipping.provider.sandbox;
 
 import com.enterprise.shipping.shared.domain.*;
-import com.enterprise.shipping.shared.api.WorkflowException;
 import com.fasterxml.jackson.databind.JsonNode;
-import org.springframework.http.HttpStatus;
 import java.util.*;
 
 /** Provider payload and unit mapping; no business-module dependencies. */
 final class SandboxPayloadMapper {
     private final int collectionSeconds;
     SandboxPayloadMapper(int collectionSeconds) { this.collectionSeconds = collectionSeconds; }
-    private static WorkflowException protocol() {
-        return new WorkflowException("PROVIDER_INVALID_RESPONSE", HttpStatus.BAD_GATEWAY);
+    private static ShippingException protocol() {
+        return ShippingException.badGateway("PROVIDER_INVALID_RESPONSE");
     }
     static String shipmentId(JsonNode body) {
         JsonNode id = body.get("shipId");

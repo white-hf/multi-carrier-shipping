@@ -1,7 +1,6 @@
 package com.enterprise.shipping.booking.contract;
 
 import java.util.List;
-import com.enterprise.shipping.booking.domain.ManualReviewReason;
 
 /** Provider lookup is not verified: discovery exposes identity, never a repository or create capability. */
 public interface ShipmentRecoveryPort {

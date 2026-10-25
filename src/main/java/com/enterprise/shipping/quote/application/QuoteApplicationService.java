@@ -5,9 +5,9 @@ import com.enterprise.shipping.quote.domain.RateRequest;
 import com.enterprise.shipping.quote.domain.ShippingIntentFingerprint;
 import com.enterprise.shipping.quote.domain.ShippingQuote;
 import com.enterprise.shipping.quote.port.QuoteStore;
-import com.enterprise.shipping.quote.port.QuoteWorkflowObserver;
 import com.enterprise.shipping.quote.port.RateComparisonPort;
-import com.enterprise.shipping.shared.api.WorkflowException;
+import com.enterprise.shipping.quote.port.ShippingQuoteObserver;
+import com.enterprise.shipping.shared.domain.ShippingException;
 import com.enterprise.shipping.shared.domain.ShippingIntent;
 import com.enterprise.shipping.shared.identity.TimeOrderedIds;
 import java.time.Clock;
@@ -20,11 +20,10 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
-import org.springframework.http.HttpStatus;
 
 /**
  * Orchestrates idempotent shipment-request persistence, retryable multi-carrier rate execution,
- * and quote selection checks under the 'workflow' profile.
+ * and quote selection checks.
  *
  * Enforces transaction-safety rules where long HTTP/provider waits are never executed
  * inside transactional database locks.
@@ -36,7 +35,7 @@ public class QuoteApplicationService implements QuoteSelectionPort {
     private static final Duration PERSISTENCE_GRACE = Duration.ofSeconds(10);
     private static final Duration REUSE_MARGIN = Duration.ofSeconds(15);
 
-    private final QuoteWorkflowObserver observer;
+    private final ShippingQuoteObserver observer;
     private final QuoteStore store;
     private final RateComparisonPort engine;
     private final Clock clock;
@@ -49,7 +48,7 @@ public class QuoteApplicationService implements QuoteSelectionPort {
             Clock clock,
             Duration timeout,
             ZoneId zone,
-            QuoteWorkflowObserver observer) {
+            ShippingQuoteObserver observer) {
         this.store = store;
         this.engine = engine;
         this.clock = clock;
@@ -65,7 +64,7 @@ public class QuoteApplicationService implements QuoteSelectionPort {
     public Submission create(String userId, String key, ShippingIntent input) {
         // 1. Validate the idempotency key format
         if (key == null || !key.matches("[A-Za-z0-9._:-]{1,64}")) {
-            throw new WorkflowException("INVALID_IDEMPOTENCY_KEY", HttpStatus.BAD_REQUEST);
+            throw ShippingException.badRequest("INVALID_IDEMPOTENCY_KEY");
         }
 
         // 2. Insert a new request claim when the key has not been seen for this user
@@ -85,19 +84,19 @@ public class QuoteApplicationService implements QuoteSelectionPort {
                     deadline()
             );
             if (store.insert(claim, clock.millis())) {
-                return execute(claim, HttpStatus.CREATED);
+                return execute(claim, 201);
             }
             existing = store.byKey(userId, key);
         }
 
         // 3. Verify that the replayed request has identical canonical content
         var row = existing.orElseThrow(
-                () -> new WorkflowException("STORE_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE)
+                () -> ShippingException.serviceUnavailable("STORE_UNAVAILABLE")
         );
         // Reuse the stored default date so crossing midnight does not turn a matching replay into a conflict
         String candidateFingerprint = ShippingIntentFingerprint.of(dated(input, row.intent().shippingDate()));
         if (!row.matches(candidateFingerprint)) {
-            throw failure(row, "IDEMPOTENCY_CONFLICT", HttpStatus.CONFLICT);
+            throw failure(row, "IDEMPOTENCY_CONFLICT", 409);
         }
 
         // 4. Re-claim and re-execute only when prior execution failed, timed out, or all quotes expired
@@ -107,11 +106,11 @@ public class QuoteApplicationService implements QuoteSelectionPort {
             requireCurrentDate(row.intent(), row);
             var claimed = row.claimed(clock.millis(), deadline(), expired);
             if (store.claim(row, claimed, clock.millis())) {
-                return execute(claimed, HttpStatus.OK);
+                return execute(claimed, 200);
             }
         }
 
-        return submission(current(userId, row.requestId()), HttpStatus.OK);
+        return submission(current(userId, row.requestId()), 200);
     }
 
     /**
@@ -123,21 +122,21 @@ public class QuoteApplicationService implements QuoteSelectionPort {
 
     private RateRequest current(String userId, String id) {
         var row = store.request(userId, id)
-                .orElseThrow(WorkflowException::missing);
+                .orElseThrow(ShippingException::missing);
 
         if (row.overdue(clock.millis())) {
             if (store.fail(row, clock.millis())) {
                 log.warn("Rate execution expired requestId={} version={}", id, row.version());
             }
             row = store.request(userId, id)
-                    .orElseThrow(WorkflowException::missing);
+                    .orElseThrow(ShippingException::missing);
         }
         return row;
     }
 
-    private Submission execute(RateRequest claim, HttpStatus completedStatus) {
+    private Submission execute(RateRequest claim, int completedStatusCode) {
         long start = System.nanoTime();
-        QuoteWorkflowObserver.Outcome outcome = QuoteWorkflowObserver.Outcome.FAILED;
+        ShippingQuoteObserver.Outcome outcome = ShippingQuoteObserver.Outcome.FAILED;
         log.info("Rate execution claimed requestId={} version={}", claim.requestId(), claim.version());
 
         try {
@@ -168,21 +167,21 @@ public class QuoteApplicationService implements QuoteSelectionPort {
 
             var result = submission(
                     current(claim.userId(), claim.requestId()),
-                    applied ? completedStatus : HttpStatus.OK
+                    applied ? completedStatusCode : 200
             );
             if ("READY".equals(result.result().state())) {
-                outcome = QuoteWorkflowObserver.Outcome.READY;
+                outcome = ShippingQuoteObserver.Outcome.READY;
             } else if ("NO_RATES".equals(result.result().state())) {
-                outcome = QuoteWorkflowObserver.Outcome.NO_RATES;
+                outcome = ShippingQuoteObserver.Outcome.NO_RATES;
             }
             return result;
         } catch (RuntimeException error) {
-            String code = error instanceof WorkflowException workflow
-                    ? workflow.code()
+            String code = error instanceof ShippingException shipping
+                    ? shipping.code()
                     : error instanceof DataAccessException ? "STORE_UNAVAILABLE" : "PROVIDER_UNAVAILABLE";
-            HttpStatus status = error instanceof WorkflowException workflow
-                    ? workflow.status()
-                    : error instanceof DataAccessException ? HttpStatus.SERVICE_UNAVAILABLE : HttpStatus.BAD_GATEWAY;
+            int statusCode = error instanceof ShippingException shipping
+                    ? shipping.statusCode()
+                    : error instanceof DataAccessException ? 503 : 502;
 
             log.warn(
                     "Rate execution failed requestId={} version={} code={} type={}",
@@ -202,18 +201,18 @@ public class QuoteApplicationService implements QuoteSelectionPort {
                         storageFailure.getClass().getSimpleName()
                 );
             }
-            throw failure(claim, code, status);
+            throw failure(claim, code, statusCode);
         } finally {
             observer.record(outcome, System.nanoTime() - start);
         }
     }
 
-    private Submission submission(RateRequest row, HttpStatus completedStatus) {
+    private Submission submission(RateRequest row, int completedStatusCode) {
         var result = view(row);
-        HttpStatus status = row.state() == RateRequest.State.RATING
-                ? HttpStatus.ACCEPTED
-                : completedStatus;
-        return new Submission(result, status);
+        int statusCode = row.state() == RateRequest.State.RATING
+                ? 202
+                : completedStatusCode;
+        return new Submission(result, statusCode);
     }
 
     private Result view(RateRequest row) {
@@ -250,31 +249,31 @@ public class QuoteApplicationService implements QuoteSelectionPort {
     private void requireCurrentDate(ShippingIntent intent, RateRequest existing) {
         if (intent.shippingDate().isBefore(LocalDate.now(clock.withZone(zone)))) {
             if (existing != null) {
-                throw failure(existing, "REQUEST_DATE_EXPIRED", HttpStatus.CONFLICT);
+                throw failure(existing, "REQUEST_DATE_EXPIRED", 409);
             }
-            throw new WorkflowException("INVALID_SHIPPING_DATE", HttpStatus.BAD_REQUEST);
+            throw ShippingException.badRequest("INVALID_SHIPPING_DATE");
         }
     }
 
-    private WorkflowException failure(RateRequest row, String code, HttpStatus status) {
-        return new WorkflowException(code, status)
+    private ShippingException failure(RateRequest row, String code, int statusCode) {
+        return new ShippingException(code, statusCode)
                 .forOperation(row.requestId(), "/api/quotes/" + row.requestId());
     }
 
     @Override
     public Selection resolve(String userId, String quoteId) {
         var q = store.find(userId, quoteId)
-                .orElseThrow(WorkflowException::missing);
+                .orElseThrow(ShippingException::missing);
 
         // Fetch only the request state column rather than deserializing the full address/parcel snapshot
         var requestState = store.requestState(userId, q.requestId())
-                .orElseThrow(WorkflowException::missing);
+                .orElseThrow(ShippingException::missing);
         if (requestState != RateRequest.State.READY) {
-            throw new WorkflowException("QUOTE_NOT_BOOKABLE", HttpStatus.CONFLICT);
+            throw ShippingException.conflict("QUOTE_NOT_BOOKABLE");
         }
         switch (q.eligibility(clock.millis(), 5000)) {
-            case NOT_BOOKABLE -> throw new WorkflowException("QUOTE_NOT_BOOKABLE", HttpStatus.CONFLICT);
-            case EXPIRED -> throw new WorkflowException("QUOTE_EXPIRED", HttpStatus.CONFLICT);
+            case NOT_BOOKABLE -> throw ShippingException.conflict("QUOTE_NOT_BOOKABLE");
+            case EXPIRED -> throw ShippingException.conflict("QUOTE_EXPIRED");
             case BOOKABLE -> { /* The exact accepted quote is returned below. */ }
         }
 
@@ -292,7 +291,7 @@ public class QuoteApplicationService implements QuoteSelectionPort {
         );
     }
 
-    public record Submission(Result result, HttpStatus status) {}
+    public record Submission(Result result, int statusCode) {}
 
     public record Result(String requestId, String state, LocalDate shippingDate, List<QuoteView> quotes) {}
 

@@ -1,7 +1,5 @@
 package com.enterprise.shipping.quote.contract;
 
-import com.enterprise.shipping.quote.domain.ShippingQuote;
-
 /** Immutable submission facts only: booking must not receive quote entities or repositories. */
 public interface QuoteSelectionPort {
     Selection resolve(String userId, String quoteId);
