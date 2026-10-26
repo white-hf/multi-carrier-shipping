@@ -99,3 +99,11 @@ Backend checks run with `./mvnw clean test`. Browser checks run separately with 
 [I7 — RDBMS-agnostic schema and portable JDBC persistence](iterations/iteration-07-portable-persistence.md): ANSI SQL portable schema (`V004`), explicit column projections (no `SELECT *`), dialect-free JDBC stores and end-to-end Web/Domain/DB validation alignment; accepted on 2026-10-23; see the [I7 summary](summaries/iteration-07-portable-persistence.md).
 
 [I8 — Module boundaries and shared outbound infrastructure](iterations/iteration-08-module-boundaries.md): implementation verified; awaiting user acceptance. See [module design](design/module-boundaries.md) and [I8 summary](summaries/iteration-08-module-boundaries.md).
+
+## Performance evidence
+
+- [Load-test results and visual summary](performance/load-test-results.md#visual-summary) — database size, HTTP concurrency, throughput and P95/P99 latency charts, followed by detailed measurements.
+- [Load-test plan](performance/load-test-plan.md) — resources, workloads and acceptance criteria.
+- [Performance tools and chart regeneration](../tests/performance/README.md) — reproduce tests or redraw charts without additional Python packages.
+
+These charts describe the historical `78c729e` run. The subsequent booking admission fix has regression coverage; the full load suite has not been rerun.

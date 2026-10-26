@@ -1,0 +1,247 @@
+{
+  "source_commit": "78c729e",
+  "source_directory": "/tmp/shipping-load-full-20261025",
+  "aggregation": {
+    "throughput": "median of three ten-second repetitions",
+    "latency": "worst repetition percentile, not pooled percentile",
+    "database_reads": "worst of three warmed 1000-operation repetitions",
+    "contention": "one five-second run per level and dataset"
+  },
+  "scales": [
+    {
+      "counts": {
+        "shipment_requests": 10000,
+        "shipment_quotes": 50000,
+        "shipment_bookings": 5000,
+        "booking_reconciliation_tasks": 500
+      },
+      "database_gib": 0.032413482666015625,
+      "read_p95_ms": {
+        "booking_idempotency": 0.063041,
+        "quote_by_id": 0.040167,
+        "request_quotes": 0.087375,
+        "overdue_first_page": 1.626042
+      },
+      "contention": [
+        {
+          "workers": 1,
+          "ops_per_second": 9099.08165625492,
+          "p95_ms": 0.183541,
+          "p99_ms": 0.297334
+        },
+        {
+          "workers": 2,
+          "ops_per_second": 17920.361502394353,
+          "p95_ms": 0.154083,
+          "p99_ms": 0.267834
+        },
+        {
+          "workers": 4,
+          "ops_per_second": 24227.36910789232,
+          "p95_ms": 0.142375,
+          "p99_ms": 1.348542
+        },
+        {
+          "workers": 8,
+          "ops_per_second": 23247.093394796902,
+          "p95_ms": 0.155625,
+          "p99_ms": 7.643333
+        },
+        {
+          "workers": 16,
+          "ops_per_second": 22603.00539692284,
+          "p95_ms": 0.152583,
+          "p99_ms": 18.037708
+        }
+      ]
+    },
+    {
+      "counts": {
+        "shipment_requests": 100000,
+        "shipment_quotes": 500000,
+        "shipment_bookings": 50000,
+        "booking_reconciliation_tasks": 5000
+      },
+      "database_gib": 0.3230018615722656,
+      "read_p95_ms": {
+        "booking_idempotency": 0.058625,
+        "quote_by_id": 0.040417,
+        "request_quotes": 0.104458,
+        "overdue_first_page": 1.462125
+      },
+      "contention": [
+        {
+          "workers": 1,
+          "ops_per_second": 9814.043905627917,
+          "p95_ms": 0.1425,
+          "p99_ms": 0.183958
+        },
+        {
+          "workers": 2,
+          "ops_per_second": 17988.14894716515,
+          "p95_ms": 0.145417,
+          "p99_ms": 0.241458
+        },
+        {
+          "workers": 4,
+          "ops_per_second": 14709.396897589657,
+          "p95_ms": 0.145583,
+          "p99_ms": 3.842334
+        },
+        {
+          "workers": 8,
+          "ops_per_second": 17413.691266875547,
+          "p95_ms": 0.369333,
+          "p99_ms": 7.473625
+        },
+        {
+          "workers": 16,
+          "ops_per_second": 19243.879261775342,
+          "p95_ms": 0.220542,
+          "p99_ms": 20.221208
+        }
+      ]
+    },
+    {
+      "counts": {
+        "shipment_requests": 1000000,
+        "shipment_quotes": 5000000,
+        "shipment_bookings": 500000,
+        "booking_reconciliation_tasks": 50000
+      },
+      "database_gib": 3.226055145263672,
+      "read_p95_ms": {
+        "booking_idempotency": 0.28075,
+        "quote_by_id": 0.184875,
+        "request_quotes": 0.195958,
+        "overdue_first_page": 1.34275
+      },
+      "contention": [
+        {
+          "workers": 1,
+          "ops_per_second": 8800.254764505675,
+          "p95_ms": 0.159208,
+          "p99_ms": 0.339583
+        },
+        {
+          "workers": 2,
+          "ops_per_second": 18508.958305121076,
+          "p95_ms": 0.1415,
+          "p99_ms": 0.15925
+        },
+        {
+          "workers": 4,
+          "ops_per_second": 23237.645080983482,
+          "p95_ms": 0.146875,
+          "p99_ms": 1.35325
+        },
+        {
+          "workers": 8,
+          "ops_per_second": 20367.62304774593,
+          "p95_ms": 0.18875,
+          "p99_ms": 7.301417
+        },
+        {
+          "workers": 16,
+          "ops_per_second": 22397.972705738066,
+          "p95_ms": 0.174916,
+          "p99_ms": 17.207375
+        }
+      ]
+    },
+    {
+      "counts": {
+        "shipment_requests": 3000000,
+        "shipment_quotes": 15000000,
+        "shipment_bookings": 1500000,
+        "booking_reconciliation_tasks": 150000
+      },
+      "database_gib": 9.669746398925781,
+      "read_p95_ms": {
+        "booking_idempotency": 0.30575,
+        "quote_by_id": 0.595417,
+        "request_quotes": 0.412666,
+        "overdue_first_page": 1.309792
+      },
+      "contention": [
+        {
+          "workers": 1,
+          "ops_per_second": 8881.817130750795,
+          "p95_ms": 0.147334,
+          "p99_ms": 0.4275
+        },
+        {
+          "workers": 2,
+          "ops_per_second": 15125.449433640617,
+          "p95_ms": 0.140541,
+          "p99_ms": 1.590709
+        },
+        {
+          "workers": 4,
+          "ops_per_second": 19070.04035772496,
+          "p95_ms": 0.146625,
+          "p99_ms": 1.610958
+        },
+        {
+          "workers": 8,
+          "ops_per_second": 13873.24313075711,
+          "p95_ms": 0.169625,
+          "p99_ms": 7.948625
+        },
+        {
+          "workers": 16,
+          "ops_per_second": 13794.234135024173,
+          "p95_ms": 0.163042,
+          "p99_ms": 18.200834
+        }
+      ]
+    }
+  ],
+  "http": [
+    {
+      "clients": 1,
+      "rate_2xx_per_second": 34.276110836101395,
+      "confirmed_workflows_per_second": 18.57833758035229,
+      "accepted_or_confirmed_workflows_per_second": 18.57833758035229,
+      "rate_p95_ms": 32.305625,
+      "booking_p95_ms": 29.45425,
+      "workflow_p95_ms": 58.343958
+    },
+    {
+      "clients": 2,
+      "rate_2xx_per_second": 72.18607834217539,
+      "confirmed_workflows_per_second": 37.526879434919955,
+      "accepted_or_confirmed_workflows_per_second": 37.526879434919955,
+      "rate_p95_ms": 31.034584,
+      "booking_p95_ms": 29.206542,
+      "workflow_p95_ms": 57.933375
+    },
+    {
+      "clients": 4,
+      "rate_2xx_per_second": 151.09850232883923,
+      "confirmed_workflows_per_second": 61.3880146560987,
+      "accepted_or_confirmed_workflows_per_second": 88.93461214599816,
+      "rate_p95_ms": 31.425334,
+      "booking_p95_ms": 29.59975,
+      "workflow_p95_ms": 57.72275
+    },
+    {
+      "clients": 8,
+      "rate_2xx_per_second": 155.2657950983235,
+      "confirmed_workflows_per_second": 58.175298025819785,
+      "accepted_or_confirmed_workflows_per_second": 96.59482078348576,
+      "rate_p95_ms": 84.676458,
+      "booking_p95_ms": 64.249958,
+      "workflow_p95_ms": 126.153833
+    },
+    {
+      "clients": 16,
+      "rate_2xx_per_second": 155.29440938737983,
+      "confirmed_workflows_per_second": 58.992178028462014,
+      "accepted_or_confirmed_workflows_per_second": 98.42734060672947,
+      "rate_p95_ms": 230.198,
+      "booking_p95_ms": 130.484625,
+      "workflow_p95_ms": 277.784791
+    }
+  ]
+}

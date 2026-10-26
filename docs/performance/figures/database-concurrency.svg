@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="640" viewBox="0 0 1400 640" role="img" aria-labelledby="title desc">
+<title id="title">3. Database concurrency vs. throughput and tail latency</title><desc id="desc">Historical run 78c729e | Largest dataset: 3M requests / 15M quotes | Four database connections</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b4d}.title{font-size:25px;font-weight:700}.sub{font-size:16px;fill:#52627a}.panel{font-size:19px;font-weight:700}.tick{font-size:14px;fill:#52627a}.label{font-size:15px}.value{font-size:14px;font-weight:600}</style>
+<rect width="1400" height="640" fill="#fff"/>
+<text x="38.00" y="38.00" class="title" text-anchor="start">3. Database concurrency vs. throughput and tail latency</text>
+<text x="38.00" y="67.00" class="sub" text-anchor="start">Historical run 78c729e | Largest dataset: 3M requests / 15M quotes | Four database connections</text>
+<text x="90.00" y="115.00" class="panel" text-anchor="start">Four workers outperformed sixteen</text>
+<text x="90.00" y="140.00" class="sub" text-anchor="start">Repository operations / second</text>
+<path d="M 90.00 420.00 L 650.00 420.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="425.00" class="tick" text-anchor="end">0</text>
+<path d="M 90.00 368.00 L 650.00 368.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="373.00" class="tick" text-anchor="end">5000</text>
+<path d="M 90.00 316.00 L 650.00 316.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="321.00" class="tick" text-anchor="end">10000</text>
+<path d="M 90.00 264.00 L 650.00 264.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="269.00" class="tick" text-anchor="end">15000</text>
+<path d="M 90.00 212.00 L 650.00 212.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="217.00" class="tick" text-anchor="end">20000</text>
+<path d="M 90.00 160.00 L 650.00 160.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="165.00" class="tick" text-anchor="end">25000</text>
+<path d="M 90.00 160.00 L 90.00 420.00 L 650.00 420.00" fill="none" stroke="#9caabd" stroke-width="1"/>
+<text x="110.00" y="445.00" class="tick" text-anchor="middle">1</text>
+<text x="240.00" y="445.00" class="tick" text-anchor="middle">2</text>
+<text x="370.00" y="445.00" class="tick" text-anchor="middle">4</text>
+<text x="500.00" y="445.00" class="tick" text-anchor="middle">8</text>
+<text x="630.00" y="445.00" class="tick" text-anchor="middle">16</text>
+<text x="370.00" y="473.00" class="sub" text-anchor="middle">Concurrent workers</text>
+<path d="M 110.00 327.63 L 240.00 262.70 L 370.00 221.67 L 500.00 275.72 L 630.00 276.54" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+<circle cx="110.00" cy="327.63" r="4" fill="#2563eb"/>
+<circle cx="240.00" cy="262.70" r="4" fill="#2563eb"/>
+<circle cx="370.00" cy="221.67" r="4" fill="#2563eb"/>
+<circle cx="500.00" cy="275.72" r="4" fill="#2563eb"/>
+<circle cx="630.00" cy="276.54" r="4" fill="#2563eb"/>
+<text x="110.00" y="315.63" class="value" text-anchor="middle" style="fill:#2563eb">8,882</text>
+<text x="240.00" y="250.70" class="value" text-anchor="middle" style="fill:#2563eb">15,125</text>
+<text x="370.00" y="209.67" class="value" text-anchor="middle" style="fill:#2563eb">19,070</text>
+<text x="500.00" y="263.72" class="value" text-anchor="middle" style="fill:#2563eb">13,873</text>
+<text x="630.00" y="264.54" class="value" text-anchor="middle" style="fill:#2563eb">13,794</text>
+<text x="785.00" y="115.00" class="panel" text-anchor="start">P99 rose as contention increased</text>
+<text x="785.00" y="140.00" class="sub" text-anchor="start">Mixed-operation latency (ms)</text>
+<path d="M 785.00 420.00 L 1325.00 420.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="425.00" class="tick" text-anchor="end">0</text>
+<path d="M 785.00 355.00 L 1325.00 355.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="360.00" class="tick" text-anchor="end">5</text>
+<path d="M 785.00 290.00 L 1325.00 290.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="295.00" class="tick" text-anchor="end">10</text>
+<path d="M 785.00 225.00 L 1325.00 225.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="230.00" class="tick" text-anchor="end">15</text>
+<path d="M 785.00 160.00 L 1325.00 160.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="165.00" class="tick" text-anchor="end">20</text>
+<path d="M 785.00 160.00 L 785.00 420.00 L 1325.00 420.00" fill="none" stroke="#9caabd" stroke-width="1"/>
+<text x="805.00" y="445.00" class="tick" text-anchor="middle">1</text>
+<text x="930.00" y="445.00" class="tick" text-anchor="middle">2</text>
+<text x="1055.00" y="445.00" class="tick" text-anchor="middle">4</text>
+<text x="1180.00" y="445.00" class="tick" text-anchor="middle">8</text>
+<text x="1305.00" y="445.00" class="tick" text-anchor="middle">16</text>
+<text x="1055.00" y="473.00" class="sub" text-anchor="middle">Concurrent workers</text>
+<path d="M 805.00 414.44 L 930.00 399.32 L 1055.00 399.06 L 1180.00 316.67 L 1305.00 183.39" fill="none" stroke="#bf6b12" stroke-width="2.5"/>
+<circle cx="805.00" cy="414.44" r="4" fill="#bf6b12"/>
+<text x="805.00" y="403.44" class="value" text-anchor="middle" style="fill:#bf6b12">0.427</text>
+<circle cx="930.00" cy="399.32" r="4" fill="#bf6b12"/>
+<text x="930.00" y="388.32" class="value" text-anchor="middle" style="fill:#bf6b12">1.6</text>
+<circle cx="1055.00" cy="399.06" r="4" fill="#bf6b12"/>
+<text x="1055.00" y="388.06" class="value" text-anchor="middle" style="fill:#bf6b12">1.6</text>
+<circle cx="1180.00" cy="316.67" r="4" fill="#bf6b12"/>
+<text x="1180.00" y="305.67" class="value" text-anchor="middle" style="fill:#bf6b12">7.9</text>
+<circle cx="1305.00" cy="183.39" r="4" fill="#bf6b12"/>
+<text x="1305.00" y="172.39" class="value" text-anchor="middle" style="fill:#bf6b12">18.2</text>
+<path d="M 805.00 418.08 L 930.00 418.17 L 1055.00 418.09 L 1180.00 417.79 L 1305.00 417.88" fill="none" stroke="#14835d" stroke-width="2.5"/>
+<circle cx="805.00" cy="418.08" r="4" fill="#14835d"/>
+<circle cx="930.00" cy="418.17" r="4" fill="#14835d"/>
+<circle cx="1055.00" cy="418.09" r="4" fill="#14835d"/>
+<circle cx="1180.00" cy="417.79" r="4" fill="#14835d"/>
+<circle cx="1305.00" cy="417.88" r="4" fill="#14835d"/>
+<path d="M 800.00 510.00 L 827.00 510.00" fill="none" stroke="#bf6b12" stroke-width="2.5"/>
+<text x="837.00" y="515.00" class="label" text-anchor="start">P99: 99% of measured attempts</text>
+<path d="M 800.00 535.00 L 827.00 535.00" fill="none" stroke="#14835d" stroke-width="2.5"/>
+<text x="837.00" y="540.00" class="label" text-anchor="start">P95: 95% of measured attempts</text>
+<text x="90.00" y="520.00" class="label" text-anchor="start">80% reads / 20% conditional-write attempts.</text>
+<text x="90.00" y="548.00" class="label" text-anchor="start">CAS conflicts count as attempts, not successful writes.</text>
+<text x="38.00" y="610.00" class="sub" text-anchor="start">Five seconds per level; local contention evidence, not a long-running capacity limit or multi-host result.</text>
+</svg>

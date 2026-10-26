@@ -1,0 +1,150 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1100" viewBox="0 0 1400 1100" role="img" aria-labelledby="title desc">
+<title id="title">2. HTTP concurrency vs. throughput and latency</title><desc id="desc">Historical run 78c729e | 20 ms local stub | Rate/create slots: 4/2 | Separate small database</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b4d}.title{font-size:25px;font-weight:700}.sub{font-size:16px;fill:#52627a}.panel{font-size:19px;font-weight:700}.tick{font-size:14px;fill:#52627a}.label{font-size:15px}.value{font-size:14px;font-weight:600}</style>
+<rect width="1400" height="1100" fill="#fff"/>
+<text x="38.00" y="38.00" class="title" text-anchor="start">2. HTTP concurrency vs. throughput and latency</text>
+<text x="38.00" y="67.00" class="sub" text-anchor="start">Historical run 78c729e | 20 ms local stub | Rate/create slots: 4/2 | Separate small database</text>
+<text x="90.00" y="110.00" class="panel" text-anchor="start">Rate throughput reaches a plateau</text>
+<text x="90.00" y="135.00" class="sub" text-anchor="start">Rate 2xx responses / second</text>
+<path d="M 90.00 405.00 L 650.00 405.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="410.00" class="tick" text-anchor="end">0</text>
+<path d="M 90.00 342.50 L 650.00 342.50" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="347.50" class="tick" text-anchor="end">50</text>
+<path d="M 90.00 280.00 L 650.00 280.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="285.00" class="tick" text-anchor="end">100</text>
+<path d="M 90.00 217.50 L 650.00 217.50" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="222.50" class="tick" text-anchor="end">150</text>
+<path d="M 90.00 155.00 L 650.00 155.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="160.00" class="tick" text-anchor="end">200</text>
+<path d="M 90.00 155.00 L 90.00 405.00 L 650.00 405.00" fill="none" stroke="#9caabd" stroke-width="1"/>
+<text x="110.00" y="430.00" class="tick" text-anchor="middle">1</text>
+<text x="240.00" y="430.00" class="tick" text-anchor="middle">2</text>
+<text x="370.00" y="430.00" class="tick" text-anchor="middle">4</text>
+<text x="500.00" y="430.00" class="tick" text-anchor="middle">8</text>
+<text x="630.00" y="430.00" class="tick" text-anchor="middle">16</text>
+<text x="370.00" y="458.00" class="sub" text-anchor="middle">Concurrent clients</text>
+<path d="M 110.00 362.15 L 240.00 314.77 L 370.00 216.13 L 500.00 210.92 L 630.00 210.88" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+<circle cx="110.00" cy="362.15" r="4" fill="#2563eb"/>
+<text x="110.00" y="351.15" class="value" text-anchor="middle" style="fill:#2563eb">34.3</text>
+<circle cx="240.00" cy="314.77" r="4" fill="#2563eb"/>
+<text x="240.00" y="303.77" class="value" text-anchor="middle" style="fill:#2563eb">72.2</text>
+<circle cx="370.00" cy="216.13" r="4" fill="#2563eb"/>
+<text x="370.00" y="205.13" class="value" text-anchor="middle" style="fill:#2563eb">151.1</text>
+<circle cx="500.00" cy="210.92" r="4" fill="#2563eb"/>
+<text x="500.00" y="199.92" class="value" text-anchor="middle" style="fill:#2563eb">155.3</text>
+<circle cx="630.00" cy="210.88" r="4" fill="#2563eb"/>
+<text x="630.00" y="199.88" class="value" text-anchor="middle" style="fill:#2563eb">155.3</text>
+<text x="785.00" y="110.00" class="panel" text-anchor="start">Accepted is not the same as confirmed</text>
+<text x="785.00" y="135.00" class="sub" text-anchor="start">Rate-to-booking workflows / second</text>
+<path d="M 785.00 405.00 L 1325.00 405.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="410.00" class="tick" text-anchor="end">0</text>
+<path d="M 785.00 342.50 L 1325.00 342.50" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="347.50" class="tick" text-anchor="end">30</text>
+<path d="M 785.00 280.00 L 1325.00 280.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="285.00" class="tick" text-anchor="end">60</text>
+<path d="M 785.00 217.50 L 1325.00 217.50" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="222.50" class="tick" text-anchor="end">90</text>
+<path d="M 785.00 155.00 L 1325.00 155.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="160.00" class="tick" text-anchor="end">120</text>
+<path d="M 785.00 155.00 L 785.00 405.00 L 1325.00 405.00" fill="none" stroke="#9caabd" stroke-width="1"/>
+<text x="805.00" y="430.00" class="tick" text-anchor="middle">1</text>
+<text x="930.00" y="430.00" class="tick" text-anchor="middle">2</text>
+<text x="1055.00" y="430.00" class="tick" text-anchor="middle">4</text>
+<text x="1180.00" y="430.00" class="tick" text-anchor="middle">8</text>
+<text x="1305.00" y="430.00" class="tick" text-anchor="middle">16</text>
+<text x="1055.00" y="458.00" class="sub" text-anchor="middle">Concurrent clients</text>
+<path d="M 805.00 366.30 L 930.00 326.82 L 1055.00 219.72 L 1180.00 203.76 L 1305.00 199.94" fill="none" stroke="#758397" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="805.00" cy="366.30" r="4" fill="#758397"/>
+<circle cx="930.00" cy="326.82" r="4" fill="#758397"/>
+<circle cx="1055.00" cy="219.72" r="4" fill="#758397"/>
+<circle cx="1180.00" cy="203.76" r="4" fill="#758397"/>
+<circle cx="1305.00" cy="199.94" r="4" fill="#758397"/>
+<path d="M 805.00 366.30 L 930.00 326.82 L 1055.00 277.11 L 1180.00 283.80 L 1305.00 282.10" fill="none" stroke="#14835d" stroke-width="2.5"/>
+<circle cx="805.00" cy="366.30" r="4" fill="#14835d"/>
+<text x="805.00" y="355.30" class="value" text-anchor="middle" style="fill:#14835d">18.6</text>
+<circle cx="930.00" cy="326.82" r="4" fill="#14835d"/>
+<text x="930.00" y="315.82" class="value" text-anchor="middle" style="fill:#14835d">37.5</text>
+<circle cx="1055.00" cy="277.11" r="4" fill="#14835d"/>
+<text x="1055.00" y="266.11" class="value" text-anchor="middle" style="fill:#14835d">61.4</text>
+<circle cx="1180.00" cy="283.80" r="4" fill="#14835d"/>
+<text x="1180.00" y="272.80" class="value" text-anchor="middle" style="fill:#14835d">58.2</text>
+<circle cx="1305.00" cy="282.10" r="4" fill="#14835d"/>
+<text x="1305.00" y="271.10" class="value" text-anchor="middle" style="fill:#14835d">59.0</text>
+<path d="M 800.00 485.00 L 827.00 485.00" fill="none" stroke="#14835d" stroke-width="2.5"/>
+<text x="837.00" y="490.00" class="label" text-anchor="start">Confirmed creation (201)</text>
+<path d="M 800.00 510.00 L 827.00 510.00" fill="none" stroke="#758397" stroke-width="2.5" stroke-dasharray="7 5"/>
+<text x="837.00" y="515.00" class="label" text-anchor="start">Accepted or confirmed (all 2xx)</text>
+<text x="90.00" y="492.00" class="sub" text-anchor="start">Throughput = median of three runs per level.</text>
+<text x="90.00" y="610.00" class="panel" text-anchor="start">Rate endpoint tail latency increases</text>
+<text x="90.00" y="635.00" class="sub" text-anchor="start">Worst repetition P95 (ms)</text>
+<path d="M 90.00 890.00 L 650.00 890.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="895.00" class="tick" text-anchor="end">0</text>
+<path d="M 90.00 831.25 L 650.00 831.25" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="836.25" class="tick" text-anchor="end">75</text>
+<path d="M 90.00 772.50 L 650.00 772.50" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="777.50" class="tick" text-anchor="end">150</text>
+<path d="M 90.00 713.75 L 650.00 713.75" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="718.75" class="tick" text-anchor="end">225</text>
+<path d="M 90.00 655.00 L 650.00 655.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="660.00" class="tick" text-anchor="end">300</text>
+<path d="M 90.00 655.00 L 90.00 890.00 L 650.00 890.00" fill="none" stroke="#9caabd" stroke-width="1"/>
+<text x="110.00" y="915.00" class="tick" text-anchor="middle">1</text>
+<text x="240.00" y="915.00" class="tick" text-anchor="middle">2</text>
+<text x="370.00" y="915.00" class="tick" text-anchor="middle">4</text>
+<text x="500.00" y="915.00" class="tick" text-anchor="middle">8</text>
+<text x="630.00" y="915.00" class="tick" text-anchor="middle">16</text>
+<text x="370.00" y="943.00" class="sub" text-anchor="middle">Concurrent clients</text>
+<path d="M 110.00 864.69 L 240.00 865.69 L 370.00 865.38 L 500.00 823.67 L 630.00 709.68" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+<circle cx="110.00" cy="864.69" r="4" fill="#2563eb"/>
+<text x="110.00" y="853.69" class="value" text-anchor="middle" style="fill:#2563eb">32.3</text>
+<circle cx="240.00" cy="865.69" r="4" fill="#2563eb"/>
+<text x="240.00" y="854.69" class="value" text-anchor="middle" style="fill:#2563eb">31.0</text>
+<circle cx="370.00" cy="865.38" r="4" fill="#2563eb"/>
+<text x="370.00" y="854.38" class="value" text-anchor="middle" style="fill:#2563eb">31.4</text>
+<circle cx="500.00" cy="823.67" r="4" fill="#2563eb"/>
+<text x="500.00" y="812.67" class="value" text-anchor="middle" style="fill:#2563eb">84.7</text>
+<circle cx="630.00" cy="709.68" r="4" fill="#2563eb"/>
+<text x="630.00" y="698.68" class="value" text-anchor="middle" style="fill:#2563eb">230.2</text>
+<text x="785.00" y="610.00" class="panel" text-anchor="start">Booking and full-workflow latency</text>
+<text x="785.00" y="635.00" class="sub" text-anchor="start">Worst repetition P95 (ms)</text>
+<path d="M 785.00 890.00 L 1325.00 890.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="895.00" class="tick" text-anchor="end">0</text>
+<path d="M 785.00 831.25 L 1325.00 831.25" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="836.25" class="tick" text-anchor="end">75</text>
+<path d="M 785.00 772.50 L 1325.00 772.50" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="777.50" class="tick" text-anchor="end">150</text>
+<path d="M 785.00 713.75 L 1325.00 713.75" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="718.75" class="tick" text-anchor="end">225</text>
+<path d="M 785.00 655.00 L 1325.00 655.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="660.00" class="tick" text-anchor="end">300</text>
+<path d="M 785.00 655.00 L 785.00 890.00 L 1325.00 890.00" fill="none" stroke="#9caabd" stroke-width="1"/>
+<text x="805.00" y="915.00" class="tick" text-anchor="middle">1</text>
+<text x="930.00" y="915.00" class="tick" text-anchor="middle">2</text>
+<text x="1055.00" y="915.00" class="tick" text-anchor="middle">4</text>
+<text x="1180.00" y="915.00" class="tick" text-anchor="middle">8</text>
+<text x="1305.00" y="915.00" class="tick" text-anchor="middle">16</text>
+<text x="1055.00" y="943.00" class="sub" text-anchor="middle">Concurrent clients</text>
+<path d="M 805.00 866.93 L 930.00 867.12 L 1055.00 866.81 L 1180.00 839.67 L 1305.00 787.79" fill="none" stroke="#bf6b12" stroke-width="2.5"/>
+<circle cx="805.00" cy="866.93" r="4" fill="#bf6b12"/>
+<text x="805.00" y="855.93" class="value" text-anchor="middle" style="fill:#bf6b12">29.5</text>
+<circle cx="930.00" cy="867.12" r="4" fill="#bf6b12"/>
+<text x="930.00" y="856.12" class="value" text-anchor="middle" style="fill:#bf6b12">29.2</text>
+<circle cx="1055.00" cy="866.81" r="4" fill="#bf6b12"/>
+<text x="1055.00" y="855.81" class="value" text-anchor="middle" style="fill:#bf6b12">29.6</text>
+<circle cx="1180.00" cy="839.67" r="4" fill="#bf6b12"/>
+<text x="1180.00" y="828.67" class="value" text-anchor="middle" style="fill:#bf6b12">64.2</text>
+<circle cx="1305.00" cy="787.79" r="4" fill="#bf6b12"/>
+<text x="1305.00" y="776.79" class="value" text-anchor="middle" style="fill:#bf6b12">130.5</text>
+<path d="M 805.00 844.30 L 930.00 844.62 L 1055.00 844.78 L 1180.00 791.18 L 1305.00 672.40" fill="none" stroke="#7956b8" stroke-width="2.5" stroke-dasharray="7 5"/>
+<circle cx="805.00" cy="844.30" r="4" fill="#7956b8"/>
+<circle cx="930.00" cy="844.62" r="4" fill="#7956b8"/>
+<circle cx="1055.00" cy="844.78" r="4" fill="#7956b8"/>
+<circle cx="1180.00" cy="791.18" r="4" fill="#7956b8"/>
+<circle cx="1305.00" cy="672.40" r="4" fill="#7956b8"/>
+<path d="M 800.00 965.00 L 827.00 965.00" fill="none" stroke="#bf6b12" stroke-width="2.5"/>
+<text x="837.00" y="970.00" class="label" text-anchor="start">POST /api/bookings</text>
+<path d="M 800.00 990.00 L 827.00 990.00" fill="none" stroke="#7956b8" stroke-width="2.5" stroke-dasharray="7 5"/>
+<text x="837.00" y="995.00" class="label" text-anchor="start">Rate + booking workflow</text>
+<text x="38.00" y="1032.00" class="sub" text-anchor="start">Rate latency: POST /api/quotes, rates-only scenario.</text>
+<text x="38.00" y="1062.00" class="sub" text-anchor="start">Closed-loop clients; three 10-second runs per level. Latency includes pending outcomes; it is not success-only P95.</text>
+</svg>

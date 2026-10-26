@@ -80,7 +80,7 @@ Performance tests used a **16 GiB RAM / 10 logical CPU Mac**. HTTP tests used a 
 
 Current automated tests use local stubs. Earlier live rate, booking and PDF checks are historical observations documented in the acceptance report.
 
-[Load-test results](docs/performance/load-test-results.md) · [Acceptance report](docs/summaries/acceptance-test-report.md)
+[Load-test results & charts](docs/performance/load-test-results.md#visual-summary) · [Acceptance report](docs/summaries/acceptance-test-report.md)
 
 ## 5. Run and Verify
 

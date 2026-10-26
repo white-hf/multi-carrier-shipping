@@ -19,3 +19,15 @@ Artifacts include `seed-results.json`, `database-<size>.json`, database logs, HT
 See [the execution plan](../../docs/performance/load-test-plan.md) for workload details and acceptance budgets. Normal unit and browser tests do not automatically run these load harnesses.
 
 The final dataset also receives a separate CAS latency probe and query-plan audit. Reusable tooling produces a Markdown report inside the run directory automatically; index allocation comes from the JDBC result instead of a duplicate Python page walk.
+
+See the [report with embedded charts](../../docs/performance/load-test-results.md#visual-summary).
+
+## Plot the recorded results
+
+The repository includes standalone SVG charts and a compact numeric snapshot of the original run. Regenerate them without third-party plotting dependencies:
+
+```sh
+python3 tests/performance/plot-results.py --data docs/performance/chart-data.json --output-dir docs/performance/figures
+```
+
+Optionally supply `--raw-dir /tmp/shipping-load-full-20261025` to rebuild the snapshot from the original JSON before plotting. Throughput uses the median repetition; latency uses the worst repetition percentile. HTTP and database-scale measurements are kept separate. These charts describe the pre-fix run at `78c729e`, not current-code performance.

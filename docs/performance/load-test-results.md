@@ -19,6 +19,24 @@ Tested version: `78c729e` · SQLite only · Execution complete
 
 **Acceptance:** measured database latency and correctness checks passed. The load run completed, but it does not establish production capacity or resolve the pending-booking issue. HTTP `202` is pending, not a confirmed shipment.
 
+### Visual summary
+
+These figures use recorded results from **`78c729e`**, before the booking admission fix. They do not represent a new load run. Database-scale and HTTP-concurrency tests are separate experiments; they do not establish HTTP capacity at the largest dataset.
+
+**A. Data volume → database latency and storage.** The quote count grows from 50K to 15M. The four plotted warmed P95 reads remain below 2 ms, while storage grows to 9.67 GiB. The horizontal axis is logarithmic; connecting lines show sampled trends, not predictions between points.
+
+[![Database size versus indexed read latency and storage](figures/database-scale.svg)](figures/database-scale.svg)
+
+**B. Request pressure → HTTP throughput and latency.** At four clients, rates approach their measured throughput plateau and confirmed workflows reach about 61/s. Beyond four clients, latency rises without a comparable increase in completed work. The green line counts confirmed creations; the dashed gray line includes pending `202` responses. The bottom-right panel separates booking endpoint latency from the complete rate-to-booking workflow. Latencies include all sampled outcomes, not only successful creation.
+
+[![HTTP concurrency versus throughput and endpoint latency](figures/http-concurrency.svg)](figures/http-concurrency.svg)
+
+**C. Database concurrency → processing rate and tail latency.** On the largest dataset, four workers process about 19K repository operations/s, versus about 14K at sixteen workers. P99 grows from about 1.6 ms at four workers to 18.2 ms at sixteen. Operations include reads and conditional-write attempts, including expected CAS conflicts; they are not shipment completions.
+
+[![Database concurrency versus processing rate and P99 latency](figures/database-concurrency.svg)](figures/database-concurrency.svg)
+
+The images are standalone SVGs; click to enlarge. Their numeric input is saved in [chart-data.json](chart-data.json), aggregated from the original result files. See the generation command at the end of this report.
+
 ## 2. Test resources and configuration
 
 | Resource | Configuration used |
@@ -129,6 +147,16 @@ Actual authenticated application, local 20 ms provider stub; rate/create bulkhea
 | workflow | 8 | 96.6 | 2924 | 0 | 126.15 |
 | workflow | 16 | 98.4 | 2953 | 0 | 277.78 |
 
+Endpoint/workflow latency breakdown from the same raw HTTP runs. Rate endpoint values are from the rates-only scenario; booking and workflow values are from the rate-to-booking scenario. Each P95 is the worst of three repetitions, not a pooled or success-only percentile.
+
+| Clients | Confirmed workflows/s (median) | POST /api/quotes P95 ms | POST /api/bookings P95 ms | Rate + booking workflow P95 ms |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 18.6 | 32.31 | 29.45 | 58.34 |
+| 2 | 37.5 | 31.03 | 29.21 | 57.93 |
+| 4 | 61.4 | 31.43 | 29.60 | 57.72 |
+| 8 | 58.2 | 84.68 | 64.25 | 126.15 |
+| 16 | 59.0 | 230.20 | 130.48 | 277.78 |
+
 Reliability assertions: `concurrent_rate_idempotency`=True, `concurrent_booking_idempotency`=True, `payload_conflict`=True, `failed_rate_retry`=True, `uncertain_creation_no_retry`=True.
 Post-load recovery: **True**. Availability classification: **True**.
 
@@ -217,3 +245,15 @@ Use a new output directory for each run. The commands use the current checkout; 
 | Separate write probe | `cas-write-budget.json` |
 
 Temporary artifacts may be removed by system cleanup. The large database and raw outputs are not committed. See the [test plan](load-test-plan.md) and [runner instructions](../../tests/performance/README.md) for execution details. Unit/API regression and browser tests are separate from this load-test report.
+
+### Regenerate the charts
+
+No additional Python packages are required. From the repository root:
+
+```sh
+python3 tests/performance/plot-results.py \
+  --data docs/performance/chart-data.json \
+  --output-dir docs/performance/figures
+```
+
+This redraws the saved historical measurements; it does not run a benchmark. To rebuild the compact data snapshot from the original artifacts, add `--raw-dir /tmp/shipping-load-full-20261025`. That directory must contain all four database-scale JSON files, `seed-results.json`, and `http/http-results.json`.

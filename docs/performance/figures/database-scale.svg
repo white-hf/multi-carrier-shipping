@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="650" viewBox="0 0 1400 650" role="img" aria-labelledby="title desc">
+<title id="title">1. Database size vs. indexed read latency</title><desc id="desc">Historical run 78c729e | Local Mac: 16 GiB RAM, 10 logical CPUs | SQLite, four connections</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b4d}.title{font-size:25px;font-weight:700}.sub{font-size:16px;fill:#52627a}.panel{font-size:19px;font-weight:700}.tick{font-size:14px;fill:#52627a}.label{font-size:15px}.value{font-size:14px;font-weight:600}</style>
+<rect width="1400" height="650" fill="#fff"/>
+<text x="38.00" y="38.00" class="title" text-anchor="start">1. Database size vs. indexed read latency</text>
+<text x="38.00" y="67.00" class="sub" text-anchor="start">Historical run 78c729e | Local Mac: 16 GiB RAM, 10 logical CPUs | SQLite, four connections</text>
+<text x="90.00" y="115.00" class="panel" text-anchor="start">Indexed reads remained below 2 ms</text>
+<text x="90.00" y="140.00" class="sub" text-anchor="start">Worst repetition P95 (ms)</text>
+<path d="M 90.00 420.00 L 650.00 420.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="425.00" class="tick" text-anchor="end">0</text>
+<path d="M 90.00 355.00 L 650.00 355.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="360.00" class="tick" text-anchor="end">0.5</text>
+<path d="M 90.00 290.00 L 650.00 290.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="295.00" class="tick" text-anchor="end">1</text>
+<path d="M 90.00 225.00 L 650.00 225.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="230.00" class="tick" text-anchor="end">1.5</text>
+<path d="M 90.00 160.00 L 650.00 160.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="78.00" y="165.00" class="tick" text-anchor="end">2</text>
+<path d="M 90.00 160.00 L 90.00 420.00 L 650.00 420.00" fill="none" stroke="#9caabd" stroke-width="1"/>
+<text x="110.00" y="445.00" class="tick" text-anchor="middle">50K</text>
+<text x="319.92" y="445.00" class="tick" text-anchor="middle">500K</text>
+<text x="529.84" y="445.00" class="tick" text-anchor="middle">5M</text>
+<text x="630.00" y="445.00" class="tick" text-anchor="middle">15M</text>
+<text x="370.00" y="473.00" class="sub" text-anchor="middle">Quote rows (logarithmic scale)</text>
+<path d="M 110.00 411.80 L 319.92 412.38 L 529.84 383.50 L 630.00 380.25" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+<circle cx="110.00" cy="411.80" r="4" fill="#2563eb"/>
+<circle cx="319.92" cy="412.38" r="4" fill="#2563eb"/>
+<circle cx="529.84" cy="383.50" r="4" fill="#2563eb"/>
+<circle cx="630.00" cy="380.25" r="4" fill="#2563eb"/>
+<path d="M 110.00 414.78 L 319.92 414.75 L 529.84 395.97 L 630.00 342.60" fill="none" stroke="#14835d" stroke-width="2.5"/>
+<circle cx="110.00" cy="414.78" r="4" fill="#14835d"/>
+<circle cx="319.92" cy="414.75" r="4" fill="#14835d"/>
+<circle cx="529.84" cy="395.97" r="4" fill="#14835d"/>
+<circle cx="630.00" cy="342.60" r="4" fill="#14835d"/>
+<path d="M 110.00 408.64 L 319.92 406.42 L 529.84 394.53 L 630.00 366.35" fill="none" stroke="#bf6b12" stroke-width="2.5"/>
+<circle cx="110.00" cy="408.64" r="4" fill="#bf6b12"/>
+<circle cx="319.92" cy="406.42" r="4" fill="#bf6b12"/>
+<circle cx="529.84" cy="394.53" r="4" fill="#bf6b12"/>
+<circle cx="630.00" cy="366.35" r="4" fill="#bf6b12"/>
+<path d="M 110.00 208.61 L 319.92 229.92 L 529.84 245.44 L 630.00 249.73" fill="none" stroke="#7956b8" stroke-width="2.5"/>
+<circle cx="110.00" cy="208.61" r="4" fill="#7956b8"/>
+<circle cx="319.92" cy="229.92" r="4" fill="#7956b8"/>
+<circle cx="529.84" cy="245.44" r="4" fill="#7956b8"/>
+<circle cx="630.00" cy="249.73" r="4" fill="#7956b8"/>
+<path d="M 110.00 510.00 L 137.00 510.00" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+<text x="147.00" y="515.00" class="label" text-anchor="start">Booking key</text>
+<path d="M 110.00 535.00 L 137.00 535.00" fill="none" stroke="#14835d" stroke-width="2.5"/>
+<text x="147.00" y="540.00" class="label" text-anchor="start">Quote ID</text>
+<path d="M 110.00 560.00 L 137.00 560.00" fill="none" stroke="#bf6b12" stroke-width="2.5"/>
+<text x="147.00" y="565.00" class="label" text-anchor="start">Request quote list</text>
+<path d="M 110.00 585.00 L 137.00 585.00" fill="none" stroke="#7956b8" stroke-width="2.5"/>
+<text x="147.00" y="590.00" class="label" text-anchor="start">Overdue page</text>
+<text x="785.00" y="115.00" class="panel" text-anchor="start">Storage grew with the dataset</text>
+<text x="785.00" y="140.00" class="sub" text-anchor="start">Database file size (GiB)</text>
+<path d="M 785.00 420.00 L 1325.00 420.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="425.00" class="tick" text-anchor="end">0</text>
+<path d="M 785.00 355.00 L 1325.00 355.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="360.00" class="tick" text-anchor="end">3</text>
+<path d="M 785.00 290.00 L 1325.00 290.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="295.00" class="tick" text-anchor="end">6</text>
+<path d="M 785.00 225.00 L 1325.00 225.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="230.00" class="tick" text-anchor="end">9</text>
+<path d="M 785.00 160.00 L 1325.00 160.00" fill="none" stroke="#e2e8f0" stroke-width="1"/>
+<text x="773.00" y="165.00" class="tick" text-anchor="end">12</text>
+<path d="M 785.00 160.00 L 785.00 420.00 L 1325.00 420.00" fill="none" stroke="#9caabd" stroke-width="1"/>
+<text x="805.00" y="445.00" class="tick" text-anchor="middle">50K</text>
+<text x="1006.85" y="445.00" class="tick" text-anchor="middle">500K</text>
+<text x="1208.69" y="445.00" class="tick" text-anchor="middle">5M</text>
+<text x="1305.00" y="445.00" class="tick" text-anchor="middle">15M</text>
+<text x="1055.00" y="473.00" class="sub" text-anchor="middle">Quote rows (logarithmic scale)</text>
+<path d="M 805.00 419.30 L 1006.85 413.00 L 1208.69 350.10 L 1305.00 210.49" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+<circle cx="805.00" cy="419.30" r="4" fill="#2563eb"/>
+<text x="805.00" y="408.30" class="value" text-anchor="middle" style="fill:#2563eb">0.032</text>
+<circle cx="1006.85" cy="413.00" r="4" fill="#2563eb"/>
+<text x="1006.85" y="402.00" class="value" text-anchor="middle" style="fill:#2563eb">0.323</text>
+<circle cx="1208.69" cy="350.10" r="4" fill="#2563eb"/>
+<text x="1208.69" y="339.10" class="value" text-anchor="middle" style="fill:#2563eb">3.2</text>
+<circle cx="1305.00" cy="210.49" r="4" fill="#2563eb"/>
+<text x="1305.00" y="199.49" class="value" text-anchor="middle" style="fill:#2563eb">9.7</text>
+<text x="785.00" y="520.00" class="label" text-anchor="start">Largest stage: 3M requests / 15M quotes</text>
+<text x="785.00" y="548.00" class="label" text-anchor="start">1.5M bookings / 150K recovery tasks</text>
+<text x="38.00" y="627.00" class="sub" text-anchor="start">Database-only timings: warmed cache, connection checkout and mapping included. This is not an HTTP workload.</text>
+</svg>

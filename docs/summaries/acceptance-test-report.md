@@ -84,3 +84,7 @@ The earlier 123-case count and eight-stage browser account above describe the I1
 
 - **RDBMS-Agnostic ANSI SQL Schema (`V004__portable_schema_baseline.sql`)**: Standardized bounded ANSI SQL types (`VARCHAR(N)`, `CHAR(N)`, `BIGINT`, `DECIMAL(12,4)`, `SMALLINT`), renamed `parcel_*` columns, cleared inactive `rate_deadline_at` to `NULL`, and replaced SQLite partial indexes with portable composite indexes while preserving all existing rows across `V001 → V004`.
 - **Explicit Column Projections & Dialect-Free JDBC Stores**: Eliminated all `SELECT *` queries across repositories (including single-column `SELECT state` in `QuoteStore.requestState` during booking quote resolution), replaced `ON CONFLICT DO NOTHING` and tuple `>` with portable ANSI SQL and `UniqueConstraints.isUniqueViolation`, and aligned Web UI, `@Digits(8,4)` / `@Size` validation, and database column constraints for lossless round-trip storage. See [I7 summary](iteration-07-portable-persistence.md).
+
+## Separate load-test evidence
+
+The [load-test report and charts](../performance/load-test-results.md#visual-summary) show dataset growth, concurrency, throughput and latency. They are separate from the functional acceptance results above and describe the historical `78c729e` run. The full load benchmark has not been rerun after the booking admission fix.
