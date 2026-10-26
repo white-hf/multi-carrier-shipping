@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1010" viewBox="0 0 1500 1010" role="img" aria-labelledby="title desc">
+<title id="title">Shipping demo system architecture</title>
+<desc id="desc">A browser connects to one Spring Boot application containing HTTP endpoints, Quote, Booking and Reconciliation modules, provider integration and shared infrastructure. Side panels show implemented logging and metrics. A local SQLite file has module-owned tables. A separate external provider performs carrier aggregation, shipment creation and label retrieval. Lines show structural connections, not request sequence.</desc>
+<style>text{font-family:Arial,Helvetica,sans-serif;fill:#172b4d}.title{font-size:25px;font-weight:700}.heading{font-size:18px;font-weight:700;letter-spacing:.6px}.label{font-size:21px;font-weight:600}.detail{font-size:17px;fill:#475569}.small{font-size:15px;fill:#475569}.line{fill:none;stroke:#7b8fa8;stroke-width:2;stroke-linejoin:round}</style>
+<rect width="1500" height="1010" fill="#fff"/>
+
+<text x="35" y="35" text-anchor="start" class="title">SHIPPING DEMO — SYSTEM ARCHITECTURE</text>
+<text x="35" y="61" text-anchor="start" class="detail">Implemented structure · One application process · Module-owned data · External provider boundary</text>
+<rect x="435" y="82" width="620" height="55" rx="12" fill="#fff8e8" stroke="#d5bd7c" stroke-width="1.5"/>
+<text x="745" y="107" text-anchor="middle" class="label">Web Client</text>
+<text x="745" y="127" text-anchor="middle" class="small">HTML / CSS / Vanilla JavaScript</text>
+<path d="M 745 137 V 208" class="line"/>
+<rect x="30" y="160" width="1440" height="585" rx="12" fill="#fff" stroke="#9aacc3" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="50" y="187" text-anchor="start" class="heading">APPLICATION BOUNDARY — SPRING BOOT MODULAR MONOLITH</text>
+<rect x="55" y="208" width="1070" height="92" rx="12" fill="#f8fafc" stroke="#dbe3ee" stroke-width="1.5"/>
+<text x="75" y="235" text-anchor="start" class="heading">HTTP / AUTHENTICATION</text>
+<text x="590" y="264" text-anchor="middle" class="label">REST Controllers · Guest Tokens · Request Correlation · Error Mapping</text>
+<path d="M 590 300 V 325" class="line"/>
+<rect x="55" y="325" width="1070" height="165" rx="12" fill="#f8fafc" stroke="#dbe3ee" stroke-width="1.5"/>
+<text x="75" y="353" text-anchor="start" class="heading">BUSINESS MODULES</text>
+<rect x="75" y="368" width="330" height="100" rx="12" fill="#eaf2ff" stroke="#82a5d6" stroke-width="1.5"/>
+<text x="240" y="396" text-anchor="middle" class="label">Quote</text>
+<text x="240" y="425" text-anchor="middle" class="detail">Request snapshots &amp; offers</text>
+<text x="240" y="449" text-anchor="middle" class="detail">Idempotent rate execution</text>
+<rect x="425" y="368" width="330" height="100" rx="12" fill="#eaf2ff" stroke="#82a5d6" stroke-width="1.5"/>
+<text x="590" y="396" text-anchor="middle" class="label">Booking</text>
+<text x="590" y="425" text-anchor="middle" class="detail">Durable claims &amp; state machine</text>
+<text x="590" y="449" text-anchor="middle" class="detail">Shipment creation &amp; labels</text>
+<rect x="775" y="368" width="330" height="100" rx="12" fill="#eaf2ff" stroke="#82a5d6" stroke-width="1.5"/>
+<text x="940" y="396" text-anchor="middle" class="label">Reconciliation</text>
+<text x="940" y="425" text-anchor="middle" class="detail">Scheduled overdue discovery</text>
+<text x="940" y="449" text-anchor="middle" class="detail">Paused tasks &amp; manual review</text>
+<path d="M 590 490 V 515" class="line"/>
+<rect x="55" y="515" width="1070" height="108" rx="12" fill="#f8fafc" stroke="#dbe3ee" stroke-width="1.5"/>
+<text x="75" y="543" text-anchor="start" class="heading">PROVIDER INTEGRATION</text>
+<text x="590" y="575" text-anchor="middle" class="label">Consumer-Owned Adapters · Sandbox Client · Payload Mapping</text>
+<text x="590" y="602" text-anchor="middle" class="detail">Separate rate / create / label pools, bulkheads and circuit breakers</text>
+<rect x="55" y="648" width="1070" height="72" rx="12" fill="#f8fafc" stroke="#dbe3ee" stroke-width="1.5"/>
+<text x="75" y="674" text-anchor="start" class="heading">SHARED FOUNDATION</text>
+<text x="590" y="702" text-anchor="middle" class="detail">HTTP Deadlines · JDBC &amp; Migrations · UUIDv7 · Monitoring Support</text>
+<rect x="1160" y="208" width="285" height="512" rx="12" fill="#f8fafc" stroke="#dbe3ee" stroke-width="1.5"/>
+<text x="1180" y="238" text-anchor="start" class="heading">OBSERVABILITY</text>
+<rect x="1177" y="270" width="251" height="106" rx="12" fill="#fff" stroke="#9aacc3" stroke-width="1.5"/>
+<text x="1302" y="301" text-anchor="middle" class="label">Application Logs</text>
+<text x="1302" y="330" text-anchor="middle" class="small">Rolling files</text>
+<text x="1302" y="353" text-anchor="middle" class="small">Request / booking IDs</text>
+<rect x="1177" y="400" width="251" height="106" rx="12" fill="#fff" stroke="#9aacc3" stroke-width="1.5"/>
+<text x="1302" y="431" text-anchor="middle" class="label">Metrics</text>
+<text x="1302" y="460" text-anchor="middle" class="small">Spring AOP · Micrometer</text>
+<text x="1302" y="483" text-anchor="middle" class="small">Transport &amp; business outcomes</text>
+<rect x="1177" y="530" width="251" height="106" rx="12" fill="#fff" stroke="#9aacc3" stroke-width="1.5"/>
+<text x="1302" y="561" text-anchor="middle" class="label">Metrics Endpoint</text>
+<text x="1302" y="590" text-anchor="middle" class="small">/actuator/prometheus</text>
+<text x="1302" y="613" text-anchor="middle" class="small">Exposed by the application</text>
+<path d="M 1125 407 H 1143 V 450 H 1160" class="line" stroke-dasharray="6 5"/>
+<text x="1302" y="685" text-anchor="middle" class="small">Instrumentation, not a separate</text>
+<text x="1302" y="705" text-anchor="middle" class="small">monitoring server deployment</text>
+<path d="M 55 407 H 15 V 775 H 415 V 795" class="line"/>
+<path d="M 1125 570 H 1143 V 795" class="line"/>
+<rect x="40" y="795" width="720" height="165" rx="12" fill="#f5f2ff" stroke="#a69ac7" stroke-width="1.5"/>
+<text x="60" y="824" text-anchor="start" class="heading">LOCAL SQLITE — ONE FILE, FOUR BUSINESS TABLES</text>
+<rect x="58" y="845" width="220" height="88" rx="12" fill="#fff" stroke="#c8bfdc" stroke-width="1.5"/>
+<text x="168" y="870" text-anchor="middle" class="detail">Quote-owned</text>
+<text x="168" y="897" text-anchor="middle" class="small">shipment_requests</text>
+<text x="168" y="918" text-anchor="middle" class="small">shipment_quotes</text>
+<rect x="294" y="845" width="220" height="88" rx="12" fill="#fff" stroke="#c8bfdc" stroke-width="1.5"/>
+<text x="404" y="870" text-anchor="middle" class="detail">Booking-owned</text>
+<text x="404" y="897" text-anchor="middle" class="small">shipment_bookings</text>
+<rect x="530" y="845" width="220" height="88" rx="12" fill="#fff" stroke="#c8bfdc" stroke-width="1.5"/>
+<text x="640" y="870" text-anchor="middle" class="detail">Recovery-owned</text>
+<text x="640" y="897" text-anchor="middle" style="font-size:13px" class="small">booking_reconciliation_tasks</text>
+<rect x="800" y="795" width="660" height="165" rx="12" fill="#fff8e8" stroke="#d5bd7c" stroke-width="1.5"/>
+<text x="820" y="824" text-anchor="start" class="heading">EXTERNAL SYSTEM — SHIPPING PROVIDER API</text>
+<text x="1130" y="866" text-anchor="middle" class="label">Multi-Carrier Aggregation</text>
+<text x="1130" y="900" text-anchor="middle" class="detail">Rates · Shipment Creation · Label Retrieval</text>
+<text x="1130" y="934" text-anchor="middle" class="small">No application-side carrier fan-out on the default path</text>
+<text x="40" y="992" text-anchor="start" class="small">Lines indicate structural connections, not execution order. Business modules use published contracts; shared code has no business dependencies.</text>
+</svg>
