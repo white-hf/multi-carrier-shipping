@@ -46,110 +46,37 @@ The **Multi-Carrier Shipping Service** is architected as a **Modular Monolith wi
 
 ## 2. System Module Architecture Diagrams
 
-### 2.1 High-Level Module Hierarchy & Inter-Module Relationships (Mermaid)
+### 2.1 High-Level Module Hierarchy & Contract Dependencies (Mermaid)
 
 ```mermaid
 flowchart TB
-    subgraph Client["Browser Client (Single-Screen 3-Tab Workstation)"]
-        UI["HTML5 / CSS3 / Vanilla JS\n(Guest Token + 24h Draft + Carrier Progress)"]
-    end
+    UI["Web Client & HTTP Boundary\n(Guest Auth · Request Tracing · Error Mapping)"]
 
-    subgraph WebBoundary["HTTP Security & Diagnostics Boundary"]
-        Trace["shared.api\nShippingRequestTracingFilter\nShippingExceptionHandler"]
-        AuthFilter["auth.infrastructure\nShippingAuthenticationFilter"]
-    end
-
-    subgraph BusinessModules["Vertical Business Bounded Contexts (Modular Monolith)"]
+    subgraph Modules["Business Modules (Hexagonal: api → application → domain ← port ← infrastructure)"]
         direction LR
+        Q["quote Module\n─────────────────\nRate Requests & Offers\n[(shipment_requests / quotes)]"]
+        B["booking Module\n─────────────────\nIdempotent Claim & Labels\n[(shipment_bookings)]"]
+        R["reconciliation Module\n─────────────────\nOverdue Discovery & Review\n[(reconciliation_tasks)]"]
 
-        subgraph AuthMod["auth Module"]
-            AuthAPI["auth.api\nShippingAuthController"]
-            AuthApp["auth.application\nGuestSessionTokenService"]
-        end
-
-        subgraph QuoteMod["quote Module"]
-            QuoteAPI["quote.api\nShippingQuoteController"]
-            QuoteApp["quote.application\nQuoteApplicationService"]
-            QuoteContract["quote.contract\nQuoteSelectionPort"]
-            RatePort["quote.port\nRateComparisonPort"]
-            SingleEngine["quote.application\nSingleProviderRateEngine"]
-            FanOutEngine["quote.application\nHighFanOutAggregationEngine"]
-            QuoteStore["quote.infrastructure.persistence\nJdbcQuoteStore"]
-            QuoteBridge["quote.infrastructure.provider\nSandboxRateAdapter"]
-        end
-
-        subgraph BookingMod["booking Module"]
-            BookAPI["booking.api\nShippingBookingController"]
-            BookApp["booking.application\nShipmentApplicationService\nShipmentRecoveryService"]
-            BookContract["booking.contract\nShipmentRecoveryPort\nManualReviewReason"]
-            BookDomain["booking.domain\nShipmentBooking"]
-            BookStore["booking.infrastructure.persistence\nJdbcShipmentStore"]
-            BookBridge["booking.infrastructure.provider\nSandboxShipmentAdapter\nSandboxLabelAdapter"]
-        end
-
-        subgraph ReconMod["reconciliation Module"]
-            ReconApp["reconciliation.application\nPendingShipmentDiscovery"]
-            ReconStore["reconciliation.infrastructure.persistence\nJdbcPendingTaskStore"]
-            ReconBridge["reconciliation.infrastructure.provider\nSandboxRecoveryAdapter"]
-        end
+        B -->|"quote.contract\nQuoteSelectionPort"| Q
+        R -->|"booking.contract\nShipmentRecoveryPort"| B
     end
 
-    subgraph RuntimeRoot["Deployment Composition Root"]
-        Runtime["runtime\nSandboxConfiguration"]
+    subgraph Provider["External Provider Layer (Inverted via Consumer Ports / DIP)"]
+        P["provider.sandbox\n(Isolated Rate / Create / Label Pools, Bulkheads & Breakers)"]
     end
 
-    subgraph ProviderLayer["External Provider Protocol Layer"]
-        ProviderClient["provider.sandbox\nSandboxProviderClient\nSandboxPayloadMapper"]
+    subgraph Shared["shared Foundation (Unidirectional Lower Layer)"]
+        S["Domain Value Kernel · Outbound HTTP Executor · Portable JDBC & Migrations"]
     end
 
-    subgraph SharedKernel["shared Technical Foundation & Value Kernel"]
-        SharedDomain["shared.domain\nShippingIntent / ShippingAddress\nShippingMarketPolicy / ShippingException"]
-        SharedHttp["shared.infrastructure.http\nOutboundOperation / OutboundCallExecutor\nOutboundDeadline / CarrierHttpClientFactory"]
-        SharedDB["shared.infrastructure.persistence\nShippingMigrations / UniqueConstraints\nSqliteDataSources"]
-        SharedIdentity["shared.identity\nUserContext / TimeOrderedIds"]
-    end
-
-    subgraph Storage["Isolated Module Tables (ANSI SQL)"]
-        QDB[("shipment_requests\nshipment_quotes")]
-        BDB[("shipment_bookings")]
-        RDB[("booking_reconciliation_tasks")]
-    end
-
-    UI --> Trace --> AuthFilter
-    AuthFilter --> AuthAPI --> AuthApp
-    AuthFilter --> QuoteAPI --> QuoteApp
-    AuthFilter --> BookAPI --> BookApp
-
-    %% Cross-module contract calls ONLY
-    BookApp ==>|"Contract Call Only"| QuoteContract
-    QuoteApp -.->|"implements"| QuoteContract
-    ReconApp ==>|"Contract Call Only"| BookContract
-    BookApp -.->|"implements"| BookContract
-
-    %% Intra-module rate engine strategy
-    QuoteApp --> RatePort
-    SingleEngine -.->|"implements"| RatePort
-    FanOutEngine -.->|"implements"| RatePort
-
-    %% Persistence ownership
-    QuoteApp --> QuoteStore --> QDB
-    BookApp --> BookStore --> BDB
-    ReconApp --> ReconStore --> RDB
-
-    %% Provider bridges
-    SingleEngine --> QuoteBridge
-    BookApp --> BookBridge
-    ReconApp --> ReconBridge
-
-    QuoteBridge --> ProviderClient
-    BookBridge --> ProviderClient
-    ReconBridge --> ProviderClient
-    Runtime -.->|"wires"| ProviderClient
-
-    ProviderClient --> SharedHttp
-    QuoteStore --> SharedDB
-    BookStore --> SharedDB
-    ReconStore --> SharedDB
+    UI --> Q
+    UI --> B
+    Q -->|"RateProviderPort"| P
+    B -->|"ShipmentProviderPort\nLabelProviderPort"| P
+    R -->|"RecoveryCapabilityPort"| P
+    Modules --> Shared
+    P --> Shared
 ```
 
 ---

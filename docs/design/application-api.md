@@ -1,8 +1,62 @@
-# Application API — frontend handoff
+# Application API — Frontend & Backend Protocol Contract
 
-Status: Frontend integrated, backend implemented, and verified via automated API and Playwright E2E browser tests against a controlled local provider stub. The supplied frontend is integrated with the contracts below. All paths are relative to the backend origin. Use JSON; no application login UI or provider credentials are sent by the browser. The browser obtains a 2-hour HMAC-signed Guest Token bound to its client fingerprint (`POST /api/auth/guest`) and sends `Authorization: Bearer <token>` and `X-Client-Fingerprint: <fingerprint>` on subsequent API calls.
+Status: Frontend integrated, backend implemented, and verified via automated API and Playwright E2E browser tests against a controlled local provider stub. All paths are relative to the backend origin (`http://127.0.0.1:8080`).
 
-## Guest Session Token (2-hour TTL, Fingerprint-Bound)
+---
+
+## 1. Protocol & Response Envelope Convention
+
+This API follows a **RESTful HTTP-native protocol convention** (aligned with Stripe / GitHub / RFC 9457 Problem Details) rather than wrapping every response in a `200 OK { code, msg, data }` envelope:
+
+1. **Success Responses (`200 OK`, `201 Created`, `202 Accepted`) — Unwrapped Resource Payload**
+   - HTTP status codes convey the exact operation semantics (`201` newly created resource, `200` idempotent replay or read, `202` in-flight / pending confirmation).
+   - The JSON response body is the **business resource object directly** (no outer `data` wrapper).
+   - Diagnostic and routing metadata are carried in standard HTTP headers:
+     - `X-Request-Id`: Time-ordered UUIDv7 correlation ID generated for every request.
+     - `Location`: Canonical status URI of the created or conflicted resource (`/api/quotes/{requestId}` or `/api/bookings/{bookingId}`).
+     - `Retry-After`: Recommended polling delay in seconds (sent on `202 Accepted`).
+
+2. **Error Responses (`4xx` / `5xx`) — Unified Structured Error Envelope**
+   - Every non-2xx response is serialized by `ShippingExceptionHandler` (or `ShippingAuthenticationFilter`) using a single, predictable JSON error schema:
+     ```json
+     {
+       "code": "INVALID_REQUEST",
+       "message": "INVALID REQUEST",
+       "requestId": "01a17114-61e8-7e93-89cd-03648aac54cf",
+       "fieldErrors": [
+         {
+           "field": "parcel.weight",
+           "message": "must be greater than 0"
+         }
+       ],
+       "operation": {
+         "id": "01a17114-61ea-76bc-9adc-3df32a852375",
+         "statusUrl": "/api/quotes/01a17114-61ea-76bc-9adc-3df32a852375"
+       }
+     }
+     ```
+   - `code`: Bounded, machine-readable uppercase error code (never raw stack traces or upstream provider bodies).
+   - `message`: Human-readable summary derived safely from `code`.
+   - `requestId`: Matches the `X-Request-Id` response header for log correlation.
+   - `fieldErrors`: Array of `{ field, message }` objects for inline form highlighting (`[]` when not a field validation error).
+   - `operation` *(optional)*: Included when an error relates to an already-persisted rate request (`IDEMPOTENCY_CONFLICT`, `REQUEST_DATE_EXPIRED`, or failed rate execution).
+
+| HTTP Status | Category | Representative `code` Values |
+| --- | --- | --- |
+| `200 OK` | Read / Idempotent Replay | Returns resource JSON directly (or `application/pdf` bytes for ready labels) |
+| `201 Created` | Initial Resource Creation | Returns newly created quote set or confirmed booking JSON + `Location` header |
+| `202 Accepted` | Async / Pending Outcome | `RATING` in progress, `PENDING_CONFIRMATION` booking, or `PENDING` label + `Retry-After` header |
+| `400 Bad Request` | Validation Failure | `INVALID_REQUEST`, `MISSING_IDEMPOTENCY_KEY`, `INVALID_IDEMPOTENCY_KEY`, `INVALID_SHIPPING_DATE` |
+| `401 Unauthorized` | Auth / Token Failure | `UNAUTHORIZED` (missing, expired, or fingerprint-mismatched guest token) |
+| `403 Forbidden` | Cross-Origin Write | `ORIGIN_NOT_ALLOWED` |
+| `404 Not Found` | Missing / Foreign Owner | `RESOURCE_NOT_FOUND` |
+| `409 Conflict` | State / Key Conflict | `IDEMPOTENCY_CONFLICT`, `SHIPMENT_ALREADY_SUBMITTED`, `QUOTE_EXPIRED`, `QUOTE_NOT_BOOKABLE`, `REQUEST_DATE_EXPIRED` |
+| `422 Unprocessable` | Carrier Rejection | `CARRIER_REJECTED` (returns booking projection with `status: "REJECTED"`) |
+| `502 / 503 / 504` | Upstream / Storage Fault | `PROVIDER_UNAVAILABLE`, `PROVIDER_INVALID_RESPONSE`, `PROVIDER_CAPACITY_EXCEEDED`, `PROVIDER_TIMEOUT`, `STORE_UNAVAILABLE` |
+
+---
+
+## 2. Guest Session Token (2-hour TTL, Fingerprint-Bound)
 
 `POST /api/auth/guest`
 
@@ -13,7 +67,7 @@ Status: Frontend integrated, backend implemented, and verified via automated API
 }
 ```
 
-`200` returns a 2-hour (`7200s`) HMAC-SHA256 signed token bound to the client's fingerprint and sets `SameSite=Strict; HttpOnly` cookies (`shipping_guest_token`, `shipping_guest_fp`) for top-level label navigation:
+`200` returns a 2-hour (`7200s`) HMAC-SHA256 signed token bound to the client's fingerprint, the list of supported carriers configured for the market, and sets `SameSite=Strict; HttpOnly` cookies (`shipping_guest_token`, `shipping_guest_fp`) for top-level label navigation:
 
 ```json
 {
@@ -21,7 +75,16 @@ Status: Frontend integrated, backend implemented, and verified via automated API
   "userId": "guest-...",
   "mode": "GUEST",
   "expiresAt": "2026-10-23T17:20:00Z",
-  "ttlSeconds": 7200
+  "ttlSeconds": 7200,
+  "supportedCarriers": [
+    "Canada Post",
+    "Purolator",
+    "FedEx",
+    "UPS",
+    "DHL Express",
+    "Canpar",
+    "Loomis Express"
+  ]
 }
 ```
 
