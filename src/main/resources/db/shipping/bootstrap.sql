@@ -1,2 +1,2 @@
--- Versioned migrations are applied after datasource initialization.
+-- Datasource connectivity probe only; the release baseline is applied by ShippingMigrations.
 SELECT 1;

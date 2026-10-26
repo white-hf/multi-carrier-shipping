@@ -141,7 +141,7 @@ Keep the same key and quote ID after any uncertain response or browser retry. Th
 }
 ```
 
-Status values: `PENDING`, `CONFIRMED`, `REJECTED`, `PENDING_CONFIRMATION`, `MANUAL_REVIEW`. A confirmed booking can have missing tracking and a pending label. Unknown creation must not be shown as rejection or retried with a new key. No automatic reference lookup is promised by the current provider contract.
+Status values: `PENDING`, `RETRYABLE`, `CONFIRMED`, `REJECTED`, `PENDING_CONFIRMATION`, `MANUAL_REVIEW`. A confirmed booking can have missing tracking and a pending label. Unknown creation must not be shown as rejection or retried with a new key. No automatic reference lookup is promised by the current provider contract.
 
 When recovery cannot safely query or retry the provider, the existing booking becomes `MANUAL_REVIEW`:
 
@@ -159,6 +159,26 @@ Status reads and same-key manual-review replays return HTTP `200`; the replay ha
 Recovery uses provider/account capabilities. Reasons distinguish `AUTHORITATIVE_LOOKUP_UNSUPPORTED`, `AUTHORITATIVE_LOOKUP_UNVERIFIED`, and `AUTOMATIC_RECOVERY_UNAVAILABLE`; existing simulator inquiry exhaustion remains `INQUIRY_EXHAUSTED`. Capability metadata alone never enables a creation retry.
 
 Different keys for the same request return `409` with `code: SHIPMENT_ALREADY_SUBMITTED` and the existing `booking` projection. Reusing a key for another quote returns `409 IDEMPOTENCY_CONFLICT`. An expired quote returns `409 QUOTE_EXPIRED`: retrieve rates again and ask the user to confirm.
+
+## Creation refused before dispatch: explicit retry
+
+A local create bulkhead rejection or open circuit has not sent a provider request. The booking is persisted as `RETRYABLE`, and creation returns **503** with `Retry-After: 2`, a `Location` status URL and the standard error envelope:
+
+```json
+{
+  "code": "SHIPMENT_SUBMISSION_NOT_DISPATCHED",
+  "message": "SHIPMENT SUBMISSION NOT DISPATCHED",
+  "requestId": "correlation-id",
+  "fieldErrors": [],
+  "operation": { "id": "booking-id", "statusUrl": "/api/bookings/booking-id" }
+}
+```
+
+`GET /api/bookings/{id}` returns `status: RETRYABLE` and the same error code. A user-triggered retry must resubmit **the same quote ID and Idempotency-Key** to `POST /api/bookings`; it reuses the existing booking. Concurrent retries compete for one version-fenced claim. Do not run a rapid automatic retry loop. Repeated local rejection remains `RETRYABLE` and creates no manual-review task.
+
+The backend revalidates the quote before retrying. An expired/unavailable quote is not dispatched; obtain a new quote/request and ask the user to confirm it. Different keys for the original request remain conflicts. A dispatched timeout or lost response is still `PENDING_CONFIRMATION`, not `RETRYABLE`, and must never enable blind resubmission. Generic HTTP/network failures are not proof that creation was unsent.
+
+Frontend support for the new retryable state is a separate handoff; this backend fix does not change frontend code.
 
 ## Label: one automatic attempt, then manual retry
 

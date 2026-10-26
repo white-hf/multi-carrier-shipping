@@ -22,8 +22,10 @@ public final class OutboundCallExecutor {
     public static <T> T execute(Bulkhead bulkhead, CircuitBreaker breaker, Supplier<T> work) {
         try {
             return call(bulkhead, breaker, work::get);
-        } catch (BulkheadFullException | CallNotPermittedException unavailable) {
-            throw ShippingException.serviceUnavailable("PROVIDER_CAPACITY_EXCEEDED");
+        } catch (BulkheadFullException unavailable) {
+            throw new OutboundAdmissionRejectedException(OutboundAdmissionRejectedException.Reason.BULKHEAD_FULL);
+        } catch (CallNotPermittedException unavailable) {
+            throw new OutboundAdmissionRejectedException(OutboundAdmissionRejectedException.Reason.CIRCUIT_OPEN);
         } catch (ShippingException failure) {
             throw failure;
         } catch (Exception failure) {

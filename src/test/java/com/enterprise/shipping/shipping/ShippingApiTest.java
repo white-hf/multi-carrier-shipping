@@ -724,16 +724,68 @@ class ShippingApiTest {
                 """, (rs, n) -> rs.getString("detail"), 1000L, -1L, -1L, ""));
         assertThat(plan).contains("idx_shipping_unresolved");
 
-        String originalChecksum = jdbc.queryForObject("SELECT checksum FROM schema_migrations WHERE version='V001__quotes.sql'", String.class);
-        jdbc.update("UPDATE schema_migrations SET checksum='tampered' WHERE version='V001__quotes.sql'");
+        String originalChecksum = jdbc.queryForObject("SELECT checksum FROM schema_migrations WHERE version='V001__shipping_schema.sql'", String.class);
+        jdbc.update("UPDATE schema_migrations SET checksum='tampered' WHERE version='V001__shipping_schema.sql'");
         try {
-            assertThatThrownBy(() -> ShippingMigrations.migrate(source, "V001__quotes.sql"))
+            assertThatThrownBy(() -> ShippingMigrations.migrate(source, "V001__shipping_schema.sql"))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("Applied migration checksum changed");
         } finally {
-            jdbc.update("UPDATE schema_migrations SET checksum=? WHERE version='V001__quotes.sql'", originalChecksum);
-            ShippingMigrations.migrate(source, "V001__quotes.sql", "V002__bookings.sql", "V003__rate_request_idempotency.sql", "V004__portable_schema_baseline.sql");
+            jdbc.update("UPDATE schema_migrations SET checksum=? WHERE version='V001__shipping_schema.sql'", originalChecksum);
+            ShippingMigrations.migrate(source, "V001__shipping_schema.sql");
         }
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(
+            com.enterprise.shipping.shared.infrastructure.http.OutboundAdmissionRejectedException.Reason.class)
+    void unsentCreationReturnsRetryableAndSameKeyRetryCreatesOnlyOnce(
+            com.enterprise.shipping.shared.infrastructure.http.OutboundAdmissionRejectedException.Reason reason) throws Exception {
+        String quoteId = rates().path("quotes").get(0).path("quoteId").asText();
+        var operations = (java.util.Map<?, ?>) org.springframework.test.util.ReflectionTestUtils.getField(adapter, "operations");
+        Object createOperation = operations.get("create");
+        var bulkhead = (io.github.resilience4j.bulkhead.Bulkhead)
+                org.springframework.test.util.ReflectionTestUtils.getField(createOperation, "bulkhead");
+        var breaker = (io.github.resilience4j.circuitbreaker.CircuitBreaker)
+                org.springframework.test.util.ReflectionTestUtils.getField(createOperation, "breaker");
+        int permits = bulkhead.getBulkheadConfig().getMaxConcurrentCalls();
+        boolean full = reason == com.enterprise.shipping.shared.infrastructure.http.OutboundAdmissionRejectedException.Reason.BULKHEAD_FULL;
+        if (full) {
+            for (int i = 0; i < permits; i++) bulkhead.acquirePermission();
+        } else {
+            breaker.transitionToOpenState();
+        }
+        String bookingId;
+        try {
+            String body = mvc.perform(post("/api/bookings").header("Idempotency-Key", "unsent-create")
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"quoteId\":\"" + quoteId + "\"}"))
+                    .andExpect(status().isServiceUnavailable())
+                    .andExpect(header().string("Retry-After", "2"))
+                    .andExpect(jsonPath("$.code").value("SHIPMENT_SUBMISSION_NOT_DISPATCHED"))
+                    .andExpect(jsonPath("$.operation.statusUrl").exists())
+                    .andReturn().getResponse().getContentAsString();
+            bookingId = mapper.readTree(body).path("operation").path("id").asText();
+            assertThat(CREATE_CALLS).hasValue(0);
+            mvc.perform(get("/api/bookings/" + bookingId)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.status").value("RETRYABLE"));
+            var jdbc = new JdbcTemplate(source);
+            jdbc.update("UPDATE shipment_bookings SET submission_deadline_at=0 WHERE booking_id=?", bookingId);
+            discovery.discover();
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM booking_reconciliation_tasks", Integer.class)).isZero();
+        } finally {
+            if (full) for (int i = 0; i < permits; i++) bulkhead.releasePermission();
+            breaker.reset();
+        }
+        mvc.perform(post("/api/bookings").header("Idempotency-Key", "unsent-create")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"quoteId\":\"" + quoteId + "\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bookingId").value(bookingId))
+                .andExpect(jsonPath("$.status").value("CONFIRMED"));
+        mvc.perform(post("/api/bookings").header("Idempotency-Key", "unsent-create")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"quoteId\":\"" + quoteId + "\"}"))
+                .andExpect(status().isOk());
+        assertThat(CREATE_CALLS).hasValue(1);
+        assertThat(new JdbcTemplate(source).queryForObject("SELECT count(*) FROM shipment_bookings", Integer.class)).isEqualTo(1);
     }
 
     @Test

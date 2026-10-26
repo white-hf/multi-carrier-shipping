@@ -81,6 +81,17 @@ public final class JdbcShipmentStore implements ShipmentStore {
     }
 
     @Override
+    public boolean claimRetry(Record expected, long now, long deadline) {
+        return jdbc.update("""
+                UPDATE shipment_bookings
+                SET status = 'PENDING', error_code = NULL, submission_deadline_at = ?,
+                    updated_at = ?, version = version + 1
+                WHERE user_id = ? AND booking_id = ? AND status = 'RETRYABLE'
+                  AND version = ? AND quote_expires_at > ?
+                """, deadline, now, expected.userId(), expected.id(), expected.version(), now) == 1;
+    }
+
+    @Override
     public boolean outcome(Record expected, ShipmentBooking booking, long now) {
         var receipt = booking.receipt();
 

@@ -6,6 +6,7 @@ import com.enterprise.shipping.booking.domain.RejectionReason;
 import com.enterprise.shipping.booking.domain.ShipmentBooking;
 import com.enterprise.shipping.booking.port.LabelProviderPort;
 import com.enterprise.shipping.booking.port.ShipmentProviderPort;
+import com.enterprise.shipping.booking.port.ShipmentNotDispatchedException;
 import com.enterprise.shipping.booking.port.ShipmentStore;
 import com.enterprise.shipping.booking.port.ShippingBookingObserver;
 import com.enterprise.shipping.quote.contract.QuoteSelectionPort;
@@ -100,7 +101,14 @@ public class ShipmentApplicationService {
             return new Submission(view(existing), 409, "SHIPMENT_ALREADY_SUBMITTED");
         }
 
-        // 5. Winners proceed to invoke the external logistics provider
+        return submit(claim, ShippingBookingObserver.Operation.SUBMIT);
+    }
+
+    private Submission submit(ShipmentStore.Record claim, ShippingBookingObserver.Operation operation) {
+        String user = claim.userId();
+        String id = claim.id();
+        var selection = claim.selection();
+        // Only a committed initial claim or retry claim authorizes an external submission.
         long started = System.nanoTime();
         log.info("Shipment claimed bookingId={} provider={}", id, selection.providerId());
         ShipmentBooking booking = claim.restore();
@@ -124,6 +132,9 @@ public class ShipmentApplicationService {
                 );
                 booking.confirm(receipt);
             }
+        } catch (ShipmentNotDispatchedException notDispatched) {
+            booking.markNotDispatched();
+            log.info("Shipment dispatch refused bookingId={} reason={}", id, notDispatched.reason());
         } catch (RuntimeException uncertain) {
             // Ambiguous network outcome. The booking is marked as PENDING_INQUIRY, preventing duplicate POSTs.
             booking.markOutcomeUnknown();
@@ -149,8 +160,15 @@ public class ShipmentApplicationService {
                 ? ShippingBookingObserver.Outcome.CONFIRMED
                 : result.status().equals("REJECTED")
                         ? ShippingBookingObserver.Outcome.REJECTED
-                        : ShippingBookingObserver.Outcome.UNKNOWN;
-        observer.record(ShippingBookingObserver.Operation.SUBMIT, outcomeTag, System.nanoTime() - started);
+                        : result.status().equals("RETRYABLE")
+                                ? ShippingBookingObserver.Outcome.RETRYABLE
+                                : ShippingBookingObserver.Outcome.UNKNOWN;
+        observer.record(operation, outcomeTag, System.nanoTime() - started);
+
+        if (result.status().equals("RETRYABLE")) {
+            throw ShippingException.serviceUnavailable("SHIPMENT_SUBMISSION_NOT_DISPATCHED")
+                    .forOperation(id, result.statusUrl());
+        }
 
         int statusCode = result.status().equals("CONFIRMED")
                 ? 201
@@ -166,6 +184,10 @@ public class ShipmentApplicationService {
             throw ShippingException.conflict("IDEMPOTENCY_CONFLICT");
         }
 
+        if (row.status() == BookingStatus.RETRYABLE) {
+            return retry(row);
+        }
+
         ShippingBookingObserver.Outcome outcomeTag = row.status() == BookingStatus.CONFIRMED
                 ? ShippingBookingObserver.Outcome.CONFIRMED
                 : row.status() == BookingStatus.FAILED
@@ -176,6 +198,38 @@ public class ShipmentApplicationService {
         int statusCode = row.status().isTerminal() || row.status() == BookingStatus.MANUAL_REVIEW
                 ? 200 : 202;
         return new Submission(view(row), statusCode, null);
+    }
+
+    private Submission retry(ShipmentStore.Record row) {
+        long now = clock.millis();
+        if (row.selection().expiresAt() <= now) {
+            throw ShippingException.conflict("QUOTE_EXPIRED").forOperation(row.id(), view(row).statusUrl());
+        }
+        // Revalidate the original quote, including ownership and current request eligibility.
+        try {
+            quotes.resolve(row.userId(), row.selection().quoteId());
+        } catch (ShippingException unavailable) {
+            throw unavailable.forOperation(row.id(), view(row).statusUrl());
+        }
+        now = clock.millis();
+        var booking = row.restore();
+        booking.prepareRetry();
+        long deadline = now + timeout.toMillis() + 10000;
+        if (!store.claimRetry(row, now, deadline)) {
+            log.info("Shipment retry claim lost bookingId={} version={}", row.id(), row.version());
+            var latest = store.byId(row.userId(), row.id()).orElseThrow(ShippingException::missing);
+            // Do not loop into another submission attempt after losing this version.
+            int statusCode = latest.status().isTerminal() || latest.status() == BookingStatus.MANUAL_REVIEW ? 200 : 202;
+            if (latest.status() == BookingStatus.RETRYABLE) {
+                throw ShippingException.serviceUnavailable("SHIPMENT_SUBMISSION_NOT_DISPATCHED")
+                        .forOperation(row.id(), view(latest).statusUrl());
+            }
+            return new Submission(view(latest), statusCode, null);
+        }
+        log.info("Shipment retry claimed bookingId={} version={}", row.id(), row.version() + 1);
+        var claimed = new ShipmentStore.Record(row.userId(), row.id(), row.key(), row.hash(), row.selection(),
+                booking.status(), null, null, null, row.labelStatus(), null, deadline, row.version() + 1);
+        return submit(claimed, ShippingBookingObserver.Operation.RETRY);
     }
 
     public View get(String user, String id) {
@@ -222,6 +276,7 @@ public class ShipmentApplicationService {
     private View view(ShipmentStore.Record row) {
         String state = switch (row.status()) {
             case CONFIRMED -> "CONFIRMED";
+            case RETRYABLE -> "RETRYABLE";
             case FAILED -> "REJECTED";
             case PENDING -> "PENDING";
             case MANUAL_REVIEW -> "MANUAL_REVIEW";

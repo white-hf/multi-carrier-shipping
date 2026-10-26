@@ -22,10 +22,7 @@ public class ShippingPersistenceConfiguration {
         try {
             ShippingMigrations.migrate(
                     source,
-                    "V001__quotes.sql",
-                    "V002__bookings.sql",
-                    "V003__rate_request_idempotency.sql",
-                    "V004__portable_schema_baseline.sql"
+                    "V001__shipping_schema.sql"
             );
             return source;
         } catch (RuntimeException failure) {

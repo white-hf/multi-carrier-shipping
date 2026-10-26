@@ -1,5 +1,7 @@
 # Iteration 07 — RDBMS-agnostic schema and portable JDBC persistence
 
+> Schema note: historical migration names below describe development work. The current first-release schema is consolidated in `src/main/resources/db/shipping/V001__shipping_schema.sql`; earlier development migration scripts are no longer shipped.
+
 Date: 2026-10-23
 Status: **Accepted for the agreed demo scope.**
 Scope: ST-701–704; RDBMS-agnostic ANSI SQL schema (`V004__portable_schema_baseline.sql`), explicit column projections (eliminating `SELECT *`), dialect-free JDBC repositories, and Web/Domain/Database input boundary alignment.

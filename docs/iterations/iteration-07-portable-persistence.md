@@ -1,5 +1,7 @@
 # Iteration 07 — RDBMS-agnostic schema and portable JDBC persistence
 
+> Schema note: historical migration names below describe development work. The current first-release schema is consolidated in `src/main/resources/db/shipping/V001__shipping_schema.sql`; earlier development migration scripts are no longer shipped.
+
 **Status:** Accepted for the agreed demo scope on 2026-10-23  
 **Date:** 2026-10-23  
 **Requirements:** FR-01–07, F12–13; non-functional portability, explicit column projection and write-safety invariants.

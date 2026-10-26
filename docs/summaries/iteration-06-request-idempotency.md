@@ -1,5 +1,7 @@
 # Iteration 06 — Idempotent requests and retryable rates
 
+> Schema note: historical migration names below describe development work. The current first-release schema is consolidated in `src/main/resources/db/shipping/V001__shipping_schema.sql`; earlier development migration scripts are no longer shipped.
+
 Date: 2026-10-23
 Status: **Accepted for the agreed demo scope.**
 Scope: Idempotent `POST /api/quotes`, read-only `GET /api/quotes/{requestId}`, version-fenced rate retries, and 24-hour browser draft recovery.

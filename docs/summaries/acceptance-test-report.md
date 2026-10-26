@@ -1,5 +1,7 @@
 # Shipping workflow — acceptance report
 
+> Schema note: historical migration names below describe development work. The current first-release schema is consolidated in `src/main/resources/db/shipping/V001__shipping_schema.sql`; earlier development migration scripts are no longer shipped.
+
 Date: 2026-10-23  
 Status: **Accepted for the agreed demo scope — I1, I2 and I3** after independent review follow-up.
 

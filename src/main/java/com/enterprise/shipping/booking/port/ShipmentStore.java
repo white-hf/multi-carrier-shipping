@@ -18,6 +18,8 @@ public interface ShipmentStore {
     Optional<Record> byRequest(String userId,String requestId);
     Optional<Record> byId(String userId,String id);
     boolean claim(Record record,long now);
+    /** Acquires the next submission version only for a known-unsent, unexpired booking. */
+    boolean claimRetry(Record expected,long now,long deadline);
     boolean outcome(Record expected,ShipmentBooking booking,long now);
     void label(String userId,String id,String url,long now);
     java.util.List<Record> overdue(long now,long afterDeadline,String afterId,int limit);

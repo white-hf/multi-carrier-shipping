@@ -6,7 +6,7 @@ package com.enterprise.shipping.shared.domain;
  * Kept free of HTTP/web framework types so domain, application, provider, and
  * transport layers never depend on the web API layer.
  */
-public final class ShippingException extends RuntimeException {
+public class ShippingException extends RuntimeException {
 
     public record Operation(String id, String statusUrl) {}
 

@@ -96,10 +96,7 @@ class ShippingRateRequestTest {
         );
         ShippingMigrations.migrate(
                 source,
-                "V001__quotes.sql",
-                "V002__bookings.sql",
-                "V003__rate_request_idempotency.sql",
-                "V004__portable_schema_baseline.sql"
+                "V001__shipping_schema.sql"
         );
         jdbc = new JdbcTemplate(source);
         store = new JdbcQuoteStore(jdbc, new TransactionTemplate(new DataSourceTransactionManager(source)));
@@ -351,86 +348,26 @@ class ShippingRateRequestTest {
     }
 
     @Test
-    void migrationPreservesLegacyRowsAndMaintainsFourApplicationTablesAndIndexes() {
-        try (var legacySource = SqliteDataSources.open(
-                directory.resolve("legacy-upgrade.db").toString(),
-                "legacy-upgrade",
-                2,
-                3000,
-                "db/shipping/bootstrap.sql")) {
-
-            ShippingMigrations.migrate(legacySource, "V001__quotes.sql", "V002__bookings.sql");
-            var legacyJdbc = new JdbcTemplate(legacySource);
-            legacyJdbc.update("""
-                    INSERT INTO shipment_requests (
-                        request_id, user_id, sender_contact_name, sender_company_name, sender_address_line1, sender_address_line2,
-                        sender_city, sender_province, sender_postal_code, sender_country_code, sender_phone, sender_email, sender_residential,
-                        recipient_contact_name, recipient_company_name, recipient_address_line1, recipient_address_line2, recipient_city,
-                        recipient_province, recipient_postal_code, recipient_country_code, recipient_phone, recipient_email, recipient_residential,
-                        length, width, height, weight, dimension_unit, weight_unit, package_type, shipping_date, state, created_at, updated_at
-                    ) VALUES (
-                        'legacy-req-1', 'user', 'Sender', 'Sender Co', '100 King St', 'Suite 500', 'Toronto', 'ON', 'M5V 3L9', 'CA', '4165550100', 'sender@example.com', '0',
-                        'Recipient', 'Recipient Co', '200 Queen St', 'Apt 2B', 'Halifax', 'NS', 'B3J 3K1', 'CA', '9025550100', 'recipient@example.com', '1',
-                        '12.5', '10.25', '8.125', '5.75', 'IN', 'LB', 'PACKAGE', '2026-10-23', 'READY', 1000, 1000
-                    )
-                    """);
-
-            // Apply V003 and V004 migrations onto the populated V001/V002 database
-            ShippingMigrations.migrate(
-                    legacySource,
-                    "V001__quotes.sql",
-                    "V002__bookings.sql",
-                    "V003__rate_request_idempotency.sql",
-                    "V004__portable_schema_baseline.sql"
-            );
-
-            var upgradedStore = new JdbcQuoteStore(
-                    legacyJdbc,
-                    new TransactionTemplate(new DataSourceTransactionManager(legacySource))
-            );
-            var legacyRow = upgradedStore.request("user", "legacy-req-1").orElseThrow();
-            assertThat(legacyRow.key()).isNull();
-            assertThat(legacyRow.version()).isZero();
-            assertThat(legacyRow.deadline()).isNull();
-            assertThat(legacyRow.state()).isEqualTo(RateRequest.State.READY);
-            assertThat(legacyRow.intent().sender().companyName()).isEqualTo("Sender Co");
-            assertThat(legacyRow.intent().sender().addressLine2()).isEqualTo("Suite 500");
-            assertThat(legacyRow.intent().sender().email()).isEqualTo("sender@example.com");
-            assertThat(legacyRow.intent().sender().residential()).isFalse();
-            assertThat(legacyRow.intent().recipient().residential()).isTrue();
-            assertThat(legacyRow.intent().parcel().length()).isEqualTo(new BigDecimal("12.5"));
-            assertThat(legacyRow.intent().parcel().height()).isEqualTo(new BigDecimal("8.125"));
-            assertThat(upgradedStore.requestState("user", "legacy-req-1")).contains(RateRequest.State.READY);
-
-            // Exactly 4 application tables plus schema_migrations metadata
-            var tables = legacyJdbc.queryForList(
-                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-                    String.class
-            );
-            assertThat(tables).containsExactlyInAnyOrder(
-                    "shipment_requests",
-                    "shipment_quotes",
-                    "shipment_bookings",
-                    "booking_reconciliation_tasks",
-                    "schema_migrations"
-            );
-
-            var keyPlan = String.join(" ", legacyJdbc.query(
-                    "EXPLAIN QUERY PLAN SELECT request_id, state FROM shipment_requests WHERE user_id = ? AND idempotency_key = ?",
-                    (rs, n) -> rs.getString("detail"),
-                    "user",
-                    "key-1"
-            ));
-            assertThat(keyPlan).contains("uk_shipment_request_key");
-
-            var quotesPlan = String.join(" ", legacyJdbc.query(
-                    "EXPLAIN QUERY PLAN SELECT quote_id, total_minor FROM shipment_quotes WHERE user_id = ? AND request_id = ?",
-                    (rs, n) -> rs.getString("detail"),
-                    "user",
-                    "legacy-req-1"
-            ));
-            assertThat(quotesPlan).contains("idx_request_quotes");
-        }
+    void baselineRestartPreservesRowsAndMaintainsFourApplicationTablesAndIndexes() {
+        var original = service().create("user", "baseline-key", intent);
+        ShippingMigrations.migrate(source, "V001__shipping_schema.sql");
+        var row = store.request("user", original.result().requestId()).orElseThrow();
+        assertThat(row.key()).isEqualTo("baseline-key");
+        assertThat(row.state()).isEqualTo(RateRequest.State.READY);
+        var jdbc = new JdbcTemplate(source);
+        assertThat(jdbc.queryForList(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", String.class))
+                .containsExactlyInAnyOrder("shipment_requests", "shipment_quotes", "shipment_bookings",
+                        "booking_reconciliation_tasks", "schema_migrations");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM schema_migrations", Integer.class)).isEqualTo(1);
+        var keyPlan = String.join(" ", jdbc.query(
+                "EXPLAIN QUERY PLAN SELECT request_id, state FROM shipment_requests WHERE user_id=? AND idempotency_key=?",
+                (rs, n) -> rs.getString("detail"), "user", "baseline-key"));
+        assertThat(keyPlan).contains("uk_shipment_request_key");
+        var quotesPlan = String.join(" ", jdbc.query(
+                "EXPLAIN QUERY PLAN SELECT quote_id, total_minor FROM shipment_quotes WHERE user_id=? AND request_id=?",
+                (rs, n) -> rs.getString("detail"), "user", row.requestId()));
+        assertThat(quotesPlan).contains("idx_request_quotes");
     }
 
     @Test

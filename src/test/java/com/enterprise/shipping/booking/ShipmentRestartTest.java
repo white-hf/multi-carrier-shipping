@@ -60,7 +60,7 @@ class ShipmentRestartTest {
 
     void open() {
         source = SqliteDataSources.open(directory.resolve("shipping.db").toString(), "restart-test", 2, 3000, "db/shipping/bootstrap.sql");
-        ShippingMigrations.migrate(source, "V001__quotes.sql", "V002__bookings.sql", "V003__rate_request_idempotency.sql", "V004__portable_schema_baseline.sql");
+        ShippingMigrations.migrate(source, "V001__shipping_schema.sql");
         store = new JdbcShipmentStore(new JdbcTemplate(source));
     }
 

@@ -60,6 +60,20 @@ public final class ShipmentBooking {
         this.status = BookingStatus.PENDING_INQUIRY;
     }
 
+    /** Local admission refused dispatch; only this state may regain submission permission. */
+    public void markNotDispatched() {
+        requireStatus(BookingStatus.PENDING);
+        this.status = BookingStatus.RETRYABLE;
+        this.errorCode = "SHIPMENT_SUBMISSION_NOT_DISPATCHED";
+    }
+
+    /** The caller must still win the durable version-fenced retry claim before dispatch. */
+    public void prepareRetry() {
+        requireStatus(BookingStatus.RETRYABLE);
+        this.status = BookingStatus.PENDING;
+        this.errorCode = null;
+    }
+
     public void requireManualReview() {
         requireManualReview(ManualReviewReason.INQUIRY_EXHAUSTED);
     }
@@ -99,6 +113,7 @@ public final class ShipmentBooking {
         }
         String expectedError = switch (status) {
             case PENDING -> null;
+            case RETRYABLE -> "SHIPMENT_SUBMISSION_NOT_DISPATCHED";
             case FAILED -> RejectionReason.CARRIER_REJECTED.name();
             case PENDING_INQUIRY -> OUTCOME_UNKNOWN;
             case MANUAL_REVIEW -> throw new IllegalStateException("Manual review already checked");

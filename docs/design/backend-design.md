@@ -401,3 +401,13 @@ The status API returns `MANUAL_REVIEW` explicitly; same-key replay returns the e
 ## Module organization update (I8)
 
 The agreed target for provider boundaries, shared outbound infrastructure and domain responsibilities is defined in [Module boundaries](module-boundaries.md). It supersedes package-placement descriptions where they conflict; implemented and verified in I8. See the [I8 summary](../summaries/iteration-08-module-boundaries.md).
+
+## Booking admission failure classification
+
+Local create bulkhead/circuit rejection is distinguished from an ambiguous dispatched request. `OutboundAdmissionRejectedException` carries proof that work did not begin. The booking-owned adapter maps it to `ShipmentNotDispatchedException`; application/domain code does not inspect Resilience4j exceptions or provider implementations.
+
+The aggregate permits `PENDING -> RETRYABLE -> PENDING`. The second transition requires a durable CAS on user, booking ID, prior version, `RETRYABLE` status and quote expiry. That short update clears the error, increments the version and renews the discovery deadline. Only its winner dispatches; losers read the existing state. Both initial and retry execution use the same outcome path. Unknown, manual-review and terminal states do not acquire retry permission.
+
+The first-release schema is consolidated in `V001__shipping_schema.sql`, including `RETRYABLE` and the final types, uniqueness constraints and indexes. A new database creates the four business tables directly, without staging tables or data-copy migrations. Checksummed initialization is repeatable on this baseline. Earlier pre-release database files are unsupported and must be preserved separately; configure a new database path instead. Later released schema changes can use additive versioned migrations. Historical uncertain records are not reclassified or imported automatically.
+
+Only known-unsent outcomes return `503 SHIPMENT_SUBMISSION_NOT_DISPATCHED`; dispatched failures keep the existing `202`/manual-review path. A crash after committing a retry claim remains conservative and is discovered as unresolved. There is no automatic creation retry, and the backend never contacts the real sandbox during regression testing.

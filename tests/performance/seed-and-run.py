@@ -10,7 +10,7 @@ if not (str(run).startswith('/tmp/') or str(run).startswith('/private/tmp/')):ra
 run.mkdir(parents=True,exist_ok=True)
 if (run/'capacity.db').exists():raise SystemExit('Refusing to overwrite an existing database')
 root=Path(__file__).resolve().parents[2]/'src/main/resources/db/shipping'
-result={'sqlite':sqlite3.sqlite_version,'settings':{'journal_mode':'WAL','synchronous':'FULL','foreign_keys':True,'batch_requests':1000,'indexes':'all current V004 indexes maintained during insert'},'stages':[],'run_directory':str(run),'seed_cache_kib':65536,'max_requests':args.max_requests,'started_at':time.strftime('%Y-%m-%dT%H:%M:%S%z')}
+result={'sqlite':sqlite3.sqlite_version,'settings':{'journal_mode':'WAL','synchronous':'FULL','foreign_keys':True,'batch_requests':1000,'indexes':'all current baseline indexes maintained during insert'},'stages':[],'run_directory':str(run),'seed_cache_kib':65536,'max_requests':args.max_requests,'started_at':time.strftime('%Y-%m-%dT%H:%M:%S%z')}
 def uid(n):return str(uuid.UUID(int=((1792800000000+n)<<80)|(7<<76)|(2<<62)|(n&((1<<62)-1))))
 def user(n):return 'guest-'+hashlib.sha256(str(n%1000).encode()).hexdigest()[:24]
 directory=str(run)

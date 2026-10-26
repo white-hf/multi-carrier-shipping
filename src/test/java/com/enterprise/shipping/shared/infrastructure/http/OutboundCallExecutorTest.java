@@ -35,8 +35,8 @@ class OutboundCallExecutorTest {
         bulkhead.acquirePermission();
         try {
             assertThatThrownBy(() -> OutboundCallExecutor.execute(bulkhead, breaker, () -> "unexpected"))
-                    .isInstanceOfSatisfying(ShippingException.class,
-                            e -> assertThat(e.code()).isEqualTo("PROVIDER_CAPACITY_EXCEEDED"));
+                    .isInstanceOfSatisfying(OutboundAdmissionRejectedException.class,
+                            e -> assertThat(e.reason()).isEqualTo(OutboundAdmissionRejectedException.Reason.BULKHEAD_FULL));
             assertThat(breaker.getMetrics().getNumberOfBufferedCalls()).isZero();
         } finally {
             bulkhead.releasePermission();
@@ -68,7 +68,7 @@ class OutboundCallExecutorTest {
                 e -> assertThat(e.code()).isEqualTo("PROVIDER_TIMEOUT"));
         breaker.transitionToOpenState();
         assertThatThrownBy(() -> OutboundCallExecutor.execute(bulkhead, breaker, () -> "unexpected"))
-                .isInstanceOfSatisfying(ShippingException.class,
-                        e -> assertThat(e.code()).isEqualTo("PROVIDER_CAPACITY_EXCEEDED"));
+                .isInstanceOfSatisfying(OutboundAdmissionRejectedException.class,
+                        e -> assertThat(e.reason()).isEqualTo(OutboundAdmissionRejectedException.Reason.CIRCUIT_OPEN));
     }
 }

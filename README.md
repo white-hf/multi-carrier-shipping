@@ -38,7 +38,7 @@ The diagram shows the implemented system structure, with shared infrastructure a
 
 **Decision:** commit a durable booking claim before dispatch, perform external I/O outside database transactions, then persist the result with a version-fenced update. This avoids holding scarce database connections during a slow provider call.
 
-**Implementation:** `UNIQUE(user_id, idempotency_key)` arbitrates same-key submissions; `UNIQUE(user_id, request_id)` also prevents different keys from booking the same request twice. The `ShipmentBooking` aggregate enforces transitions between pending, confirmed, rejected and uncertain outcomes. Replays return the existing state without automatically dispatching another creation request.
+**Implementation:** `UNIQUE(user_id, idempotency_key)` arbitrates same-key submissions; `UNIQUE(user_id, request_id)` also prevents different keys from booking the same request twice. The `ShipmentBooking` aggregate enforces transitions between pending, confirmed, rejected and uncertain outcomes. Confirmed or uncertain replays return the existing state without another creation request. A proven local admission rejection is stored as `RETRYABLE`; an explicit same-key retry must win a version-fenced claim before dispatching the original booking.
 
 **Recovery tradeoff:** the current provider has no documented authoritative reference lookup and its creation idempotency is unverified. Overdue uncertain bookings therefore become `MANUAL_REVIEW`, with a deduplicated paused recovery task, instead of automatic creation retries. Normal successful bookings create no recovery task. This protects against duplicate application submissions while retaining claims; it does not guarantee external success or end-to-end exactly-once processing.
 
@@ -67,7 +67,7 @@ There are no cross-module database joins or foreign keys. This reduces coupling 
 
 | Area | Evidence |
 | --- | --- |
-| Backend correctness | **103 tests passed**, covering API behavior, SQLite persistence, concurrency and architecture boundaries |
+| Backend correctness | **115 tests passed**, covering API behavior, SQLite persistence, concurrency and architecture boundaries |
 | Browser workflow | Separate Playwright Chromium journey passed against local provider stubs |
 | Database scale | At commit `78c729e`: **3M requests, 15M quotes, 1.5M bookings and 150K recovery tasks**, using **9.67 GiB** |
 | Indexed reads | At that scale, warmed P95 was **0.31 ms** for booking-key lookup and **0.60 ms** for quote-ID lookup |
@@ -76,7 +76,7 @@ There are no cross-module database joins or foreign keys. This reduces coupling 
 
 Performance tests used a **16 GiB RAM / 10 logical CPU Mac**. HTTP tests used a separate small database, a **20 ms local provider stub**, **4 rate / 2 create slots**, and **1–16 concurrent clients**, with three ten-second repetitions per scenario and level. Repository timings are not HTTP timings, and these short local tests do not establish production capacity.
 
-**Known issue:** under load, 3,173 bookings ended in `PENDING_INQUIRY`, consistent with local pre-dispatch admission failures being classified as uncertain external outcomes. Those failure categories need to be separated. HTTP `202 Accepted` is pending, not confirmed creation.
+**Load-test follow-up:** the recorded run produced 3,173 `PENDING_INQUIRY` bookings, exposing local admission rejection being treated as an unknown external outcome. The backend now persists proven-unsent attempts as `RETRYABLE` and allows a same-key, version-fenced retry. Targeted regression tests cover this fix; the full load benchmark has not been rerun. HTTP `202 Accepted` remains pending, not confirmed creation.
 
 Current automated tests use local stubs. Earlier live rate, booking and PDF checks are historical observations documented in the acceptance report.
 
@@ -99,6 +99,8 @@ npm run browser:install
 cp .env.example .env
 ./scripts/start-workflow.sh
 ```
+
+New databases are initialized directly from `db/shipping/V001__shipping_schema.sql`, the consolidated first-release schema. When switching from an earlier development build, stop the application and remove its disposable local database file and any matching `-wal` / `-shm` files, then run the same launcher. No path change or historical migration is required. Subsequent starts retain data; files are never reset automatically.
 
 The launcher reads the ignored local `.env` file or exported environment variables. Configure `SHIPPING_PROVIDER_BASE_URL`, `SHIPPING_PROVIDER_USERNAME` and `SHIPPING_PROVIDER_PASSWORD`; keep credentials out of Git. Real provider shipment creation may be chargeable.
 

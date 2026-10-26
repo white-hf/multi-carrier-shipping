@@ -2,6 +2,8 @@
 
 Tested version: `78c729e` · SQLite only · Execution complete
 
+**Subsequent backend fix:** proven local creation admission failures now use `RETRYABLE` with a same-key CAS retry instead of entering inquiry. Targeted regression coverage was added. The measurements and findings below describe the original run; the full load suite has not been rerun after the fix. Historical pending rows are not automatically reclassified.
+
 ## 1. Summary: what did we learn?
 
 **The indexed database reads stayed fast at 15 million quotes. Higher HTTP concurrency reached a throughput plateau, and exposed a booking failure-classification issue.**

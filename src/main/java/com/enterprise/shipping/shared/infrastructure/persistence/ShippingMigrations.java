@@ -38,6 +38,13 @@ public final class ShippingMigrations {
                     continue;
                 }
 
+                // A pre-release history is intentionally unsupported after baseline consolidation.
+                if (name.equals("V001__shipping_schema.sql")
+                        && !jdbc.queryForList("SELECT version FROM schema_migrations", String.class).isEmpty()) {
+                    throw new IllegalStateException("A fresh database is required for the consolidated shipping baseline; "
+                            + "preserve the old file and configure SHIPPING_DATABASE_PATH to a new file");
+                }
+
                 // 3. Atomically execute migration statements and insert execution records
                 new TransactionTemplate(new DataSourceTransactionManager(source)).executeWithoutResult(status -> {
                     jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) connection -> {

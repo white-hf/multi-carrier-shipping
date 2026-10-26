@@ -40,9 +40,11 @@ public class ShippingExceptionHandler {
         body.put("fieldErrors", List.of());
         body.put("operation", e.operation());
 
-        return ResponseEntity.status(status)
-                .location(URI.create(e.operation().statusUrl()))
-                .body(body);
+        var response = ResponseEntity.status(status).location(URI.create(e.operation().statusUrl()));
+        if (e.code().equals("SHIPMENT_SUBMISSION_NOT_DISPATCHED")) {
+            response.header("Retry-After", "2");
+        }
+        return response.body(body);
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

@@ -21,6 +21,30 @@ class ShipmentBookingTest {
         return new CarrierReceipt(REFERENCE, "carrier-1", "tracking-1", "/labels/1");
     }
 
+    @Test void onlyProvenUnsentBookingsCanReenterPending() {
+        var booking = pending();
+        booking.markNotDispatched();
+        assertThat(booking.status()).isEqualTo(BookingStatus.RETRYABLE);
+        assertThat(booking.errorCode()).isEqualTo("SHIPMENT_SUBMISSION_NOT_DISPATCHED");
+        var restored = ShipmentBooking.restore(ID, "fedex", REFERENCE,
+                booking.status(), null, booking.errorCode());
+        restored.prepareRetry();
+        assertThat(restored.status()).isEqualTo(BookingStatus.PENDING);
+        assertThat(restored.errorCode()).isNull();
+        restored.confirm(receipt());
+        assertThat(restored.status()).isEqualTo(BookingStatus.CONFIRMED);
+    }
+
+    @Test void uncertaintyNeverGrantsRetryPermission() {
+        var booking = pending();
+        booking.markOutcomeUnknown();
+        assertThatThrownBy(booking::prepareRetry).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(booking::markNotDispatched).isInstanceOf(IllegalStateException.class);
+        assertThat(booking.status()).isEqualTo(BookingStatus.PENDING_INQUIRY);
+        assertThatThrownBy(() -> ShipmentBooking.restore(ID, "fedex", REFERENCE,
+                BookingStatus.RETRYABLE, null, null)).isInstanceOf(IllegalArgumentException.class);
+    }
+
     @Test void confirmsWithMatchingEvidenceAndPreservesIdentity() {
         var booking = pending();
         booking.confirm(receipt());
