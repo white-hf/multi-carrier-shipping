@@ -27,6 +27,14 @@ import org.springframework.dao.DataAccessException;
  *
  * Enforces transaction-safety rules where long HTTP/provider waits are never executed
  * inside transactional database locks.
+ *
+ * API tradeoff: creation currently saves the input snapshot and retrieves rates in one
+ * client call. A future split could save the request first, then fetch rates by request ID.
+ * This would clarify responsibilities and let clients retry rating independently, but adds
+ * an HTTP round trip, a SAVED/not-started state, an execution-claim update, and frontend
+ * coordination for abandoned or interrupted steps. Rating would still need deadlines,
+ * version fencing and atomic quote persistence. Keep the combined API for the current demo;
+ * revisit the split when independent request saving becomes a product requirement.
  */
 @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NEVER)
 public class QuoteApplicationService implements QuoteSelectionPort {

@@ -11,6 +11,7 @@ import com.enterprise.shipping.shared.infrastructure.persistence.UniqueConstrain
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -187,26 +188,31 @@ public final class JdbcQuoteStore implements QuoteStore {
                     expected.requestId()
             );
 
-            for (var q : quotes) {
-                jdbc.update(
+            if (!quotes.isEmpty()) {
+                // Reuse one prepared statement; batch failure rolls back the entire replacement.
+                jdbc.batchUpdate(
                         "INSERT INTO shipment_quotes ("
                                 + "quote_id, request_id, user_id, provider_id, account_alias, provider_quote_id, "
                                 + "carrier_id, carrier_name, service_id, service_name, total_minor, currency, transit_days, expires_at"
                                 + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        q.quoteId(),
-                        expected.requestId(),
-                        expected.userId(),
-                        q.providerId(),
-                        q.accountAlias(),
-                        q.providerQuoteId(),
-                        q.carrierId(),
-                        q.carrierName(),
-                        q.serviceId(),
-                        q.serviceName(),
-                        q.totalMinor(),
-                        q.currency(),
-                        q.transitDays(),
-                        q.expiresAt()
+                        quotes,
+                        quotes.size(),
+                        (statement, q) -> {
+                            statement.setString(1, q.quoteId());
+                            statement.setString(2, expected.requestId());
+                            statement.setString(3, expected.userId());
+                            statement.setString(4, q.providerId());
+                            statement.setString(5, q.accountAlias());
+                            statement.setString(6, q.providerQuoteId());
+                            statement.setString(7, q.carrierId());
+                            statement.setString(8, q.carrierName());
+                            statement.setString(9, q.serviceId());
+                            statement.setString(10, q.serviceName());
+                            statement.setLong(11, q.totalMinor());
+                            statement.setString(12, q.currency());
+                            statement.setObject(13, q.transitDays(), Types.SMALLINT);
+                            statement.setLong(14, q.expiresAt());
+                        }
                 );
             }
             return true;

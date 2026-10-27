@@ -88,3 +88,12 @@ The earlier 123-case count and eight-stage browser account above describe the I1
 ## Separate load-test evidence
 
 The [load-test report and charts](../performance/load-test-results.md#visual-summary) show dataset growth, concurrency, throughput and latency. They are separate from the functional acceptance results above and describe the historical `78c729e` run. The full load benchmark has not been rerun after the booking admission fix.
+
+## 2026-10-26 — Quote batch persistence regression
+
+The current quote completion path uses JDBC batch insertion within the existing request-state/quote replacement transaction. Added SQLite coverage verifies multiple offers and nullable fields, empty results, and rollback restoring previous offers after a later batch row fails. The combined save-and-rate API remains unchanged; its splitting tradeoff is documented in the service class. The quote lifetime remains unchanged.
+
+- `./mvnw test`: **118 passed**, zero failures/errors/skips.
+- `npm run test:browser`: **one Playwright Chromium E2E journey passed**, zero failures/errors/skips, exercising the existing rate, booking and label paths against local provider stubs.
+- Backend XML reports retained at `/tmp/shipping-20261026-final-backend-reports/` before the browser run replaced the shared test-class report. Logs: `/tmp/shipping-20261026-final-backend.log` and `/tmp/shipping-20261026-final-e2e.log`. Temporary artifacts may be removed by system cleanup.
+- No real sandbox calls, production data changes, frontend implementation changes, MySQL/PostgreSQL checks or full load-test rerun.

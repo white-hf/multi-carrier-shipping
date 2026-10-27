@@ -278,6 +278,60 @@ class ShippingRateRequestTest {
     }
 
     @Test
+    void batchCompletionPersistsMultipleQuotesIncludingUnknownTransitTime() {
+        rates = (input, deadline) -> List.of(
+                new ShippingQuote(null, null, "sandbox", "account", "token-a", "14", "Carrier A", "1", "Ground",
+                        2735, "CAD", 2, clock.millis() + 600000),
+                new ShippingQuote(null, null, "sandbox", "account", "token-b", "22", null, "2", null,
+                        3590, "CAD", null, clock.millis() + 600000));
+        var result = service().create("user", "batch-key", intent);
+        assertThat(result.result().state()).isEqualTo("READY");
+        var saved = store.quotes("user", result.result().requestId());
+        assertThat(saved).hasSize(2);
+        assertThat(saved).extracting(ShippingQuote::providerQuoteId).containsExactlyInAnyOrder("token-a", "token-b");
+        var unknownTransit = saved.stream().filter(q -> q.providerQuoteId().equals("token-b")).findFirst().orElseThrow();
+        assertThat(unknownTransit.transitDays()).isNull();
+        assertThat(unknownTransit.carrierName()).isNull();
+        assertThat(unknownTransit.serviceName()).isNull();
+    }
+
+    @Test
+    void batchFailureRestoresPreviousQuotesAndRequestState() {
+        var initial = service().create("user", "batch-rollback", intent);
+        String id = initial.result().requestId();
+        var previous = store.quotes("user", id);
+        clock.advance(Duration.ofMinutes(11));
+        var row = store.byKey("user", "batch-rollback").orElseThrow();
+        var claimed = row.claimed(clock.millis(), clock.millis() + 11000, true);
+        assertThat(store.claim(row, claimed, clock.millis())).isTrue();
+        var replacement = List.of(
+                new ShippingQuote("replacement-good", id, "sandbox", "account", "new-a", "14", "Carrier", "1", "Ground",
+                        2800, "CAD", 2, clock.millis() + 600000),
+                new ShippingQuote("replacement-invalid", id, "sandbox", "account", "new-b", "14", "Carrier", "1", "Ground",
+                        -1, "CAD", 2, clock.millis() + 600000));
+        assertThatThrownBy(() -> store.complete(claimed, replacement, clock.millis()))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+        // Even the valid first batch row and the earlier DELETE must roll back.
+        assertThat(store.quotes("user", id)).isEqualTo(previous);
+        var current = store.request("user", id).orElseThrow();
+        assertThat(current.state()).isEqualTo(RateRequest.State.RATING);
+        assertThat(current.version()).isEqualTo(claimed.version());
+        assertThat(current.deadline()).isEqualTo(claimed.deadline());
+    }
+
+    @Test
+    void emptyBatchCompletesAsNoRatesAndClearsTheDeadline() {
+        rates = (input, deadline) -> List.of();
+        var result = service().create("user", "empty-batch", intent);
+        assertThat(result.result().state()).isEqualTo("NO_RATES");
+        assertThat(result.result().quotes()).isEmpty();
+        var current = store.request("user", result.result().requestId()).orElseThrow();
+        assertThat(current.state()).isEqualTo(RateRequest.State.NO_RATES);
+        assertThat(current.deadline()).isNull();
+        assertThat(count("shipment_quotes")).isZero();
+    }
+
+    @Test
     void failedQuoteInsertRollsBackOffersAndSuccessfulState() {
         rates = (input, deadline) -> offers("invalid-price", -1);
         assertThatThrownBy(() -> service().create("user", "storage-key", intent))

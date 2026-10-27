@@ -67,7 +67,7 @@ There are no cross-module database joins or foreign keys. This reduces coupling 
 
 | Area | Evidence |
 | --- | --- |
-| Backend correctness | **115 tests passed**, covering API behavior, SQLite persistence, concurrency and architecture boundaries |
+| Backend correctness | **118 tests passed**, covering API behavior, SQLite persistence, concurrency and architecture boundaries |
 | Browser workflow | Separate Playwright Chromium journey passed against local provider stubs |
 | Database scale | At commit `78c729e`: **3M requests, 15M quotes, 1.5M bookings and 150K recovery tasks**, using **9.67 GiB** |
 | Indexed reads | At that scale, warmed P95 was **0.31 ms** for booking-key lookup and **0.60 ms** for quote-ID lookup |
