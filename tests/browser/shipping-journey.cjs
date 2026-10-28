@@ -216,8 +216,109 @@ async function ctl(mode) {
     await page.waitForSelector('#step-2:not([hidden]) .rate-card');
     await page.click('.rate-card:first-child');
     await page.click('#review-btn');
+
+    // 8a. If a RETRYABLE booking's quote expires before retry, clear the unsent submission and return to Step 1 for fresh rates.
+    let expiredRetryCalls = 0;
+    await page.route('**/api/bookings', async route => {
+      expiredRetryCalls++;
+      if (expiredRetryCalls === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          headers: { 'Retry-After': '2' },
+          body: JSON.stringify({
+            code: 'SHIPMENT_SUBMISSION_NOT_DISPATCHED',
+            operation: { id: 'expired-retry-booking', statusUrl: '/api/bookings/expired-retry-booking' }
+          })
+        });
+      } else {
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            code: 'QUOTE_EXPIRED',
+            message: 'QUOTE EXPIRED',
+            operation: { id: 'expired-retry-booking', statusUrl: '/api/bookings/expired-retry-booking' }
+          })
+        });
+      }
+    });
     await page.click('#create-btn');
+    await page.waitForFunction(() => document.getElementById('outcome-title').textContent === 'Shipment not submitted');
+    await page.click('#check-status-btn');
+    await page.waitForSelector('#step-1:not([hidden])');
+    assert.ok((await page.textContent('#notice')).includes('Quote is no longer available'));
+    assert.strictEqual(await page.evaluate(() => sessionStorage.getItem('shipping.activeBooking.v1')), null, 'Expired unsent retry must clear active booking');
+    await page.unroute('**/api/bookings');
+
+    // Re-fetch fresh rates and test normal RETRYABLE reload + stale restore GET race protection
+    await page.click('#get-rates-btn');
+    await page.waitForSelector('#step-2:not([hidden]) .rate-card');
+    await page.click('.rate-card:first-child');
+    await page.click('#review-btn');
+
+    // Exercise the retry UI without sending the first two attempts to the provider.
+    const retryRequests = [];
+    let retryStatusReads = 0;
+    let releaseStaleRestoreGet = null;
+    const staleRestoreGetHeld = new Promise(resolve => { releaseStaleRestoreGet = resolve; });
+    let unblockRestoreGet = null;
+    const restoreGetGate = new Promise(resolve => { unblockRestoreGet = resolve; });
+    await page.route('**/api/bookings/retryable-ui-booking', async route => {
+      retryStatusReads++;
+      releaseStaleRestoreGet();
+      await restoreGetGate;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ bookingId: 'retryable-ui-booking', status: 'RETRYABLE' })
+      });
+    });
+    await page.route('**/api/bookings', async route => {
+      const request = route.request();
+      retryRequests.push({ key: request.headers()['idempotency-key'], body: request.postDataJSON() });
+      if (retryRequests.length <= 2) {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          headers: { 'Retry-After': '2' },
+          body: JSON.stringify({
+            code: 'SHIPMENT_SUBMISSION_NOT_DISPATCHED',
+            operation: { id: 'retryable-ui-booking', statusUrl: '/api/bookings/retryable-ui-booking' }
+          })
+        });
+      } else {
+        await route.continue();
+      }
+    });
+    await page.click('#create-btn');
+    await page.waitForFunction(() => document.getElementById('outcome-title').textContent === 'Shipment not submitted');
+    assert.strictEqual((await ctl('stats')).createCalls, 0);
+    assert.strictEqual(await page.textContent('#check-status-btn'), 'Retry shipment');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await staleRestoreGetHeld;
+    await page.waitForFunction(() => document.getElementById('outcome-title').textContent === 'Shipment not submitted');
+    assert.strictEqual(retryRequests.length, 1, 'Reload must not automatically resubmit');
+    assert.strictEqual(retryStatusReads, 1, 'Restore should check current status once');
+    await page.click('#check-status-btn');
+    await page.waitForFunction(() => !document.getElementById('check-status-btn').disabled);
+    assert.strictEqual(retryRequests.length, 2);
+    assert.strictEqual((await ctl('stats')).createCalls, 0);
+    await page.click('#check-status-btn');
     await page.waitForSelector('#success-view:not([hidden])');
+    // Now let the delayed restore GET return RETRYABLE after the retry POST already confirmed the booking
+    unblockRestoreGet();
+    await page.waitForTimeout(150);
+    assert.strictEqual(await page.isVisible('#success-view'), true, 'Stale restore GET must not overwrite confirmed view');
+    assert.strictEqual(await page.evaluate(() => JSON.parse(sessionStorage.getItem('shipping.activeBooking.v1')).status), 'CONFIRMED');
+    assert.strictEqual(retryRequests.length, 3);
+    assert.ok(retryRequests[0].key);
+    for (const request of retryRequests) {
+      assert.strictEqual(request.key, retryRequests[0].key, 'Retry must retain the original key');
+      assert.deepStrictEqual(request.body, retryRequests[0].body, 'Retry must retain the selected quote');
+    }
+    await page.unroute('**/api/bookings');
+    await page.unroute('**/api/bookings/retryable-ui-booking');
     assert.strictEqual(await page.textContent('#result-id'), '98765');
     assert.strictEqual(await page.textContent('#result-tracking'), 'TRK-98765');
     await page.waitForFunction(() => document.getElementById('label-status-text').textContent.includes('Label not ready; use Retry label later.'));
