@@ -40,6 +40,9 @@ public record RateRequest(
 
     /** The caller supplies the business date; domain rules never read a system clock. */
     public BookingEligibility bookingEligibility(LocalDate today) {
+        if (intent.shippingDate() == null) {
+            return BookingEligibility.DATE_EXPIRED;
+        }
         return new BookingContext(state, intent.shippingDate()).eligibility(today);
     }
 
@@ -51,6 +54,7 @@ public record RateRequest(
         }
 
         public BookingEligibility eligibility(LocalDate today) {
+            Objects.requireNonNull(today, "Business date required");
             if (shippingDate.isBefore(today)) {
                 return BookingEligibility.DATE_EXPIRED;
             }

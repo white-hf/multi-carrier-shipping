@@ -153,6 +153,18 @@ class ShippingRateRequestTest {
                         null);
         assertThat(future.bookingEligibility(today))
                 .isEqualTo(RateRequest.BookingEligibility.ELIGIBLE);
+        var undated =
+                new RateRequest(
+                        "user",
+                        "request",
+                        "key",
+                        "hash",
+                        intent,
+                        RateRequest.State.READY,
+                        0,
+                        null);
+        assertThat(undated.bookingEligibility(today))
+                .isEqualTo(RateRequest.BookingEligibility.DATE_EXPIRED);
     }
 
     @BeforeEach
