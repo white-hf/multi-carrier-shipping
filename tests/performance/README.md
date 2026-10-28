@@ -31,3 +31,5 @@ python3 tests/performance/plot-results.py --data docs/performance/chart-data.jso
 ```
 
 Optionally supply `--raw-dir /tmp/shipping-load-full-20261025` to rebuild the snapshot from the original JSON before plotting. Throughput uses the median repetition; latency uses the worst repetition percentile. HTTP and database-scale measurements are kept separate. These charts describe the pre-fix run at `78c729e`, not current-code performance.
+
+The current HTTP harness uses four shared sandbox outbound slots through `OutboundClientRegistry`. Historical HTTP results used separate four-rate/two-create limits; they are not measurements of this configuration. Booking repository probes now call `complete()`, including conflict resolution reads, so their operation costs also differ from the historical run.

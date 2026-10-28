@@ -9,5 +9,6 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface MonitorCarrierApi {
     String carrier();
+
     String api() default "get_quote";
 }

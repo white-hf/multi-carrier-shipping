@@ -23,11 +23,27 @@ public record ShippingIntent(
         LocalDate shippingDate) {
 
     public record Package(
-            @NotNull @DecimalMin(value = "0", inclusive = false) @DecimalMax("10000") @Digits(integer = 8, fraction = 4) BigDecimal length,
-            @NotNull @DecimalMin(value = "0", inclusive = false) @DecimalMax("10000") @Digits(integer = 8, fraction = 4) BigDecimal width,
-            @NotNull @DecimalMin(value = "0", inclusive = false) @DecimalMax("10000") @Digits(integer = 8, fraction = 4) BigDecimal height,
+            @NotNull
+                    @DecimalMin(value = "0", inclusive = false)
+                    @DecimalMax("10000")
+                    @Digits(integer = 8, fraction = 4)
+                    BigDecimal length,
+            @NotNull
+                    @DecimalMin(value = "0", inclusive = false)
+                    @DecimalMax("10000")
+                    @Digits(integer = 8, fraction = 4)
+                    BigDecimal width,
+            @NotNull
+                    @DecimalMin(value = "0", inclusive = false)
+                    @DecimalMax("10000")
+                    @Digits(integer = 8, fraction = 4)
+                    BigDecimal height,
             DimensionUnit dimensionUnit,
-            @NotNull @DecimalMin(value = "0", inclusive = false) @DecimalMax("10000") @Digits(integer = 8, fraction = 4) BigDecimal weight,
+            @NotNull
+                    @DecimalMin(value = "0", inclusive = false)
+                    @DecimalMax("10000")
+                    @Digits(integer = 8, fraction = 4)
+                    BigDecimal weight,
             WeightUnit weightUnit,
             @NotBlank @Size(max = 32) String packageType) {
 
@@ -38,7 +54,8 @@ public record ShippingIntent(
             weight = normalizeDecimal(weight);
             dimensionUnit = dimensionUnit == null ? DimensionUnit.IN : dimensionUnit;
             weightUnit = weightUnit == null ? WeightUnit.LB : weightUnit;
-            packageType = packageType == null || packageType.isBlank() ? "PACKAGE" : packageType.strip();
+            packageType =
+                    packageType == null || packageType.isBlank() ? "PACKAGE" : packageType.strip();
         }
 
         private static BigDecimal normalizeDecimal(BigDecimal value) {
@@ -48,6 +65,11 @@ public record ShippingIntent(
             BigDecimal stripped = value.stripTrailingZeros();
             return stripped.scale() < 0 ? stripped.setScale(0) : stripped;
         }
+    }
+
+    /** A missing date must be resolved before rating or booking. */
+    public boolean hasCurrentShippingDate(LocalDate today) {
+        return shippingDate != null && !shippingDate.isBefore(today);
     }
 
     public ShippingIntent dated(LocalDate date) {

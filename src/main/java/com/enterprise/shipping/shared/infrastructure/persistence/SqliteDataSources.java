@@ -13,9 +13,16 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 /** File-backed databases allow separate connections and process-restart demonstrations. */
 public final class SqliteDataSources {
     private static final long CONNECTION_ACQUIRE_TIMEOUT_MS = 2000;
-    private SqliteDataSources() {}
 
-    public static HikariDataSource open(String file, String poolName, int poolSize, int busyTimeoutMs, String schema) {
+    private SqliteDataSources() {
+    }
+
+    public static HikariDataSource open(
+            String file,
+            String poolName,
+            int poolSize,
+            int busyTimeoutMs,
+            String schema) {
         Path path = Path.of(file).toAbsolutePath().normalize();
         try {
             Files.createDirectories(path.getParent());

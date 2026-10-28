@@ -18,7 +18,8 @@ import java.util.Objects;
  */
 public final class ShippingIntentFingerprint {
 
-    private ShippingIntentFingerprint() {}
+    private ShippingIntentFingerprint() {
+    }
 
     public static String of(ShippingIntent intent) {
         List<String> fields = new ArrayList<>();
@@ -35,8 +36,7 @@ public final class ShippingIntentFingerprint {
                     address.countryCode(),
                     address.phone(),
                     address.email(),
-                    Boolean.toString(address.residential())
-            );
+                    Boolean.toString(address.residential()));
         }
 
         var parcel = intent.parcel();
@@ -49,8 +49,7 @@ public final class ShippingIntentFingerprint {
                 parcel.dimensionUnit().name(),
                 parcel.weightUnit().name(),
                 parcel.packageType(),
-                intent.shippingDate().toString()
-        );
+                intent.shippingDate().toString());
 
         try {
             var digest = MessageDigest.getInstance("SHA-256");

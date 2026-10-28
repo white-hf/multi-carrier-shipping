@@ -46,13 +46,14 @@ public final class GuestSessionTokenService {
      */
     public IssuedToken issueGuestToken(String clientId, String fingerprint) {
         if (clientId == null || !SAFE_IDENTIFIER.matcher(clientId.strip()).matches()) {
-            throw ShippingException.badRequest("INVALID_CLIENT_ID");
+            throw ShippingException.invalidInput("INVALID_CLIENT_ID");
         }
         if (fingerprint == null || !SAFE_IDENTIFIER.matcher(fingerprint.strip()).matches()) {
-            throw ShippingException.badRequest("INVALID_CLIENT_FINGERPRINT");
+            throw ShippingException.invalidInput("INVALID_CLIENT_FINGERPRINT");
         }
 
-        // Derive a deterministic, non-reversible guest identity so raw client tokens are never exposed
+        // Derive a deterministic, non-reversible guest identity so raw client tokens are never
+        // exposed
         String derivedUserId = deriveGuestUserId(clientId.strip());
         return issueTokenForUser(derivedUserId, fingerprint.strip());
     }
@@ -65,34 +66,38 @@ public final class GuestSessionTokenService {
             throw new IllegalArgumentException("Invalid user ID");
         }
         if (fingerprint == null || !SAFE_IDENTIFIER.matcher(fingerprint.strip()).matches()) {
-            throw ShippingException.badRequest("INVALID_CLIENT_FINGERPRINT");
+            throw ShippingException.invalidInput("INVALID_CLIENT_FINGERPRINT");
         }
 
         long expiresAtMillis = clock.millis() + tokenTtl.toMillis();
         String fpHash = fingerprintHash(fingerprint.strip());
 
         String rawPayload = userId + "|" + expiresAtMillis + "|" + fpHash;
-        String encodedPayload = Base64.getUrlEncoder()
-                .withoutPadding()
-                .encodeToString(rawPayload.getBytes(StandardCharsets.UTF_8));
+        String encodedPayload =
+                Base64.getUrlEncoder()
+                        .withoutPadding()
+                        .encodeToString(rawPayload.getBytes(StandardCharsets.UTF_8));
 
-        String signature = Base64.getUrlEncoder()
-                .withoutPadding()
-                .encodeToString(hmac("token:" + encodedPayload));
+        String signature =
+                Base64.getUrlEncoder()
+                        .withoutPadding()
+                        .encodeToString(hmac("token:" + encodedPayload));
 
         return new IssuedToken(
                 encodedPayload + "." + signature,
                 userId,
                 Instant.ofEpochMilli(expiresAtMillis),
-                tokenTtl.toSeconds()
-        );
+                tokenTtl.toSeconds());
     }
 
     /**
      * Verifies the HMAC signature, 2-hour expiration window, and client fingerprint binding.
      */
     public Optional<String> verifyAndResolveUser(String token, String presentedFingerprint) {
-        if (token == null || token.isBlank() || presentedFingerprint == null || presentedFingerprint.isBlank()) {
+        if (token == null
+                || token.isBlank()
+                || presentedFingerprint == null
+                || presentedFingerprint.isBlank()) {
             return Optional.empty();
         }
         if (!SAFE_IDENTIFIER.matcher(presentedFingerprint.strip()).matches()) {
@@ -122,7 +127,9 @@ public final class GuestSessionTokenService {
         // 2. Decode payload and check expiration and fingerprint binding
         String decodedPayload;
         try {
-            decodedPayload = new String(Base64.getUrlDecoder().decode(encodedPayload), StandardCharsets.UTF_8);
+            decodedPayload =
+                    new String(
+                            Base64.getUrlDecoder().decode(encodedPayload), StandardCharsets.UTF_8);
         } catch (IllegalArgumentException malformed) {
             return Optional.empty();
         }
@@ -146,7 +153,8 @@ public final class GuestSessionTokenService {
 
         // 3. Constant-time comparison of the bound client fingerprint hash
         byte[] expectedFpBytes = parts[2].getBytes(StandardCharsets.UTF_8);
-        byte[] actualFpBytes = fingerprintHash(presentedFingerprint.strip()).getBytes(StandardCharsets.UTF_8);
+        byte[] actualFpBytes =
+                fingerprintHash(presentedFingerprint.strip()).getBytes(StandardCharsets.UTF_8);
         if (!MessageDigest.isEqual(expectedFpBytes, actualFpBytes)) {
             return Optional.empty();
         }
@@ -161,8 +169,9 @@ public final class GuestSessionTokenService {
 
     private String fingerprintHash(String fingerprint) {
         try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(fingerprint.getBytes(StandardCharsets.UTF_8));
+            byte[] digest =
+                    MessageDigest.getInstance("SHA-256")
+                            .digest(fingerprint.getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest).substring(0, 32);
         } catch (GeneralSecurityException impossible) {
             throw new IllegalStateException(impossible);
@@ -179,5 +188,9 @@ public final class GuestSessionTokenService {
         }
     }
 
-    public record IssuedToken(String token, String userId, Instant expiresAt, long ttlSeconds) {}
+    public record IssuedToken(
+            String token,
+            String userId,
+            Instant expiresAt,
+            long ttlSeconds) {}
 }

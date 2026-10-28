@@ -3,20 +3,17 @@ package com.enterprise.shipping.quote.config;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
-/** Validated per-carrier runtime settings for direct multi-carrier fan-out aggregation. */
+/** Fan-out scheduling only; transport, deadline caps and resilience belong to shipping.outbound.
+ * Worker overrides are optional. An unconfigured carrier uses the bounded scheduling default.
+ */
 @ConfigurationProperties(prefix = "shipping.engine")
 @Validated
 public class QuoteProperties {
-
-    @Min(1)
-    @Max(10000)
-    private long globalTimeoutMs = 600;
 
     @Min(1)
     @Max(256)
@@ -24,14 +21,6 @@ public class QuoteProperties {
 
     @Valid
     private Map<String, Carrier> carriers = new LinkedHashMap<>();
-
-    public long getGlobalTimeoutMs() {
-        return globalTimeoutMs;
-    }
-
-    public void setGlobalTimeoutMs(long value) {
-        globalTimeoutMs = value;
-    }
 
     public int getMaxConcurrentRequests() {
         return maxConcurrentRequests;
@@ -52,38 +41,16 @@ public class QuoteProperties {
     public Carrier carrier(String id) {
         Carrier value = carriers.get(id);
         if (value == null) {
-            throw new IllegalArgumentException("Missing carrier configuration: " + id);
+            return new Carrier(); // Safe scheduling default; outbound policy is resolved
+                                  // separately.
         }
         return value;
     }
 
     public static class Carrier {
-        @NotBlank
-        private String baseUrl;
-
-        @Min(1)
-        @Max(10000)
-        private long timeoutMs = 300;
-
         @Min(1)
         @Max(64)
         private int concurrency = 8;
-
-        public String getBaseUrl() {
-            return baseUrl;
-        }
-
-        public void setBaseUrl(String value) {
-            baseUrl = value;
-        }
-
-        public long getTimeoutMs() {
-            return timeoutMs;
-        }
-
-        public void setTimeoutMs(long value) {
-            timeoutMs = value;
-        }
 
         public int getConcurrency() {
             return concurrency;

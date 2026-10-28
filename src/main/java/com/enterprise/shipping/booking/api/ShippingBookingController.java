@@ -2,6 +2,8 @@ package com.enterprise.shipping.booking.api;
 
 import com.enterprise.shipping.booking.application.ShipmentApplicationService;
 import com.enterprise.shipping.shared.identity.UserContext;
+import com.enterprise.shipping.shared.api.ShippingLinks;
+import com.enterprise.shipping.shared.domain.ShippingException.Resource;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -35,24 +37,26 @@ public class ShippingBookingController {
         this.users = users;
     }
 
-    public record Create(
-            @NotBlank
-            @Size(max = 100)
-            String quoteId
-    ) {}
+    public record Create(@NotBlank @Size(max = 100) String quoteId) {}
 
     /**
      * Enforces an Idempotency-Key header on booking creation requests.
      */
     @PostMapping
     public ResponseEntity<?> create(
-            @RequestHeader("Idempotency-Key") String key,
-            @RequestBody @Valid Create body) {
+            @RequestHeader("Idempotency-Key") String key, @RequestBody @Valid Create body) {
 
         var result = service.create(users.userId(), key, body.quoteId());
-        HttpStatus status = HttpStatus.valueOf(result.statusCode());
-        var response = ResponseEntity.status(status)
-                .location(URI.create(result.booking().statusUrl()));
+        HttpStatus status =
+                switch (result.disposition()) {
+                    case CREATED -> HttpStatus.CREATED;
+                    case EXISTING -> HttpStatus.OK;
+                    case PENDING -> HttpStatus.ACCEPTED;
+                    case REJECTED -> HttpStatus.UNPROCESSABLE_ENTITY;
+                    case CONFLICT -> HttpStatus.CONFLICT;
+                };
+        var booking = BookingResponse.from(result.booking());
+        var response = ResponseEntity.status(status).location(URI.create(booking.statusUrl()));
 
         // Suggest polling client to retry after 2 seconds on asynchronous accepted outcomes (202)
         if (status == HttpStatus.ACCEPTED) {
@@ -61,15 +65,39 @@ public class ShippingBookingController {
 
         // Return conflicts/errors wrapped in error structures if supplied
         if (result.code() != null) {
-            return response.body(Map.of("code", result.code(), "booking", result.booking()));
+            return response.body(Map.of("code", result.code(), "booking", booking));
         }
 
-        return response.body(result.booking());
+        return response.body(booking);
     }
 
     @GetMapping("/{id}")
-    public ShipmentApplicationService.View get(@PathVariable String id) {
-        return service.get(users.userId(), id);
+    public BookingResponse get(@PathVariable String id) {
+        return BookingResponse.from(service.get(users.userId(), id));
+    }
+
+    public record BookingResponse(
+            String bookingId,
+            String status,
+            String shipmentId,
+            String trackingNumber,
+            String labelStatus,
+            String labelUrl,
+            String errorCode,
+            String statusUrl) {
+        static BookingResponse from(ShipmentApplicationService.View booking) {
+            return new BookingResponse(
+                    booking.bookingId(),
+                    booking.status(),
+                    booking.shipmentId(),
+                    booking.trackingNumber(),
+                    booking.labelStatus(),
+                    "CONFIRMED".equals(booking.status())
+                            ? ShippingLinks.label(booking.bookingId())
+                            : null,
+                    booking.errorCode(),
+                    ShippingLinks.status(Resource.BOOKING, booking.bookingId()));
+        }
     }
 
     /**

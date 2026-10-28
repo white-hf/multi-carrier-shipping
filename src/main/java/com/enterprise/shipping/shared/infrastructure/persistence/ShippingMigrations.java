@@ -15,11 +15,13 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 public final class ShippingMigrations {
 
-    private ShippingMigrations() {}
+    private ShippingMigrations() {
+    }
 
     public static void migrate(DataSource source, String... names) {
         JdbcTemplate jdbc = new JdbcTemplate(source);
-        jdbc.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, checksum TEXT NOT NULL)");
+        jdbc.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, checksum TEXT NOT NULL)");
 
         for (String name : names) {
             var resource = new ClassPathResource("db/shipping/" + name);
@@ -29,30 +31,46 @@ public final class ShippingMigrations {
                 byte[] digest = MessageDigest.getInstance("SHA-256").digest(rawContent);
                 String checksum = HexFormat.of().formatHex(digest);
 
-                // 2. Reject initialization if the checksum of a previously applied script has been modified
-                var previous = jdbc.queryForList("SELECT checksum FROM schema_migrations WHERE version = ?", String.class, name);
+                // 2. Reject initialization if the checksum of a previously applied script has been
+                // modified
+                var previous =
+                        jdbc.queryForList(
+                                "SELECT checksum FROM schema_migrations WHERE version = ?",
+                                String.class,
+                                name);
                 if (!previous.isEmpty()) {
                     if (!checksum.equals(previous.get(0))) {
-                        throw new IllegalStateException("Applied migration checksum changed: " + name);
+                        throw new IllegalStateException(
+                                "Applied migration checksum changed: " + name);
                     }
                     continue;
                 }
 
                 // A pre-release history is intentionally unsupported after baseline consolidation.
                 if (name.equals("V001__shipping_schema.sql")
-                        && !jdbc.queryForList("SELECT version FROM schema_migrations", String.class).isEmpty()) {
-                    throw new IllegalStateException("A fresh database is required for the consolidated shipping baseline; "
-                            + "preserve the old file and configure SHIPPING_DATABASE_PATH to a new file");
+                        && !jdbc.queryForList("SELECT version FROM schema_migrations", String.class)
+                                .isEmpty()) {
+                    throw new IllegalStateException(
+                            "A fresh database is required for the consolidated shipping baseline; "
+                                    + "preserve the old file and configure SHIPPING_DATABASE_PATH to a new file");
                 }
 
                 // 3. Atomically execute migration statements and insert execution records
-                new TransactionTemplate(new DataSourceTransactionManager(source)).executeWithoutResult(status -> {
-                    jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<Void>) connection -> {
-                        ScriptUtils.executeSqlScript(connection, resource);
-                        return null;
-                    });
-                    jdbc.update("INSERT INTO schema_migrations VALUES (?, ?)", name, checksum);
-                });
+                new TransactionTemplate(new DataSourceTransactionManager(source))
+                        .executeWithoutResult(
+                                status -> {
+                                    jdbc.execute(
+                                            (org.springframework.jdbc.core.ConnectionCallback<Void>)
+                                                    connection -> {
+                                                        ScriptUtils.executeSqlScript(
+                                                                connection, resource);
+                                                        return null;
+                                                    });
+                                    jdbc.update(
+                                            "INSERT INTO schema_migrations VALUES (?, ?)",
+                                            name,
+                                            checksum);
+                                });
             } catch (java.io.IOException | java.security.NoSuchAlgorithmException error) {
                 throw new IllegalStateException("Migration unavailable: " + name, error);
             }

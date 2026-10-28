@@ -13,7 +13,8 @@ import org.springframework.dao.DuplicateKeyException;
  */
 public final class UniqueConstraints {
 
-    private UniqueConstraints() {}
+    private UniqueConstraints() {
+    }
 
     public static boolean isUniqueViolation(DataAccessException error) {
         if (error instanceof DuplicateKeyException) {
@@ -22,9 +23,10 @@ public final class UniqueConstraints {
         for (Throwable cause = error; cause != null; cause = cause.getCause()) {
             if (cause instanceof SQLException sqlEx) {
                 String msg = sqlEx.getMessage();
-                if (msg != null && (msg.contains("SQLITE_CONSTRAINT_UNIQUE")
-                        || msg.contains("SQLITE_CONSTRAINT_PRIMARYKEY")
-                        || msg.contains("UNIQUE constraint failed"))) {
+                if (msg != null
+                        && (msg.contains("SQLITE_CONSTRAINT_UNIQUE")
+                                || msg.contains("SQLITE_CONSTRAINT_PRIMARYKEY")
+                                || msg.contains("UNIQUE constraint failed"))) {
                     return true;
                 }
                 String state = sqlEx.getSQLState();

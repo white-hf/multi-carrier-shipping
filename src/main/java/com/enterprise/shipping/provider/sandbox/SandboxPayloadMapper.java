@@ -7,10 +7,15 @@ import java.util.*;
 /** Provider payload and unit mapping; no business-module dependencies. */
 final class SandboxPayloadMapper {
     private final int collectionSeconds;
-    SandboxPayloadMapper(int collectionSeconds) { this.collectionSeconds = collectionSeconds; }
-    private static ShippingException protocol() {
-        return ShippingException.badGateway("PROVIDER_INVALID_RESPONSE");
+
+    SandboxPayloadMapper(int collectionSeconds) {
+        this.collectionSeconds = collectionSeconds;
     }
+
+    private static ShippingException protocol() {
+        return ShippingException.dependencyFailure("PROVIDER_INVALID_RESPONSE");
+    }
+
     static String shipmentId(JsonNode body) {
         JsonNode id = body.get("shipId");
         if (id != null && id.isIntegralNumber() && id.canConvertToLong() && id.longValue() > 0) {
@@ -38,20 +43,42 @@ final class SandboxPayloadMapper {
         var parcel = intent.parcel();
         boolean imperial = parcel.dimensionUnit() == DimensionUnit.IN;
 
-        // Mixed input units are converted to one consistent provider system without floating-point errors
-        var weight = imperial
-                ? (parcel.weightUnit() == WeightUnit.LB ? parcel.weight() : parcel.weight().divide(new java.math.BigDecimal("0.45359237"), 12, java.math.RoundingMode.HALF_UP).stripTrailingZeros())
-                : (parcel.weightUnit() == WeightUnit.KG ? parcel.weight() : parcel.weight().multiply(new java.math.BigDecimal("0.45359237")).stripTrailingZeros());
+        // Mixed input units are converted to one consistent provider system without floating-point
+        // errors
+        var weight =
+                imperial
+                        ? (parcel.weightUnit() == WeightUnit.LB
+                                ? parcel.weight()
+                                : parcel.weight()
+                                        .divide(
+                                                new java.math.BigDecimal("0.45359237"),
+                                                12,
+                                                java.math.RoundingMode.HALF_UP)
+                                        .stripTrailingZeros())
+                        : (parcel.weightUnit() == WeightUnit.KG
+                                ? parcel.weight()
+                                : parcel.weight()
+                                        .multiply(new java.math.BigDecimal("0.45359237"))
+                                        .stripTrailingZeros());
 
         return Map.of(
                 "from", address(intent.sender()),
                 "to", address(intent.recipient()),
                 "packageType", parcel.packageType(),
-                "lineItems", List.of(Map.of("length", parcel.length(), "width", parcel.width(), "height", parcel.height(), "weight", weight)),
+                "lineItems",
+                        List.of(
+                                Map.of(
+                                        "length",
+                                        parcel.length(),
+                                        "width",
+                                        parcel.width(),
+                                        "height",
+                                        parcel.height(),
+                                        "weight",
+                                        weight)),
                 "unitOfMeasurement", imperial ? "IMPERIAL" : "METRIC",
                 "shipDate", intent.shippingDate().toString(),
-                "waitTimeLimit", collectionSeconds
-        );
+                "waitTimeLimit", collectionSeconds);
     }
 
     private Map<String, Object> address(ShippingAddress a) {
@@ -76,5 +103,4 @@ final class SandboxPayloadMapper {
         }
         return result;
     }
-
 }

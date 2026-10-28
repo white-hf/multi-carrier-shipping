@@ -14,10 +14,16 @@ import org.springframework.validation.annotation.Validated;
 public class MarketConfiguration {
     @Validated
     @ConfigurationProperties("shipping.market")
-    public record Properties(@NotBlank String defaultCountry, @NotBlank String comparisonCurrency,
+    public record Properties(
+            @NotBlank String defaultCountry,
+            @NotBlank String comparisonCurrency,
             @NotEmpty Map<@NotBlank String, @NotBlank String> postalCodePatterns) {}
 
-    @Bean ShippingMarketPolicy shippingMarketPolicy(Properties properties) {
-        return new ShippingMarketPolicy(properties.defaultCountry(), properties.comparisonCurrency(), properties.postalCodePatterns());
+    @Bean
+    ShippingMarketPolicy shippingMarketPolicy(Properties properties) {
+        return new ShippingMarketPolicy(
+                properties.defaultCountry(),
+                properties.comparisonCurrency(),
+                properties.postalCodePatterns());
     }
 }

@@ -106,6 +106,10 @@ Optional address fields: `companyName`, `addressLine2`, `email`, `residential` (
 
 Initial completion returns `201` (with `Location: /api/quotes/{requestId}`); same-key replay or retry after `RATE_FAILED` / `QUOTES_EXPIRED` returns `200`; an already in-flight execution returns `202` with `Retry-After: 2`. `GET /api/quotes/{requestId}` reads current status (`RATING`, `READY`, `NO_RATES`, `RATE_FAILED`, `QUOTES_EXPIRED`) without calling the provider. Reusing a key with different shipment details returns `409 IDEMPOTENCY_CONFLICT`. When a rate operation already exists, error payloads include `"operation": {"id":"internal-request-id","statusUrl":"/api/quotes/internal-request-id"}`.
 
+Shipping-date eligibility uses the configured business timezone. Once the stored shipping date is in the past, matching-key POST replays and booking selection return `409 REQUEST_DATE_EXPIRED`. GET remains available for history: a previously READY request is projected as `QUOTES_EXPIRED` with no usable quotes, even if its provider quote TTL has not elapsed. A new shipping date requires a new request/key.
+
+If a superseded rate execution fails after a newer version has claimed the request, its response reflects the latest persisted request instead of reporting the superseded provider error: `200` for a completed state or `202` while the newer execution is still running.
+
 ```json
 {
   "requestId":"internal-request-id",

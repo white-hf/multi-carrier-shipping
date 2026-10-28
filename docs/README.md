@@ -16,7 +16,8 @@ docs/
 ├── design/
 │   ├── module-boundaries.md
 │   ├── backend-design.md
-│   └── application-api.md
+│   ├── application-api.md
+│   └── code-style-guide.md
 ├── iterations/
 │   └── delivery-plan.md
 ├── summaries/       Implementation evidence and iteration retrospectives

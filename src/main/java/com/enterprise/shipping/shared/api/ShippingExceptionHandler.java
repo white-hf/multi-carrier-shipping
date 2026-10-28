@@ -28,7 +28,7 @@ public class ShippingExceptionHandler {
 
     @ExceptionHandler(ShippingException.class)
     public ResponseEntity<?> shipping(ShippingException e) {
-        HttpStatus status = HttpStatus.valueOf(e.statusCode());
+        HttpStatus status = status(e.category());
         if (e.operation() == null) {
             return error(status, e.code(), List.of());
         }
@@ -38,23 +38,43 @@ public class ShippingExceptionHandler {
         body.put("message", e.code().replace('_', ' '));
         body.put("requestId", Objects.toString(MDC.get("requestId"), "unassigned"));
         body.put("fieldErrors", List.of());
-        body.put("operation", e.operation());
+        String statusUrl = ShippingLinks.status(e.operation().resource(), e.operation().id());
+        body.put("operation", Map.of("id", e.operation().id(), "statusUrl", statusUrl));
 
-        var response = ResponseEntity.status(status).location(URI.create(e.operation().statusUrl()));
+        var response = ResponseEntity.status(status).location(URI.create(statusUrl));
         if (e.code().equals("SHIPMENT_SUBMISSION_NOT_DISPATCHED")) {
             response.header("Retry-After", "2");
         }
         return response.body(body);
     }
 
+    /** The only mapping from failure semantics to HTTP status categories. */
+    static HttpStatus status(ShippingException.Category reason) {
+        return switch (reason) {
+            case INVALID_INPUT -> HttpStatus.BAD_REQUEST;
+            case RESOURCE_MISSING -> HttpStatus.NOT_FOUND;
+            case STATE_CONFLICT -> HttpStatus.CONFLICT;
+            case DEPENDENCY_FAILURE -> HttpStatus.BAD_GATEWAY;
+            case DEPENDENCY_TIMEOUT -> HttpStatus.GATEWAY_TIMEOUT;
+            case LOCAL_CAPACITY, STORAGE_FAILURE, INTEGRATION_UNAVAILABLE ->
+                    HttpStatus.SERVICE_UNAVAILABLE;
+            case OUTCOME_UNKNOWN -> HttpStatus.ACCEPTED;
+        };
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<?> validation(MethodArgumentNotValidException e) {
-        var fields = e.getBindingResult().getFieldErrors().stream()
-                .map(f -> Map.of(
-                        "field", f.getField(),
-                        "message", Objects.toString(f.getDefaultMessage(), "Invalid value")
-                ))
-                .toList();
+        var fields =
+                e.getBindingResult().getFieldErrors().stream()
+                        .map(
+                                f ->
+                                        Map.of(
+                                                "field", f.getField(),
+                                                "message",
+                                                        Objects.toString(
+                                                                f.getDefaultMessage(),
+                                                                "Invalid value")))
+                        .toList();
         return error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", fields);
     }
 
@@ -74,11 +94,16 @@ public class ShippingExceptionHandler {
     }
 
     private ResponseEntity<?> error(HttpStatus status, String code, List<?> fields) {
-        return ResponseEntity.status(status).body(Map.of(
-                "code", code,
-                "message", code.replace('_', ' '),
-                "requestId", Objects.toString(MDC.get("requestId"), "unassigned"),
-                "fieldErrors", fields
-        ));
+        return ResponseEntity.status(status)
+                .body(
+                        Map.of(
+                                "code",
+                                code,
+                                "message",
+                                code.replace('_', ' '),
+                                "requestId",
+                                Objects.toString(MDC.get("requestId"), "unassigned"),
+                                "fieldErrors",
+                                fields));
     }
 }

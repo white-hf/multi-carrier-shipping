@@ -8,6 +8,7 @@ import com.enterprise.shipping.quote.infrastructure.provider.SandboxRateAdapter;
 import com.enterprise.shipping.reconciliation.infrastructure.provider.SandboxRecoveryAdapter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundClientRegistry;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -18,8 +19,12 @@ import org.springframework.context.annotation.Configuration;
 public class SandboxConfiguration {
 
     @Bean
-    SandboxProviderClient sandboxProviderClient(ProviderProperties p, ObjectMapper mapper, Clock clock) {
-        return new SandboxProviderClient(p, mapper, clock);
+    SandboxProviderClient sandboxProviderClient(
+            ProviderProperties p,
+            ObjectMapper mapper,
+            Clock clock,
+            OutboundClientRegistry outbound) {
+        return new SandboxProviderClient(p, mapper, clock, outbound);
     }
 
     @Bean

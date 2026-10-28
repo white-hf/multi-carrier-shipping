@@ -26,9 +26,9 @@ The diagram shows the implemented system structure, with shared infrastructure a
 
 **Failure scenario:** a slow rate provider occupies servlet threads and outbound connections, delaying other operations. For illustration, **4 requests/s × 16 seconds average duration = 64 in-flight requests**, matching the configured Tomcat worker limit before allowing headroom. This is an unguarded capacity estimate, not a measured threshold.
 
-**Decision:** bound outbound work and isolate operations. The provider adapter owns separate connection pools, zero-wait bulkheads and circuit breakers for rates, creation and labels. Default concurrency limits are **8 / 4 / 8** respectively. Rate overload fails admission with `503 PROVIDER_CAPACITY_EXCEEDED`; CPU, servlet threads and database connections remain shared.
+**Decision:** bound outbound work through one shared component. Each provider/carrier owns its connection pool and zero-wait total admission limit; the sandbox default is **8 concurrent calls across rates, creation and labels**. Logical groups have independent circuits and optional smaller concurrency limits. The core workflow currently uses one default group: rate traffic can consume booking capacity, and a shared circuit can stop all three operations. Add a group for independently failing or lower-priority work; groups still share connections. Local overload returns `503 PROVIDER_CAPACITY_EXCEEDED`.
 
-**Implementation:** monotonic deadlines cover response headers and body consumption. A persisted request snapshot and content fingerprint coalesce same-key in-flight submissions; version-fenced updates allow failed or expired rate requests to retry without a second concurrent execution. The current provider breaker uses a 10-call window, a five-call minimum, a 50% failure threshold and a ten-second open interval.
+**Implementation:** monotonic deadlines cover response headers and body consumption. A persisted request snapshot and content fingerprint coalesce same-key in-flight submissions; version-fenced updates allow failed or expired rate requests to retry without a second concurrent execution. The default breaker uses a 10-call window, a five-call minimum, a 50% failure threshold and a ten-second open interval. `shipping.outbound` inherits defaults through optional templates and dependency overrides; operation-level latency/outcome metrics guide tuning. Adaptive admission is reserved as an extension.
 
 `SingleProviderRateEngine` implements the default aggregator path. The optional `HighFanOutAggregationEngine` supports direct carrier adapters with asynchronous aggregation, per-carrier bounded executors (`SynchronousQueue`), a global deadline and cooperative cancellation. It is retained as an alternative implementation behind `RateComparisonPort`.
 
@@ -67,7 +67,7 @@ There are no cross-module database joins or foreign keys. This reduces coupling 
 
 | Area | Evidence |
 | --- | --- |
-| Backend correctness | **118 tests passed**, covering API behavior, SQLite persistence, concurrency and architecture boundaries |
+| Backend correctness | **167 tests passed**, covering API behavior, SQLite persistence, concurrency and architecture boundaries |
 | Browser workflow | Separate Playwright Chromium journey passed against local provider stubs |
 | Database scale | At commit `78c729e`: **3M requests, 15M quotes, 1.5M bookings and 150K recovery tasks**, using **9.67 GiB** |
 | Indexed reads | At that scale, warmed P95 was **0.31 ms** for booking-key lookup and **0.60 ms** for quote-ID lookup |
@@ -114,6 +114,6 @@ Open **http://127.0.0.1:8080/**. Application logs default to `logs/shipping.log`
 | Booking orchestration | [ShipmentApplicationService](src/main/java/com/enterprise/shipping/booking/application/ShipmentApplicationService.java) |
 | Booking invariants | [ShipmentBooking](src/main/java/com/enterprise/shipping/booking/domain/ShipmentBooking.java) |
 | Recovery discovery | [PendingShipmentDiscovery](src/main/java/com/enterprise/shipping/reconciliation/application/PendingShipmentDiscovery.java) |
-| Shared outbound resilience | [OutboundOperation](src/main/java/com/enterprise/shipping/shared/infrastructure/http/OutboundOperation.java) |
+| Shared outbound resilience | [OutboundClientRegistry](src/main/java/com/enterprise/shipping/shared/infrastructure/http/OutboundClientRegistry.java) |
 
 [Module architecture](docs/design/module-boundaries.md) · [Backend design](docs/design/backend-design.md) · [Frontend API contract](docs/design/application-api.md) · [Delivery plan](docs/iterations/delivery-plan.md)

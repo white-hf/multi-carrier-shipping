@@ -5,7 +5,11 @@ import com.enterprise.shipping.booking.contract.ManualReviewReason;
 
 /** Local provider/account capabilities only. This port cannot create or retry a shipment. */
 public interface RecoveryCapabilityPort {
-    enum Support { SUPPORTED, UNSUPPORTED, UNVERIFIED }
+    enum Support {
+        SUPPORTED,
+        UNSUPPORTED,
+        UNVERIFIED
+    }
 
     Capabilities capabilities(String providerId, String accountAlias);
 

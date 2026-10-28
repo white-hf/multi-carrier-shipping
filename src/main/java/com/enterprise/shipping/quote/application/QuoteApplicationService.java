@@ -28,6 +28,11 @@ import org.springframework.dao.DataAccessException;
  * Enforces transaction-safety rules where long HTTP/provider waits are never executed
  * inside transactional database locks.
  *
+ * Store completion returns the committed request/offers without normal-path rereads.
+ * A response describes that snapshot, not all later concurrent changes. Conflicts alone
+ * reload state. Provider, persistence and projection failures have separate boundaries;
+ * rendering a committed result must never mark that execution as failed.
+ *
  * API tradeoff: creation currently saves the input snapshot and retrieves rates in one
  * client call. A future split could save the request first, then fetch rates by request ID.
  * This would clarify responsibilities and let clients retry rating independently, but adds
@@ -36,12 +41,14 @@ import org.springframework.dao.DataAccessException;
  * version fencing and atomic quote persistence. Keep the combined API for the current demo;
  * revisit the split when independent request saving becomes a product requirement.
  */
-@org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NEVER)
+@org.springframework.transaction.annotation.Transactional(
+        propagation = org.springframework.transaction.annotation.Propagation.NEVER)
 public class QuoteApplicationService implements QuoteSelectionPort {
 
     private static final Logger log = LoggerFactory.getLogger(QuoteApplicationService.class);
     private static final Duration PERSISTENCE_GRACE = Duration.ofSeconds(10);
     private static final Duration REUSE_MARGIN = Duration.ofSeconds(15);
+    private static final Duration BOOKING_MARGIN = Duration.ofSeconds(5);
 
     private final ShippingQuoteObserver observer;
     private final QuoteStore store;
@@ -72,217 +79,290 @@ public class QuoteApplicationService implements QuoteSelectionPort {
     public Submission create(String userId, String key, ShippingIntent input) {
         // 1. Validate the idempotency key format
         if (key == null || !key.matches("[A-Za-z0-9._:-]{1,64}")) {
-            throw ShippingException.badRequest("INVALID_IDEMPOTENCY_KEY");
+            throw ShippingException.invalidInput("INVALID_IDEMPOTENCY_KEY");
         }
 
         // 2. Insert a new request claim when the key has not been seen for this user
         var existing = store.byKey(userId, key);
         if (existing.isEmpty()) {
-            var intent = dated(input, LocalDate.now(clock.withZone(zone)));
-            requireCurrentDate(intent, null);
+            long now = clock.millis();
+            var intent = dated(input, businessDate(now));
+            requireCurrentDate(intent, null, now);
 
-            var claim = new RateRequest(
-                    userId,
-                    TimeOrderedIds.next(),
-                    key,
-                    ShippingIntentFingerprint.of(intent),
-                    intent,
-                    RateRequest.State.RATING,
-                    0,
-                    deadline()
-            );
-            if (store.insert(claim, clock.millis())) {
-                return execute(claim, 201);
+            var claim =
+                    new RateRequest(
+                            userId,
+                            TimeOrderedIds.next(),
+                            key,
+                            ShippingIntentFingerprint.of(intent),
+                            intent,
+                            RateRequest.State.RATING,
+                            0,
+                            deadline(now));
+            if (store.insert(claim, now)) {
+                return execute(claim, Disposition.CREATED);
             }
             existing = store.byKey(userId, key);
         }
 
         // 3. Verify that the replayed request has identical canonical content
-        var row = existing.orElseThrow(
-                () -> ShippingException.serviceUnavailable("STORE_UNAVAILABLE")
-        );
-        // Reuse the stored default date so crossing midnight does not turn a matching replay into a conflict
-        String candidateFingerprint = ShippingIntentFingerprint.of(dated(input, row.intent().shippingDate()));
+        var row = existing.orElseThrow(() -> ShippingException.storageUnavailable());
+        // Reuse the stored default date so crossing midnight does not turn a matching replay into a
+        // conflict
+        String candidateFingerprint =
+                ShippingIntentFingerprint.of(dated(input, row.intent().shippingDate()));
         if (!row.matches(candidateFingerprint)) {
-            throw failure(row, "IDEMPOTENCY_CONFLICT", 409);
+            throw ShippingException.conflict("IDEMPOTENCY_CONFLICT")
+                    .forQuoteRequest(row.requestId());
         }
 
-        // 4. Re-claim and re-execute only when prior execution failed, timed out, or all quotes expired
-        var offers = store.quotes(userId, row.requestId());
-        boolean expired = expired(row, offers);
-        if (row.mayClaim(clock.millis(), expired)) {
-            requireCurrentDate(row.intent(), row);
-            var claimed = row.claimed(clock.millis(), deadline(), expired);
-            if (store.claim(row, claimed, clock.millis())) {
-                return execute(claimed, 200);
+        // 4. Only READY requests need stored offers to decide whether rating should refresh.
+        long now = clock.millis();
+        requireCurrentDate(row.intent(), row, now);
+        var offers = offersFor(row);
+        boolean expired = expired(row, offers, now);
+        if (row.mayClaim(now, expired)) {
+            var claimed = row.claimed(now, deadline(now), expired);
+            if (store.claim(row, claimed, now)) {
+                return execute(claimed, Disposition.EXISTING);
             }
+            // A lost claim invalidates this snapshot; never execute from the stale version.
+            row = current(userId, row.requestId());
+            offers = offersFor(row);
         }
-
-        return submission(current(userId, row.requestId()), 200);
+        return submission(row, offers, Disposition.EXISTING, clock.millis());
     }
 
-    /**
-     * Reads current rate-request state and quotes without invoking the external provider.
-     */
+    /** Reads current state without invoking the external provider. */
     public Result get(String userId, String id) {
-        return view(current(userId, id));
+        var row = current(userId, id);
+        return view(row, offersFor(row), clock.millis());
     }
 
     private RateRequest current(String userId, String id) {
-        var row = store.request(userId, id)
-                .orElseThrow(ShippingException::missing);
-
-        if (row.overdue(clock.millis())) {
-            if (store.fail(row, clock.millis())) {
-                log.warn("Rate execution expired requestId={} version={}", id, row.version());
-            }
-            row = store.request(userId, id)
-                    .orElseThrow(ShippingException::missing);
-        }
-        return row;
+        return current(store.request(userId, id).orElseThrow(ShippingException::missing));
     }
 
-    private Submission execute(RateRequest claim, int completedStatusCode) {
+    private RateRequest current(RateRequest row) {
+        long now = clock.millis();
+        if (!row.overdue(now)) {
+            return row;
+        }
+        if (store.fail(row, now)) {
+            log.warn(
+                    "Rate execution expired requestId={} version={}",
+                    row.requestId(),
+                    row.version());
+            return row.failed();
+        }
+        return store.request(row.userId(), row.requestId()).orElseThrow(ShippingException::missing);
+    }
+
+    private Submission execute(RateRequest claim, Disposition completedDisposition) {
         long start = System.nanoTime();
         ShippingQuoteObserver.Outcome outcome = ShippingQuoteObserver.Outcome.FAILED;
-        log.info("Rate execution claimed requestId={} version={}", claim.requestId(), claim.version());
-
+        log.info(
+                "Rate execution claimed requestId={} version={}",
+                claim.requestId(),
+                claim.version());
         try {
-            long deadlineNanos = System.nanoTime() + timeout.toNanos();
-            var offers = engine.compare(claim.intent(), deadlineNanos).stream()
-                    .map(q -> new ShippingQuote(
-                            TimeOrderedIds.next(),
-                            claim.requestId(),
-                            q.providerId(),
-                            q.accountAlias(),
-                            q.providerQuoteId(),
-                            q.carrierId(),
-                            q.carrierName(),
-                            q.serviceId(),
-                            q.serviceName(),
-                            q.totalMinor(),
-                            q.currency(),
-                            q.transitDays(),
-                            q.expiresAt()
-                    ))
-                    .sorted(Comparator.comparingLong(ShippingQuote::totalMinor).thenComparing(ShippingQuote::quoteId))
-                    .toList();
-
-            boolean applied = store.complete(claim, offers, clock.millis());
-            if (!applied) {
-                log.info("Stale rate completion discarded requestId={} version={}", claim.requestId(), claim.version());
-            }
-
-            var result = submission(
-                    current(claim.userId(), claim.requestId()),
-                    applied ? completedStatusCode : 200
-            );
-            if ("READY".equals(result.result().state())) {
-                outcome = ShippingQuoteObserver.Outcome.READY;
-            } else if ("NO_RATES".equals(result.result().state())) {
-                outcome = ShippingQuoteObserver.Outcome.NO_RATES;
-            }
-            return result;
-        } catch (RuntimeException error) {
-            String code = error instanceof ShippingException shipping
-                    ? shipping.code()
-                    : error instanceof DataAccessException ? "STORE_UNAVAILABLE" : "PROVIDER_UNAVAILABLE";
-            int statusCode = error instanceof ShippingException shipping
-                    ? shipping.statusCode()
-                    : error instanceof DataAccessException ? 503 : 502;
-
-            log.warn(
-                    "Rate execution failed requestId={} version={} code={} type={}",
-                    claim.requestId(),
-                    claim.version(),
-                    code,
-                    error.getClass().getSimpleName()
-            );
-
-            try {
-                store.fail(claim, clock.millis());
-            } catch (RuntimeException storageFailure) {
-                log.warn(
-                        "Rate failure state not saved requestId={} version={} type={}",
+            // 1. Fetch and atomically persist, preserving newer executions on a lost fence.
+            var completion = fetchAndComplete(claim);
+            var row = completion.request();
+            var offers = completion.quotes();
+            if (!completion.applied()) {
+                log.info(
+                        "Stale rate completion discarded requestId={} version={}",
                         claim.requestId(),
-                        claim.version(),
-                        storageFailure.getClass().getSimpleName()
-                );
+                        claim.version());
+                if (row.overdue(clock.millis())) {
+                    row = current(row);
+                    offers = offersFor(row);
+                }
             }
-            throw failure(claim, code, statusCode);
+
+            // 2. Projection is pure and outside failure-state updates. Use one observation time.
+            long now = clock.millis();
+            var result =
+                    submission(
+                            row,
+                            offers,
+                            completion.applied() ? completedDisposition : Disposition.EXISTING,
+                            now);
+            outcome = observedOutcome(row, offers, now);
+            return result;
         } finally {
             observer.record(outcome, System.nanoTime() - start);
         }
     }
 
-    private Submission submission(RateRequest row, int completedStatusCode) {
-        var result = view(row);
-        int statusCode = row.state() == RateRequest.State.RATING
-                ? 202
-                : completedStatusCode;
-        return new Submission(result, statusCode);
+    private QuoteStore.Completion fetchAndComplete(RateRequest claim) {
+        List<ShippingQuote> returned;
+        try {
+            returned = engine.compare(claim.intent(), System.nanoTime() + timeout.toNanos());
+        } catch (RuntimeException error) {
+            var failure =
+                    error instanceof ShippingException shipping
+                            ? shipping
+                            : ShippingException.dependencyFailure("PROVIDER_UNAVAILABLE");
+            return failedExecution(claim, failure, error);
+        }
+
+        // Local identity/projection errors are not reclassified as provider outages.
+        var offers =
+                returned.stream()
+                        .map(q -> identified(q, claim.requestId()))
+                        .sorted(
+                                Comparator.comparingLong(ShippingQuote::totalMinor)
+                                        .thenComparing(ShippingQuote::quoteId))
+                        .toList();
+        try {
+            return store.complete(claim, offers, clock.millis());
+        } catch (DataAccessException error) {
+            return failedExecution(claim, ShippingException.storageUnavailable(), error);
+        }
     }
 
-    private Result view(RateRequest row) {
-        var offers = row.state() == RateRequest.State.READY
-                ? store.quotes(row.userId(), row.requestId())
-                : List.<ShippingQuote>of();
-        boolean expired = expired(row, offers);
-        String state = expired ? "QUOTES_EXPIRED" : row.state().name();
-        var usable = offers.stream()
-                .filter(q -> q.expiresAt() > clock.millis() + REUSE_MARGIN.toMillis())
-                .toList();
+    private QuoteStore.Completion failedExecution(
+            RateRequest claim, ShippingException failure, RuntimeException cause) {
+        log.warn(
+                "Rate execution failed requestId={} version={} code={} type={}",
+                claim.requestId(),
+                claim.version(),
+                failure.code(),
+                cause.getClass().getSimpleName());
+        try {
+            if (!store.fail(claim, clock.millis())) {
+                var latest = current(claim.userId(), claim.requestId());
+                if (latest.version() > claim.version()
+                        || latest.state() == RateRequest.State.READY
+                        || latest.state() == RateRequest.State.NO_RATES) {
+                    return new QuoteStore.Completion(latest, offersFor(latest), false);
+                }
+            }
+        } catch (RuntimeException storageFailure) {
+            log.warn(
+                    "Rate failure state not saved requestId={} version={} type={}",
+                    claim.requestId(),
+                    claim.version(),
+                    storageFailure.getClass().getSimpleName());
+        }
+        throw failure.forQuoteRequest(claim.requestId());
+    }
 
+    private ShippingQuote identified(ShippingQuote q, String requestId) {
+        return new ShippingQuote(
+                TimeOrderedIds.next(),
+                requestId,
+                q.providerId(),
+                q.accountAlias(),
+                q.providerQuoteId(),
+                q.carrierId(),
+                q.carrierName(),
+                q.serviceId(),
+                q.serviceName(),
+                q.totalMinor(),
+                q.currency(),
+                q.transitDays(),
+                q.expiresAt());
+    }
+
+    private List<ShippingQuote> offersFor(RateRequest row) {
+        return row.state() == RateRequest.State.READY
+                ? store.quotes(row.userId(), row.requestId())
+                : List.of();
+    }
+
+    private Submission submission(
+            RateRequest row,
+            List<ShippingQuote> offers,
+            Disposition completedDisposition,
+            long now) {
+        return new Submission(
+                view(row, offers, now),
+                row.state() == RateRequest.State.RATING
+                        ? Disposition.PENDING
+                        : completedDisposition);
+    }
+
+    private Result view(RateRequest row, List<ShippingQuote> offers, long now) {
+        boolean expired = expired(row, offers, now);
+        var usable =
+                expired
+                        ? List.<ShippingQuote>of()
+                        : offers.stream()
+                                .filter(q -> q.reusable(now, REUSE_MARGIN.toMillis()))
+                                .toList();
         return new Result(
                 row.requestId(),
-                state,
+                expired ? "QUOTES_EXPIRED" : row.state().name(),
                 row.intent().shippingDate(),
-                usable.stream().map(QuoteView::from).toList()
-        );
+                usable.stream().map(QuoteView::from).toList());
     }
 
-    private boolean expired(RateRequest row, List<ShippingQuote> offers) {
+    private ShippingQuoteObserver.Outcome observedOutcome(
+            RateRequest row, List<ShippingQuote> offers, long now) {
+        return switch (row.state()) {
+            case READY ->
+                    expired(row, offers, now)
+                            ? ShippingQuoteObserver.Outcome.FAILED
+                            : ShippingQuoteObserver.Outcome.READY;
+            case NO_RATES -> ShippingQuoteObserver.Outcome.NO_RATES;
+            default -> ShippingQuoteObserver.Outcome.FAILED;
+        };
+    }
+
+    private boolean expired(RateRequest row, List<ShippingQuote> offers, long now) {
         return row.state() == RateRequest.State.READY
-                && offers.stream().noneMatch(q -> q.expiresAt() > clock.millis() + REUSE_MARGIN.toMillis());
+                && (!row.intent().hasCurrentShippingDate(businessDate(now))
+                        || offers.stream()
+                                .noneMatch(q -> q.reusable(now, REUSE_MARGIN.toMillis())));
     }
 
-    private long deadline() {
-        return clock.millis() + timeout.toMillis() + PERSISTENCE_GRACE.toMillis();
+    private long deadline(long now) {
+        return now + timeout.toMillis() + PERSISTENCE_GRACE.toMillis();
+    }
+
+    private LocalDate businessDate(long now) {
+        return Instant.ofEpochMilli(now).atZone(zone).toLocalDate();
     }
 
     private ShippingIntent dated(ShippingIntent input, LocalDate fallback) {
         return input.dated(input.shippingDate() == null ? fallback : input.shippingDate());
     }
 
-    private void requireCurrentDate(ShippingIntent intent, RateRequest existing) {
-        if (intent.shippingDate().isBefore(LocalDate.now(clock.withZone(zone)))) {
+    private void requireCurrentDate(ShippingIntent intent, RateRequest existing, long now) {
+        if (!intent.hasCurrentShippingDate(businessDate(now))) {
             if (existing != null) {
-                throw failure(existing, "REQUEST_DATE_EXPIRED", 409);
+                throw ShippingException.conflict("REQUEST_DATE_EXPIRED")
+                        .forQuoteRequest(existing.requestId());
             }
-            throw ShippingException.badRequest("INVALID_SHIPPING_DATE");
+            throw ShippingException.invalidInput("INVALID_SHIPPING_DATE");
         }
-    }
-
-    private ShippingException failure(RateRequest row, String code, int statusCode) {
-        return new ShippingException(code, statusCode)
-                .forOperation(row.requestId(), "/api/quotes/" + row.requestId());
     }
 
     @Override
     public Selection resolve(String userId, String quoteId) {
-        var q = store.find(userId, quoteId)
-                .orElseThrow(ShippingException::missing);
+        var q = store.find(userId, quoteId).orElseThrow(ShippingException::missing);
 
-        // Fetch only the request state column rather than deserializing the full address/parcel snapshot
-        var requestState = store.requestState(userId, q.requestId())
-                .orElseThrow(ShippingException::missing);
-        if (requestState != RateRequest.State.READY) {
-            throw ShippingException.conflict("QUOTE_NOT_BOOKABLE");
+        var request = store.request(userId, q.requestId()).orElseThrow(ShippingException::missing);
+        switch (request.bookingEligibility(businessDate(clock.millis()))) {
+            case DATE_EXPIRED ->
+                    throw ShippingException.conflict("REQUEST_DATE_EXPIRED")
+                            .forQuoteRequest(request.requestId());
+            case NOT_READY -> throw ShippingException.conflict("QUOTE_NOT_BOOKABLE");
+            case ELIGIBLE -> {
+                /* Offer-specific rules are checked by the quote below. */
+
+            }
         }
-        switch (q.eligibility(clock.millis(), 5000)) {
+        switch (q.eligibility(clock.millis(), BOOKING_MARGIN.toMillis())) {
             case NOT_BOOKABLE -> throw ShippingException.conflict("QUOTE_NOT_BOOKABLE");
             case EXPIRED -> throw ShippingException.conflict("QUOTE_EXPIRED");
-            case BOOKABLE -> { /* The exact accepted quote is returned below. */ }
+            case BOOKABLE -> {
+                /* The exact accepted quote is returned below. */
+
+            }
         }
 
         return new Selection(
@@ -295,13 +375,22 @@ public class QuoteApplicationService implements QuoteSelectionPort {
                 q.serviceId(),
                 q.totalMinor(),
                 q.currency(),
-                q.expiresAt()
-        );
+                q.expiresAt());
     }
 
-    public record Submission(Result result, int statusCode) {}
+    public enum Disposition {
+        CREATED,
+        EXISTING,
+        PENDING
+    }
 
-    public record Result(String requestId, String state, LocalDate shippingDate, List<QuoteView> quotes) {}
+    public record Submission(Result result, Disposition disposition) {}
+
+    public record Result(
+            String requestId,
+            String state,
+            LocalDate shippingDate,
+            List<QuoteView> quotes) {}
 
     public record QuoteView(
             String quoteId,
@@ -322,8 +411,7 @@ public class QuoteApplicationService implements QuoteSelectionPort {
                     q.serviceName(),
                     q.total(),
                     q.transitDays(),
-                    Instant.ofEpochMilli(q.expiresAt())
-            );
+                    Instant.ofEpochMilli(q.expiresAt()));
         }
     }
 }

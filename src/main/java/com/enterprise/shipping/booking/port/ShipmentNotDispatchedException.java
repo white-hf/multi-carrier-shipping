@@ -4,7 +4,11 @@ package com.enterprise.shipping.booking.port;
  * Timeouts, malformed receipts and generic connection failures do not provide that proof.
  */
 public final class ShipmentNotDispatchedException extends RuntimeException {
-    public enum Reason { BULKHEAD_FULL, CIRCUIT_OPEN }
+    public enum Reason {
+        BULKHEAD_FULL,
+        CIRCUIT_OPEN
+    }
+
     private final Reason reason;
 
     public ShipmentNotDispatchedException(Reason reason) {
@@ -12,5 +16,7 @@ public final class ShipmentNotDispatchedException extends RuntimeException {
         this.reason = reason;
     }
 
-    public Reason reason() { return reason; }
+    public Reason reason() {
+        return reason;
+    }
 }

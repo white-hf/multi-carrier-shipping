@@ -3,6 +3,8 @@ package com.enterprise.shipping.quote.api;
 import com.enterprise.shipping.quote.application.QuoteApplicationService;
 import com.enterprise.shipping.shared.domain.ShippingIntent;
 import com.enterprise.shipping.shared.identity.UserContext;
+import com.enterprise.shipping.shared.api.ShippingLinks;
+import com.enterprise.shipping.shared.domain.ShippingException.Resource;
 import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.http.HttpStatus;
@@ -37,9 +39,19 @@ public class ShippingQuoteController {
             @RequestBody @Valid ShippingIntent intent) {
 
         var result = service.create(users.userId(), key, intent);
-        HttpStatus status = HttpStatus.valueOf(result.statusCode());
-        var response = ResponseEntity.status(status)
-                .location(URI.create("/api/quotes/" + result.result().requestId()));
+        HttpStatus status =
+                switch (result.disposition()) {
+                    case CREATED -> HttpStatus.CREATED;
+                    case EXISTING -> HttpStatus.OK;
+                    case PENDING -> HttpStatus.ACCEPTED;
+                };
+        var response =
+                ResponseEntity.status(status)
+                        .location(
+                                URI.create(
+                                        ShippingLinks.status(
+                                                Resource.QUOTE_REQUEST,
+                                                result.result().requestId())));
 
         if (status == HttpStatus.ACCEPTED) {
             response.header("Retry-After", "2");

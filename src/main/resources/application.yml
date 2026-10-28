@@ -33,6 +33,25 @@ shipping:
     token-secret: ${SHIPPING_AUTH_TOKEN_SECRET:local-shipping-hmac-secret-key-2026}
     token-ttl: ${SHIPPING_AUTH_TOKEN_TTL:2h}
     require-token: ${SHIPPING_AUTH_REQUIRE_TOKEN:true}
+  # Defaults -> named template -> dependency overrides. States/resources are never shared across dependencies.
+  outbound:
+    defaults:
+      timeout: 30s
+      connect-timeout: 3s
+      concurrency: 8
+      window-size: 10
+      minimum-calls: 5
+      failure-rate: 50
+      open-duration: 10s
+    templates:
+      slow-provider:
+        timeout: 90s
+    dependencies:
+      sandbox:
+        template: slow-provider
+        timeout: ${SHIPPING_PROVIDER_RATE_TIMEOUT:90s}
+        concurrency: 8
+  # Operation timeouts below are caller budgets, capped by the outbound dependency policy.
   provider:
     base-url: ${SHIPPING_PROVIDER_BASE_URL:}
     username: ${SHIPPING_PROVIDER_USERNAME:}
@@ -43,29 +62,9 @@ shipping:
     rate-timeout: ${SHIPPING_PROVIDER_RATE_TIMEOUT:90s}
     create-timeout: ${SHIPPING_PROVIDER_CREATE_TIMEOUT:60s}
     read-timeout: ${SHIPPING_PROVIDER_READ_TIMEOUT:30s}
-    read-concurrency: 8
-    create-concurrency: 4
     collection-seconds: 30
     quote-lifetime-seconds: 780
     label-hosts: ${SHIPPING_PROVIDER_LABEL_HOSTS:}
-
-resilience4j:
-  circuitbreaker:
-    configs:
-      default:
-        failureRateThreshold: 50
-        slowCallRateThreshold: 50
-        slowCallDurationThreshold: 200ms
-        slidingWindowSize: 20
-        minimumNumberOfCalls: 10
-        waitDurationInOpenState: 10s
-        ignoreExceptions:
-          - java.lang.InterruptedException
-  bulkhead:
-    configs:
-      default:
-        maxConcurrentCalls: 8
-        maxWaitDuration: 0
 
 management:
   server:
@@ -80,6 +79,7 @@ management:
       percentiles-histogram:
         shipping.aggregation.latency: true
         shipping.carrier.transport.latency: true
+        shipping.outbound.duration: true
 
 logging:
   file:

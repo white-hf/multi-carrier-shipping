@@ -21,7 +21,6 @@ public final class MicrometerShippingBookingObserver implements ShippingBookingO
                 "operation",
                 operation.name(),
                 "outcome",
-                outcome.name()
-        );
+                outcome.name());
     }
 }

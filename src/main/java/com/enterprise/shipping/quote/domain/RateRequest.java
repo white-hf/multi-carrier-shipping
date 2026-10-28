@@ -1,6 +1,7 @@
 package com.enterprise.shipping.quote.domain;
 
 import com.enterprise.shipping.shared.domain.ShippingIntent;
+import java.time.LocalDate;
 import java.util.Objects;
 
 /**
@@ -19,11 +20,55 @@ public record RateRequest(
         long version,
         Long deadline) {
 
-    public enum State { RATING, READY, NO_RATES, RATE_FAILED }
+    public enum State {
+        RATING,
+        READY,
+        NO_RATES,
+        RATE_FAILED
+    }
 
     public RateRequest {
         Objects.requireNonNull(intent, "Shipment snapshot required");
         Objects.requireNonNull(state, "Rate state required");
+    }
+
+    public enum BookingEligibility {
+        ELIGIBLE,
+        DATE_EXPIRED,
+        NOT_READY
+    }
+
+    /** The caller supplies the business date; domain rules never read a system clock. */
+    public BookingEligibility bookingEligibility(LocalDate today) {
+        if (!intent.hasCurrentShippingDate(today)) {
+            return BookingEligibility.DATE_EXPIRED;
+        }
+        return state == State.READY ? BookingEligibility.ELIGIBLE : BookingEligibility.NOT_READY;
+    }
+
+    /** Only the current, unexpired execution may publish a result; SQL repeats this fence atomically. */
+    public RateRequest completed(boolean hasOffers, long now) {
+        requireRating();
+        if (deadline == null || overdue(now)) {
+            throw new IllegalStateException("Rate execution is no longer open for completion");
+        }
+        return finished(hasOffers ? State.READY : State.NO_RATES);
+    }
+
+    public RateRequest failed() {
+        requireRating();
+        return finished(State.RATE_FAILED);
+    }
+
+    private RateRequest finished(State target) {
+        // The execution version changes on claim, not on completion or failure.
+        return new RateRequest(userId, requestId, key, fingerprint, intent, target, version, null);
+    }
+
+    private void requireRating() {
+        if (state != State.RATING) {
+            throw new IllegalStateException("No active rate execution");
+        }
     }
 
     public boolean matches(String candidate) {
@@ -52,7 +97,6 @@ public record RateRequest(
                 intent,
                 State.RATING,
                 version + 1,
-                newDeadline
-        );
+                newDeadline);
     }
 }

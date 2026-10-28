@@ -17,13 +17,11 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 public class ShippingPersistenceConfiguration {
 
     @Bean(destroyMethod = "close")
-    HikariDataSource shippingDataSource(@Value("${shipping.database-path:./data/shipping.db}") String path) {
+    HikariDataSource shippingDataSource(
+            @Value("${shipping.database-path:./data/shipping.db}") String path) {
         var source = SqliteDataSources.open(path, "shipping", 4, 3000, "db/shipping/bootstrap.sql");
         try {
-            ShippingMigrations.migrate(
-                    source,
-                    "V001__shipping_schema.sql"
-            );
+            ShippingMigrations.migrate(source, "V001__shipping_schema.sql");
             return source;
         } catch (RuntimeException failure) {
             source.close();

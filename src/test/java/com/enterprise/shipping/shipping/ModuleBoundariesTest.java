@@ -13,21 +13,23 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class ModuleBoundariesTest {
     private static final Path ROOT = Path.of("src/main/java/com/enterprise/shipping");
-    private static final List<String> BUSINESS_MODULES = List.of("auth", "quote", "booking", "reconciliation");
+    private static final List<String> BUSINESS_MODULES =
+            List.of("auth", "quote", "booking", "reconciliation");
 
     @Test
     void sharedDoesNotImportBusinessModulesOrConcreteProviders() throws Exception {
         try (var files = Files.walk(ROOT.resolve("shared"))) {
             for (var file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
                 String source = Files.readString(file);
-                assertThat(source).as(file.toString()).doesNotContain(
-                        "com.enterprise.shipping.auth.",
-                        "com.enterprise.shipping.quote.",
-                        "com.enterprise.shipping.booking.",
-                        "com.enterprise.shipping.reconciliation.",
-                        "com.enterprise.shipping.provider.",
-                        "com.enterprise.shipping.runtime."
-                );
+                assertThat(source)
+                        .as(file.toString())
+                        .doesNotContain(
+                                "com.enterprise.shipping.auth.",
+                                "com.enterprise.shipping.quote.",
+                                "com.enterprise.shipping.booking.",
+                                "com.enterprise.shipping.reconciliation.",
+                                "com.enterprise.shipping.provider.",
+                                "com.enterprise.shipping.runtime.");
             }
         }
     }
@@ -37,13 +39,14 @@ class ModuleBoundariesTest {
         try (var files = Files.walk(ROOT.resolve("provider"))) {
             for (var file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
                 String source = Files.readString(file);
-                assertThat(source).as(file.toString()).doesNotContain(
-                        "com.enterprise.shipping.auth.",
-                        "com.enterprise.shipping.quote.",
-                        "com.enterprise.shipping.booking.",
-                        "com.enterprise.shipping.reconciliation.",
-                        "com.enterprise.shipping.shared.api."
-                );
+                assertThat(source)
+                        .as(file.toString())
+                        .doesNotContain(
+                                "com.enterprise.shipping.auth.",
+                                "com.enterprise.shipping.quote.",
+                                "com.enterprise.shipping.booking.",
+                                "com.enterprise.shipping.reconciliation.",
+                                "com.enterprise.shipping.shared.api.");
             }
         }
     }
@@ -53,15 +56,18 @@ class ModuleBoundariesTest {
         for (String module : BUSINESS_MODULES) {
             for (String layer : List.of("domain", "application", "port", "contract")) {
                 var directory = ROOT.resolve(module).resolve(layer);
-                if (!Files.exists(directory)) continue;
+                if (!Files.exists(directory)) {
+                    continue;
+                }
                 try (var files = Files.walk(directory)) {
                     for (var file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
                         String source = Files.readString(file);
-                        assertThat(source).as(file.toString()).doesNotContain(
-                                "com.enterprise.shipping.provider.",
-                                "com.enterprise.shipping.shared.api.",
-                                "org.springframework.http.HttpStatus"
-                        );
+                        assertThat(source)
+                                .as(file.toString())
+                                .doesNotContain(
+                                        "com.enterprise.shipping.provider.",
+                                        "com.enterprise.shipping.shared.api.",
+                                        "org.springframework.http.HttpStatus");
                     }
                 }
             }
@@ -75,10 +81,25 @@ class ModuleBoundariesTest {
                 for (var file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
                     String source = Files.readString(file);
                     for (String peer : BUSINESS_MODULES) {
-                        if (peer.equals(consumer)) continue;
-                        for (String internalLayer : List.of("api", "application", "domain", "port", "infrastructure", "config")) {
-                            assertThat(source).as("%s must not import %s.%s", file, peer, internalLayer)
-                                    .doesNotContain("com.enterprise.shipping." + peer + "." + internalLayer + ".");
+                        if (peer.equals(consumer)) {
+                            continue;
+                        }
+                        for (String internalLayer :
+                                List.of(
+                                        "api",
+                                        "application",
+                                        "domain",
+                                        "port",
+                                        "infrastructure",
+                                        "config")) {
+                            assertThat(source)
+                                    .as("%s must not import %s.%s", file, peer, internalLayer)
+                                    .doesNotContain(
+                                            "com.enterprise.shipping."
+                                                    + peer
+                                                    + "."
+                                                    + internalLayer
+                                                    + ".");
                         }
                     }
                 }
@@ -91,17 +112,53 @@ class ModuleBoundariesTest {
         for (String module : BUSINESS_MODULES) {
             for (String innerLayer : List.of("domain", "port", "contract")) {
                 var directory = ROOT.resolve(module).resolve(innerLayer);
-                if (!Files.exists(directory)) continue;
+                if (!Files.exists(directory)) {
+                    continue;
+                }
                 try (var files = Files.walk(directory)) {
                     for (var file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
                         String source = Files.readString(file);
-                        assertThat(source).as(file.toString()).doesNotContain(
-                                "com.enterprise.shipping." + module + ".application.",
-                                "com.enterprise.shipping." + module + ".api.",
-                                "com.enterprise.shipping." + module + ".infrastructure.",
-                                "com.enterprise.shipping." + module + ".config."
-                        );
+                        assertThat(source)
+                                .as(file.toString())
+                                .doesNotContain(
+                                        "com.enterprise.shipping." + module + ".application.",
+                                        "com.enterprise.shipping." + module + ".api.",
+                                        "com.enterprise.shipping." + module + ".infrastructure.",
+                                        "com.enterprise.shipping." + module + ".config.");
                     }
+                }
+            }
+        }
+    }
+
+    @Test
+    void businessResultsAndSharedErrorsNeverContainHttpResponseMetadata() throws Exception {
+        var directories = new java.util.ArrayList<Path>();
+        directories.add(ROOT.resolve("shared/domain"));
+        for (String module : BUSINESS_MODULES) {
+            for (String layer : List.of("domain", "application", "port", "contract")) {
+                directories.add(ROOT.resolve(module).resolve(layer));
+            }
+        }
+        for (var directory : directories) {
+            if (!Files.exists(directory)) {
+                continue;
+            }
+            try (var files = Files.walk(directory)) {
+                for (var file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
+                    assertThat(Files.readString(file))
+                            .as(file.toString())
+                            .doesNotContain(
+                                    "org.springframework.http.",
+                                    "jakarta.servlet.",
+                                    "WebClient",
+                                    "ResponseEntity",
+                                    "statusCode",
+                                    "statusUrl",
+                                    "HTTP_",
+                                    "/api/",
+                                    "ShippingException.badRequest(",
+                                    "ShippingException.badGateway(");
                 }
             }
         }

@@ -29,9 +29,15 @@ public class ShippingAuthController {
 
     public static final String TOKEN_COOKIE = "shipping_guest_token";
     public static final String FINGERPRINT_COOKIE = "shipping_guest_fp";
-    private static final List<String> DEFAULT_SUPPORTED_CARRIERS = List.of(
-            "Canada Post", "Purolator", "FedEx", "UPS", "DHL Express", "Canpar", "Loomis Express"
-    );
+    private static final List<String> DEFAULT_SUPPORTED_CARRIERS =
+            List.of(
+                    "Canada Post",
+                    "Purolator",
+                    "FedEx",
+                    "UPS",
+                    "DHL Express",
+                    "Canpar",
+                    "Loomis Express");
 
     private final GuestSessionTokenService tokens;
     private final List<String> supportedCarriers;
@@ -43,60 +49,64 @@ public class ShippingAuthController {
     @Autowired
     public ShippingAuthController(
             GuestSessionTokenService tokens,
-            @Value("${shipping.market.supported-carriers:Canada Post,Purolator,FedEx,UPS,DHL Express,Canpar,Loomis Express}")
-            List<String> supportedCarriers) {
+            @Value(
+                            "${shipping.market.supported-carriers:Canada Post,Purolator,FedEx,UPS,DHL Express,Canpar,Loomis Express}")
+                    List<String> supportedCarriers) {
         this.tokens = tokens;
-        List<String> cleaned = supportedCarriers == null
-                ? List.of()
-                : supportedCarriers.stream().map(String::strip).filter(s -> !s.isEmpty()).toList();
+        List<String> cleaned =
+                supportedCarriers == null
+                        ? List.of()
+                        : supportedCarriers.stream()
+                                .map(String::strip)
+                                .filter(s -> !s.isEmpty())
+                                .toList();
         this.supportedCarriers = cleaned.isEmpty() ? DEFAULT_SUPPORTED_CARRIERS : cleaned;
     }
 
     public record GuestAuthRequest(
-            @NotBlank
-            @Pattern(regexp = "[A-Za-z0-9._:-]{8,128}")
-            String clientId,
-
-            @Pattern(regexp = "[A-Za-z0-9._:-]{8,128}")
-            String fingerprint
-    ) {}
+            @NotBlank @Pattern(regexp = "[A-Za-z0-9._:-]{8,128}") String clientId,
+            @Pattern(regexp = "[A-Za-z0-9._:-]{8,128}") String fingerprint) {}
 
     @PostMapping("/guest")
     public ResponseEntity<?> issueGuestToken(
             @RequestBody @Valid GuestAuthRequest body,
-            @RequestHeader(value = "X-Client-Fingerprint", required = false) String headerFingerprint) {
+            @RequestHeader(value = "X-Client-Fingerprint", required = false)
+                    String headerFingerprint) {
 
-        String fingerprint = body.fingerprint() != null && !body.fingerprint().isBlank()
-                ? body.fingerprint().strip()
-                : (headerFingerprint != null ? headerFingerprint.strip() : null);
+        String fingerprint =
+                body.fingerprint() != null && !body.fingerprint().isBlank()
+                        ? body.fingerprint().strip()
+                        : (headerFingerprint != null ? headerFingerprint.strip() : null);
 
         var issued = tokens.issueGuestToken(body.clientId(), fingerprint);
 
         // Bind SameSite=Strict HttpOnly cookies so direct label tab opens are authenticated safely
-        ResponseCookie tokenCookie = ResponseCookie.from(TOKEN_COOKIE, issued.token())
-                .httpOnly(true)
-                .sameSite("Strict")
-                .path("/api")
-                .maxAge(issued.ttlSeconds())
-                .build();
+        ResponseCookie tokenCookie =
+                ResponseCookie.from(TOKEN_COOKIE, issued.token())
+                        .httpOnly(true)
+                        .sameSite("Strict")
+                        .path("/api")
+                        .maxAge(issued.ttlSeconds())
+                        .build();
 
-        ResponseCookie fpCookie = ResponseCookie.from(FINGERPRINT_COOKIE, fingerprint)
-                .httpOnly(true)
-                .sameSite("Strict")
-                .path("/api")
-                .maxAge(issued.ttlSeconds())
-                .build();
+        ResponseCookie fpCookie =
+                ResponseCookie.from(FINGERPRINT_COOKIE, fingerprint)
+                        .httpOnly(true)
+                        .sameSite("Strict")
+                        .path("/api")
+                        .maxAge(issued.ttlSeconds())
+                        .build();
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, tokenCookie.toString())
                 .header(HttpHeaders.SET_COOKIE, fpCookie.toString())
-                .body(Map.of(
-                        "token", issued.token(),
-                        "userId", issued.userId(),
-                        "mode", "GUEST",
-                        "expiresAt", issued.expiresAt().toString(),
-                        "ttlSeconds", issued.ttlSeconds(),
-                        "supportedCarriers", supportedCarriers
-                ));
+                .body(
+                        Map.of(
+                                "token", issued.token(),
+                                "userId", issued.userId(),
+                                "mode", "GUEST",
+                                "expiresAt", issued.expiresAt().toString(),
+                                "ttlSeconds", issued.ttlSeconds(),
+                                "supportedCarriers", supportedCarriers));
     }
 }

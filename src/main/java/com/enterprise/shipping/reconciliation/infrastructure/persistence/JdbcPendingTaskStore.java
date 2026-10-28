@@ -22,24 +22,26 @@ public final class JdbcPendingTaskStore implements PendingTaskStore {
     @Override
     public boolean registerManualReview(Candidate c, ManualReviewReason reason, long now) {
         try {
-            return jdbc.update("""
+            return jdbc.update(
+                            """
                     INSERT INTO booking_reconciliation_tasks (
                         task_id, user_id, booking_id, booking_locator, provider_id, account_alias,
                         customer_reference, state, available_at, last_error_code, created_at, updated_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?, 'PAUSED', ?, ?, ?, ?)
                     """,
-                    TimeOrderedIds.next(),
-                    c.userId(),
-                    c.bookingId(),
-                    c.userId(),
-                    c.providerId(),
-                    accountAlias(c),
-                    c.customerReference(),
-                    now,
-                    reason.name(),
-                    now,
-                    now) == 1;
+                            TimeOrderedIds.next(),
+                            c.userId(),
+                            c.bookingId(),
+                            c.userId(),
+                            c.providerId(),
+                            accountAlias(c),
+                            c.customerReference(),
+                            now,
+                            reason.name(),
+                            now,
+                            now)
+                    == 1;
         } catch (DataAccessException failure) {
             if (UniqueConstraints.isUniqueViolation(failure)) {
                 return false;

@@ -24,9 +24,8 @@ public class ShippingRequestTracingFilter extends OncePerRequestFilter {
 
     @Override
     protected void doFilterInternal(
-            HttpServletRequest request,
-            HttpServletResponse response,
-            FilterChain chain) throws ServletException, IOException {
+            HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
         String id = TimeOrderedIds.next();
         response.setHeader("X-Request-Id", id);
         response.setHeader("Cache-Control", "no-store");

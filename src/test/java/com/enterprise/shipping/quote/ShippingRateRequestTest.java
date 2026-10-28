@@ -6,6 +6,7 @@ import com.enterprise.shipping.quote.domain.ShippingIntentFingerprint;
 import com.enterprise.shipping.quote.domain.ShippingQuote;
 import com.enterprise.shipping.quote.infrastructure.persistence.JdbcQuoteStore;
 import com.enterprise.shipping.quote.port.RateComparisonPort;
+import com.enterprise.shipping.quote.port.QuoteStore;
 import com.enterprise.shipping.shared.domain.DimensionUnit;
 import com.enterprise.shipping.shared.domain.ShippingAddress;
 import com.enterprise.shipping.shared.domain.ShippingException;
@@ -43,6 +44,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.*;
 
 /**
  * Verifies real SQLite uniqueness, version-fenced rate claims, atomic quote persistence,
@@ -60,46 +63,83 @@ class ShippingRateRequestTest {
     final MutableClock clock = new MutableClock();
     final AtomicInteger calls = new AtomicInteger();
 
-    RateComparisonPort rates = (intent, deadline) -> {
-        calls.incrementAndGet();
-        return offers("provider-quote", 2735);
-    };
+    RateComparisonPort rates =
+            (intent, deadline) -> {
+                calls.incrementAndGet();
+                return offers("provider-quote", 2735);
+            };
 
-    final ShippingAddress address = new ShippingAddress(
-            "Test User", null, "100 Test St", null, "Toronto", "ON",
-            "M5V 3L9", "CA", "4165550100", null, false
-    );
+    final ShippingAddress address =
+            new ShippingAddress(
+                    "Test User",
+                    null,
+                    "100 Test St",
+                    null,
+                    "Toronto",
+                    "ON",
+                    "M5V 3L9",
+                    "CA",
+                    "4165550100",
+                    null,
+                    false);
 
-    final ShippingIntent intent = new ShippingIntent(
-            address,
-            address,
-            new ShippingIntent.Package(
-                    new BigDecimal("12"),
-                    new BigDecimal("10"),
-                    new BigDecimal("8"),
-                    DimensionUnit.IN,
-                    new BigDecimal("5"),
-                    WeightUnit.LB,
-                    "PACKAGE"
-            ),
-            null
-    );
+    final ShippingIntent intent =
+            new ShippingIntent(
+                    address,
+                    address,
+                    new ShippingIntent.Package(
+                            new BigDecimal("12"),
+                            new BigDecimal("10"),
+                            new BigDecimal("8"),
+                            DimensionUnit.IN,
+                            new BigDecimal("5"),
+                            WeightUnit.LB,
+                            "PACKAGE"),
+                    null);
+
+    @Test
+    void requestBookingEligibilityBelongsToTheDomainAndUsesTheSuppliedBusinessDate() {
+        var today = LocalDate.of(2026, 10, 27);
+        for (var state : RateRequest.State.values()) {
+            var request =
+                    new RateRequest(
+                            "user", "request", "key", "hash", intent.dated(today), state, 0, null);
+            assertThat(request.bookingEligibility(today))
+                    .isEqualTo(
+                            state == RateRequest.State.READY
+                                    ? RateRequest.BookingEligibility.ELIGIBLE
+                                    : RateRequest.BookingEligibility.NOT_READY);
+            assertThat(request.bookingEligibility(today.plusDays(1)))
+                    .isEqualTo(RateRequest.BookingEligibility.DATE_EXPIRED);
+        }
+        var future =
+                new RateRequest(
+                        "user",
+                        "request",
+                        "key",
+                        "hash",
+                        intent.dated(today.plusDays(1)),
+                        RateRequest.State.READY,
+                        0,
+                        null);
+        assertThat(future.bookingEligibility(today))
+                .isEqualTo(RateRequest.BookingEligibility.ELIGIBLE);
+    }
 
     @BeforeEach
     void open() {
-        source = SqliteDataSources.open(
-                directory.resolve("rates.db").toString(),
-                "rates-test",
-                4,
-                3000,
-                "db/shipping/bootstrap.sql"
-        );
-        ShippingMigrations.migrate(
-                source,
-                "V001__shipping_schema.sql"
-        );
+        source =
+                SqliteDataSources.open(
+                        directory.resolve("rates.db").toString(),
+                        "rates-test",
+                        4,
+                        3000,
+                        "db/shipping/bootstrap.sql");
+        ShippingMigrations.migrate(source, "V001__shipping_schema.sql");
         jdbc = new JdbcTemplate(source);
-        store = new JdbcQuoteStore(jdbc, new TransactionTemplate(new DataSourceTransactionManager(source)));
+        store =
+                new JdbcQuoteStore(
+                        jdbc, new TransactionTemplate(new DataSourceTransactionManager(source)));
     }
 
     @AfterEach
@@ -110,82 +150,122 @@ class ShippingRateRequestTest {
     }
 
     QuoteApplicationService service() {
-        return new QuoteApplicationService(store, rates, clock, Duration.ofSeconds(1), ZoneOffset.UTC, (a, b) -> {});
+        return service(store);
+    }
+
+    QuoteApplicationService service(QuoteStore storage) {
+        return new QuoteApplicationService(
+                storage, rates, clock, Duration.ofSeconds(1), ZoneOffset.UTC, (a, b) -> {
+                                                                              });
     }
 
     List<ShippingQuote> offers(String token, long amount) {
-        return List.of(new ShippingQuote(
-                null, null, "sandbox", "account", token, "14", "Carrier", "1", "Ground",
-                amount, "CAD", 2, clock.millis() + 600000
-        ));
+        return List.of(
+                new ShippingQuote(
+                        null,
+                        null,
+                        "sandbox",
+                        "account",
+                        token,
+                        "14",
+                        "Carrier",
+                        "1",
+                        "Ground",
+                        amount,
+                        "CAD",
+                        2,
+                        clock.millis() + 600000));
     }
 
     @Test
     void sameKeyReplaysCanonicalContentAndRetainsOwnBusinessSnapshot() {
         var first = service().create("user", "same-key", intent);
-        var equivalent = new ShippingIntent(
-                address,
-                address,
-                new ShippingIntent.Package(
-                        new BigDecimal("12.00"),
-                        new BigDecimal("10.0"),
-                        new BigDecimal("8"),
-                        DimensionUnit.IN,
-                        new BigDecimal("5.000"),
-                        WeightUnit.LB,
-                        "PACKAGE"
-                ),
-                null
-        );
+        var equivalent =
+                new ShippingIntent(
+                        address,
+                        address,
+                        new ShippingIntent.Package(
+                                new BigDecimal("12.00"),
+                                new BigDecimal("10.0"),
+                                new BigDecimal("8"),
+                                DimensionUnit.IN,
+                                new BigDecimal("5.000"),
+                                WeightUnit.LB,
+                                "PACKAGE"),
+                        null);
 
         var replay = service().create("user", "same-key", equivalent);
-        assertThat(replay.statusCode()).isEqualTo(200);
+        assertThat(replay.disposition()).isEqualTo(QuoteApplicationService.Disposition.EXISTING);
         assertThat(replay.result()).isEqualTo(first.result());
         assertThat(calls).hasValue(1);
         assertThat(count("shipment_requests")).isEqualTo(1);
-        assertThat(store.request("user", first.result().requestId()).orElseThrow().intent().sender().addressLine1())
+        assertThat(
+                        store.request("user", first.result().requestId())
+                                .orElseThrow()
+                                .intent()
+                                .sender()
+                                .addressLine1())
                 .isEqualTo("100 Test St");
 
-        assertThatThrownBy(() -> service().create("user", "same-key", new ShippingIntent(
-                address,
-                address,
-                new ShippingIntent.Package(BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ONE, null, BigDecimal.ONE, null, null),
-                null
-        ))).isInstanceOfSatisfying(
-                ShippingException.class,
-                error -> assertThat(error.code()).isEqualTo("IDEMPOTENCY_CONFLICT")
-        );
+        assertThatThrownBy(
+                        () ->
+                                service()
+                                        .create(
+                                                "user",
+                                                "same-key",
+                                                new ShippingIntent(
+                                                        address,
+                                                        address,
+                                                        new ShippingIntent.Package(
+                                                                BigDecimal.ONE,
+                                                                BigDecimal.ONE,
+                                                                BigDecimal.ONE,
+                                                                null,
+                                                                BigDecimal.ONE,
+                                                                null,
+                                                                null),
+                                                        null)))
+                .isInstanceOfSatisfying(
+                        ShippingException.class,
+                        error -> assertThat(error.code()).isEqualTo("IDEMPOTENCY_CONFLICT"));
         assertThat(calls).hasValue(1);
     }
 
     @Test
     void failureAndExplicitRetryReuseTheRequestWithoutAnErrorColumn() {
-        rates = (input, deadline) -> {
-            calls.incrementAndGet();
-            throw ShippingException.gatewayTimeout("PROVIDER_TIMEOUT");
-        };
+        rates =
+                (input, deadline) -> {
+                    calls.incrementAndGet();
+                    throw ShippingException.dependencyTimeout("PROVIDER_TIMEOUT");
+                };
 
         AtomicReference<String> id = new AtomicReference<>();
         assertThatThrownBy(() -> service().create("user", "retry-key", intent))
-                .isInstanceOfSatisfying(ShippingException.class, error -> {
-                    assertThat(error.statusCode()).isEqualTo(504);
-                    id.set(error.operation().id());
-                });
+                .isInstanceOfSatisfying(
+                        ShippingException.class,
+                        error -> {
+                            assertThat(error.category())
+                                    .isEqualTo(ShippingException.Category.DEPENDENCY_TIMEOUT);
+                            id.set(error.operation().id());
+                        });
 
         assertThat(service().get("user", id.get()).state()).isEqualTo("RATE_FAILED");
         assertThat(calls).hasValue(1);
 
-        rates = (input, deadline) -> {
-            calls.incrementAndGet();
-            return offers("retry-success", 2735);
-        };
+        rates =
+                (input, deadline) -> {
+                    calls.incrementAndGet();
+                    return offers("retry-success", 2735);
+                };
 
         var retry = service().create("user", "retry-key", intent);
         assertThat(retry.result().requestId()).isEqualTo(id.get());
         assertThat(retry.result().state()).isEqualTo("READY");
         assertThat(store.byKey("user", "retry-key").orElseThrow().version()).isEqualTo(1);
         assertThat(count("shipment_requests")).isEqualTo(1);
-        assertThat(jdbc.queryForList("PRAGMA table_info(shipment_requests)").stream().map(row -> row.get("name")))
+        assertThat(
+                        jdbc.queryForList("PRAGMA table_info(shipment_requests)").stream()
+                                .map(row -> row.get("name")))
                 .doesNotContain("last_error_code");
     }
 
@@ -193,18 +273,19 @@ class ShippingRateRequestTest {
     void concurrentMatchingRequestsHaveOneLiveProviderExecution() throws Exception {
         var started = new CountDownLatch(1);
         var release = new CountDownLatch(1);
-        rates = (input, deadline) -> {
-            calls.incrementAndGet();
-            started.countDown();
-            try {
-                if (!release.await(10, TimeUnit.SECONDS)) {
-                    throw new AssertionError("Provider not released");
-                }
-            } catch (InterruptedException error) {
-                throw new IllegalStateException(error);
-            }
-            return offers("winner", 2735);
-        };
+        rates =
+                (input, deadline) -> {
+                    calls.incrementAndGet();
+                    started.countDown();
+                    try {
+                        if (!release.await(10, TimeUnit.SECONDS)) {
+                            throw new AssertionError("Provider not released");
+                        }
+                    } catch (InterruptedException error) {
+                        throw new IllegalStateException(error);
+                    }
+                    return offers("winner", 2735);
+                };
 
         var workers = Executors.newFixedThreadPool(8);
         try {
@@ -219,7 +300,8 @@ class ShippingRateRequestTest {
             Set<String> ids = new HashSet<>();
             for (var follower : followers) {
                 var result = follower.get(5, TimeUnit.SECONDS);
-                assertThat(result.statusCode()).isEqualTo(202);
+                assertThat(result.disposition())
+                        .isEqualTo(QuoteApplicationService.Disposition.PENDING);
                 ids.add(result.result().requestId());
             }
             assertThat(ids).hasSize(1);
@@ -238,20 +320,21 @@ class ShippingRateRequestTest {
     void overdueExecutionCannotPublishAfterANewerRetryWins() throws Exception {
         var started = new CountDownLatch(1);
         var release = new CountDownLatch(1);
-        rates = (input, deadline) -> {
-            int call = calls.incrementAndGet();
-            if (call == 1) {
-                started.countDown();
-                try {
-                    if (!release.await(10, TimeUnit.SECONDS)) {
-                        throw new AssertionError("Old execution not released");
+        rates =
+                (input, deadline) -> {
+                    int call = calls.incrementAndGet();
+                    if (call == 1) {
+                        started.countDown();
+                        try {
+                            if (!release.await(10, TimeUnit.SECONDS)) {
+                                throw new AssertionError("Old execution not released");
+                            }
+                        } catch (InterruptedException error) {
+                            throw new IllegalStateException(error);
+                        }
                     }
-                } catch (InterruptedException error) {
-                    throw new IllegalStateException(error);
-                }
-            }
-            return offers(call == 1 ? "stale-token" : "current-token", 2735);
-        };
+                    return offers(call == 1 ? "stale-token" : "current-token", 2735);
+                };
 
         var worker = Executors.newSingleThreadExecutor();
         try {
@@ -278,18 +361,419 @@ class ShippingRateRequestTest {
     }
 
     @Test
+    void previousBusinessDateCannotReplayOrBookEvenBeforeQuoteTtlExpires() {
+        // Toronto midnight is 04:00 UTC on this date; UTC itself does not cross midnight.
+        clock.time.set(Instant.parse("2026-10-24T03:59:00Z").toEpochMilli());
+        var service =
+                new QuoteApplicationService(
+                        store,
+                        rates,
+                        clock,
+                        Duration.ofSeconds(1),
+                        ZoneId.of("America/Toronto"),
+                        (a, b) -> {
+                        });
+        var first = service.create("user", "midnight-key", intent);
+        String quoteId = first.result().quotes().get(0).quoteId();
+        assertThat(service.resolve("user", quoteId).quoteId()).isEqualTo(quoteId);
+
+        clock.advance(Duration.ofMinutes(2));
+        assertThat(store.find("user", quoteId).orElseThrow().expiresAt())
+                .isGreaterThan(clock.millis());
+        var historical = service.get("user", first.result().requestId());
+        assertThat(historical.state()).isEqualTo("QUOTES_EXPIRED");
+        assertThat(historical.quotes()).isEmpty();
+        assertThatThrownBy(() -> service.create("user", "midnight-key", intent))
+                .isInstanceOfSatisfying(
+                        ShippingException.class,
+                        error -> assertThat(error.code()).isEqualTo("REQUEST_DATE_EXPIRED"));
+        assertThatThrownBy(() -> service.resolve("user", quoteId))
+                .isInstanceOfSatisfying(
+                        ShippingException.class,
+                        error -> {
+                            assertThat(error.code()).isEqualTo("REQUEST_DATE_EXPIRED");
+                            assertThat(error.category())
+                                    .isEqualTo(ShippingException.Category.STATE_CONFLICT);
+                        });
+        assertThat(calls).hasValue(1);
+        assertThat(store.request("user", first.result().requestId()).orElseThrow().state())
+                .isEqualTo(RateRequest.State.READY);
+    }
+
+    @Test
+    void staleFailureReturnsSuccessfulNewExecution() throws Exception {
+        staleFailureReturnsLatestState(true);
+    }
+
+    @Test
+    void staleFailureReturnsNewExecutionInProgress() throws Exception {
+        staleFailureReturnsLatestState(false);
+    }
+
+    private void staleFailureReturnsLatestState(boolean completeRetry) throws Exception {
+        var started = new CountDownLatch(1);
+        var release = new CountDownLatch(1);
+        rates =
+                (input, deadline) -> {
+                    calls.incrementAndGet();
+                    started.countDown();
+                    try {
+                        if (!release.await(10, TimeUnit.SECONDS)) {
+                            throw new AssertionError("Old execution not released");
+                        }
+                    } catch (InterruptedException error) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(error);
+                    }
+                    throw ShippingException.dependencyTimeout("PROVIDER_TIMEOUT");
+                };
+        var worker = Executors.newSingleThreadExecutor();
+        try {
+            var old = worker.submit(() -> service().create("user", "stale-failure", intent));
+            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+            clock.advance(Duration.ofSeconds(12));
+            var previous = store.byKey("user", "stale-failure").orElseThrow();
+            var retry = previous.claimed(clock.millis(), clock.millis() + 11000, false);
+            assertThat(store.claim(previous, retry, clock.millis())).isTrue();
+            if (completeRetry) {
+                var quote = offers("new-token", 2735).get(0);
+                assertThat(
+                                store.complete(
+                                                retry,
+                                                List.of(
+                                                        new ShippingQuote(
+                                                                "new-quote",
+                                                                retry.requestId(),
+                                                                quote.providerId(),
+                                                                quote.accountAlias(),
+                                                                quote.providerQuoteId(),
+                                                                quote.carrierId(),
+                                                                quote.carrierName(),
+                                                                quote.serviceId(),
+                                                                quote.serviceName(),
+                                                                quote.totalMinor(),
+                                                                quote.currency(),
+                                                                quote.transitDays(),
+                                                                quote.expiresAt())),
+                                                clock.millis())
+                                        .applied())
+                        .isTrue();
+            }
+            release.countDown();
+            var result = old.get(5, TimeUnit.SECONDS);
+            assertThat(result.disposition())
+                    .isEqualTo(
+                            completeRetry
+                                    ? QuoteApplicationService.Disposition.EXISTING
+                                    : QuoteApplicationService.Disposition.PENDING);
+            assertThat(result.result().state()).isEqualTo(completeRetry ? "READY" : "RATING");
+            assertThat(result.result().requestId()).isEqualTo(retry.requestId());
+            assertThat(store.request("user", retry.requestId()).orElseThrow().version())
+                    .isEqualTo(1);
+            assertThat(calls).hasValue(1);
+            if (completeRetry) {
+                assertThat(result.result().quotes())
+                        .extracting(QuoteApplicationService.QuoteView::quoteId)
+                        .containsExactly("new-quote");
+            }
+        } finally {
+            release.countDown();
+            worker.shutdownNow();
+            assertThat(worker.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+    }
+
+    RateRequest active(String key, long deadline) {
+        long now = clock.millis();
+        var dated = intent.dated(Instant.ofEpochMilli(now).atZone(ZoneOffset.UTC).toLocalDate());
+        var row =
+                new RateRequest(
+                        "user",
+                        key,
+                        key,
+                        ShippingIntentFingerprint.of(dated),
+                        dated,
+                        RateRequest.State.RATING,
+                        0,
+                        deadline);
+        assertThat(store.insert(row, now)).isTrue();
+        return row;
+    }
+
+    ShippingQuote identifiedOffer(String id, String requestId, String token) {
+        return new ShippingQuote(
+                id,
+                requestId,
+                "sandbox",
+                "account",
+                token,
+                "14",
+                "Carrier",
+                "1",
+                "Ground",
+                2735,
+                "CAD",
+                2,
+                clock.millis() + 600000);
+    }
+
+    @Test
+    void domainCompletionAndFailurePreserveTheExecutionVersionAndClearTheDeadline() {
+        var row = active("domain", clock.millis() + 1000);
+        var ready = row.completed(true, row.deadline() - 1);
+        var empty = row.completed(false, row.deadline() - 1);
+        var failed = row.failed();
+        assertThat(ready.state()).isEqualTo(RateRequest.State.READY);
+        assertThat(empty.state()).isEqualTo(RateRequest.State.NO_RATES);
+        assertThat(failed.state()).isEqualTo(RateRequest.State.RATE_FAILED);
+        for (var completed : List.of(ready, empty, failed)) {
+            assertThat(completed.version()).isEqualTo(row.version());
+            assertThat(completed.deadline()).isNull();
+        }
+        assertThatThrownBy(() -> row.completed(true, row.deadline()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(ready::failed).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> failed.completed(true, clock.millis()))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(row.state()).isEqualTo(RateRequest.State.RATING);
+    }
+
+    @Test
+    void successfulRatingReturnsCommittedFactsWithoutReadingTheRequestOrQuotesAgain() {
+        var storage = spy(store);
+        doThrow(new AssertionError("Normal completion must not reread the request"))
+                .when(storage)
+                .request(anyString(), anyString());
+        doThrow(new AssertionError("Normal completion must not reread the offers"))
+                .when(storage)
+                .quotes(anyString(), anyString());
+        var result = service(storage).create("user", "no-reread", intent);
+        assertThat(result.disposition()).isEqualTo(QuoteApplicationService.Disposition.CREATED);
+        assertThat(result.result().state()).isEqualTo("READY");
+        assertThat(result.result().quotes()).hasSize(1);
+        assertThat(store.request("user", result.result().requestId()).orElseThrow().state())
+                .isEqualTo(RateRequest.State.READY);
+        verify(storage, never()).request(anyString(), anyString());
+        verify(storage, never()).quotes(anyString(), anyString());
+    }
+
+    @Test
+    void readyReplayLoadsOffersOnceAndReusesTheExistingRequestSnapshot() {
+        var first = service().create("user", "ready-replay", intent);
+        var storage = spy(store);
+        var replay = service(storage).create("user", "ready-replay", intent);
+        assertThat(replay.result()).isEqualTo(first.result());
+        verify(storage, times(1)).quotes("user", first.result().requestId());
+        verify(storage, never()).request(anyString(), anyString());
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void pendingReplayDoesNotLoadOffersOrRedispatch() {
+        active("pending-replay", clock.millis() + 10000);
+        var storage = spy(store);
+        var replay = service(storage).create("user", "pending-replay", intent);
+        assertThat(replay.disposition()).isEqualTo(QuoteApplicationService.Disposition.PENDING);
+        assertThat(replay.result().quotes()).isEmpty();
+        verify(storage, never()).quotes(anyString(), anyString());
+        verify(storage, never()).request(anyString(), anyString());
+        assertThat(calls).hasValue(0);
+    }
+
+    @Test
+    void emptyResultReplaysWithoutLoadingOffersOrStartingAnotherExecution() {
+        rates =
+                (input, deadline) -> {
+                    calls.incrementAndGet();
+                    return List.of();
+                };
+        var storage = spy(store);
+        var service = service(storage);
+        var first = service.create("user", "empty-replay", intent);
+        var replay = service.create("user", "empty-replay", intent);
+        assertThat(replay.result()).isEqualTo(first.result());
+        assertThat(replay.result().state()).isEqualTo("NO_RATES");
+        verify(storage, never()).quotes(anyString(), anyString());
+        verify(storage, never()).request(anyString(), anyString());
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void expiredExecutionFailureReturnsItsCommittedSnapshotWithoutAnotherSelect() {
+        var row = active("expired-get", clock.millis());
+        var storage = spy(store);
+        var result = service(storage).get("user", row.requestId());
+        assertThat(result.state()).isEqualTo("RATE_FAILED");
+        verify(storage, times(1)).request("user", row.requestId());
+        verify(storage, never()).quotes(anyString(), anyString());
+        assertThat(store.request("user", row.requestId()).orElseThrow()).isEqualTo(row.failed());
+    }
+
+    @Test
+    void expiryCompareAndSetLoserReadsTheWinningExecution() {
+        var row = active("expiry-race", clock.millis());
+        var storage = spy(store);
+        doAnswer(
+                        call -> {
+                            var claimed =
+                                    row.claimed(clock.millis(), clock.millis() + 10000, false);
+                            assertThat(store.claim(row, claimed, clock.millis())).isTrue();
+                            assertThat(
+                                            store.complete(
+                                                            claimed,
+                                                            List.of(
+                                                                    identifiedOffer(
+                                                                            "winner",
+                                                                            row.requestId(),
+                                                                            "winner")),
+                                                            clock.millis())
+                                                    .applied())
+                                    .isTrue();
+                            return false;
+                        })
+                .when(storage)
+                .fail(any(), anyLong());
+        var result = service(storage).get("user", row.requestId());
+        assertThat(result.state()).isEqualTo("READY");
+        assertThat(result.quotes())
+                .extracting(QuoteApplicationService.QuoteView::quoteId)
+                .containsExactly("winner");
+        verify(storage, times(2)).request("user", row.requestId());
+        assertThat(calls).hasValue(0);
+    }
+
+    @Test
+    void staleCompletionReturnsTheNewVersionWithoutReplacingItsOffers() {
+        var old = active("stale-completion", clock.millis() + 10000);
+        assertThat(store.fail(old, clock.millis())).isTrue();
+        var failed = old.failed();
+        var retry = failed.claimed(clock.millis(), clock.millis() + 10000, false);
+        assertThat(store.claim(failed, retry, clock.millis())).isTrue();
+        assertThat(
+                        store.complete(
+                                        retry,
+                                        List.of(
+                                                identifiedOffer(
+                                                        "new", old.requestId(), "new-token")),
+                                        clock.millis())
+                                .applied())
+                .isTrue();
+        var stale =
+                store.complete(
+                        old,
+                        List.of(identifiedOffer("old", old.requestId(), "old-token")),
+                        clock.millis());
+        assertThat(stale.applied()).isFalse();
+        assertThat(stale.request().version()).isEqualTo(1);
+        assertThat(stale.quotes()).extracting(ShippingQuote::quoteId).containsExactly("new");
+        assertThat(store.quotes("user", old.requestId())).isEqualTo(stale.quotes());
+        assertThatThrownBy(() -> stale.quotes().clear())
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void expiredCompletionCannotPublishOrChangeItsRequestState() {
+        var row = active("expired-completion", clock.millis());
+        var completion =
+                store.complete(
+                        row,
+                        List.of(identifiedOffer("late", row.requestId(), "late-token")),
+                        clock.millis());
+        assertThat(completion.applied()).isFalse();
+        assertThat(completion.request()).isEqualTo(row);
+        assertThat(completion.quotes()).isEmpty();
+        assertThat(count("shipment_quotes")).isZero();
+    }
+
+    @Test
+    void lostCommitAcknowledgementReturnsThePersistedSuccessWithoutAnotherProviderCall() {
+        var storage = spy(store);
+        doAnswer(
+                        call -> {
+                            call.callRealMethod();
+                            throw new org.springframework.dao.DataAccessResourceFailureException(
+                                    "Injected lost commit acknowledgement");
+                        })
+                .when(storage)
+                .complete(any(), anyList(), anyLong());
+        var result = service(storage).create("user", "commit-ack", intent);
+        assertThat(result.disposition()).isEqualTo(QuoteApplicationService.Disposition.EXISTING);
+        assertThat(result.result().state()).isEqualTo("READY");
+        assertThat(result.result().quotes()).hasSize(1);
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void projectionFailureAfterCommitDoesNotMarkTheExecutionFailedOrRereadStorage() {
+        var storage = spy(store);
+        var invalidProjection = mock(ShippingQuote.class);
+        when(invalidProjection.reusable(anyLong(), anyLong()))
+                .thenThrow(new IllegalStateException("Injected projection failure"));
+        doAnswer(
+                        call -> {
+                            QuoteStore.Completion saved =
+                                    (QuoteStore.Completion) call.callRealMethod();
+                            return new QuoteStore.Completion(
+                                    saved.request(), List.of(invalidProjection), true);
+                        })
+                .when(storage)
+                .complete(any(), anyList(), anyLong());
+        assertThatThrownBy(() -> service(storage).create("user", "projection-error", intent))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Injected projection failure");
+        assertThat(store.byKey("user", "projection-error").orElseThrow().state())
+                .isEqualTo(RateRequest.State.READY);
+        verify(storage, never()).fail(any(), anyLong());
+        verify(storage, never()).request(anyString(), anyString());
+        verify(storage, never()).quotes(anyString(), anyString());
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
     void batchCompletionPersistsMultipleQuotesIncludingUnknownTransitTime() {
-        rates = (input, deadline) -> List.of(
-                new ShippingQuote(null, null, "sandbox", "account", "token-a", "14", "Carrier A", "1", "Ground",
-                        2735, "CAD", 2, clock.millis() + 600000),
-                new ShippingQuote(null, null, "sandbox", "account", "token-b", "22", null, "2", null,
-                        3590, "CAD", null, clock.millis() + 600000));
+        rates =
+                (input, deadline) ->
+                        List.of(
+                                new ShippingQuote(
+                                        null,
+                                        null,
+                                        "sandbox",
+                                        "account",
+                                        "token-a",
+                                        "14",
+                                        "Carrier A",
+                                        "1",
+                                        "Ground",
+                                        2735,
+                                        "CAD",
+                                        2,
+                                        clock.millis() + 600000),
+                                new ShippingQuote(
+                                        null,
+                                        null,
+                                        "sandbox",
+                                        "account",
+                                        "token-b",
+                                        "22",
+                                        null,
+                                        "2",
+                                        null,
+                                        3590,
+                                        "CAD",
+                                        null,
+                                        clock.millis() + 600000));
         var result = service().create("user", "batch-key", intent);
         assertThat(result.result().state()).isEqualTo("READY");
         var saved = store.quotes("user", result.result().requestId());
         assertThat(saved).hasSize(2);
-        assertThat(saved).extracting(ShippingQuote::providerQuoteId).containsExactlyInAnyOrder("token-a", "token-b");
-        var unknownTransit = saved.stream().filter(q -> q.providerQuoteId().equals("token-b")).findFirst().orElseThrow();
+        assertThat(saved)
+                .extracting(ShippingQuote::providerQuoteId)
+                .containsExactlyInAnyOrder("token-a", "token-b");
+        var unknownTransit =
+                saved.stream()
+                        .filter(q -> q.providerQuoteId().equals("token-b"))
+                        .findFirst()
+                        .orElseThrow();
         assertThat(unknownTransit.transitDays()).isNull();
         assertThat(unknownTransit.carrierName()).isNull();
         assertThat(unknownTransit.serviceName()).isNull();
@@ -304,11 +788,36 @@ class ShippingRateRequestTest {
         var row = store.byKey("user", "batch-rollback").orElseThrow();
         var claimed = row.claimed(clock.millis(), clock.millis() + 11000, true);
         assertThat(store.claim(row, claimed, clock.millis())).isTrue();
-        var replacement = List.of(
-                new ShippingQuote("replacement-good", id, "sandbox", "account", "new-a", "14", "Carrier", "1", "Ground",
-                        2800, "CAD", 2, clock.millis() + 600000),
-                new ShippingQuote("replacement-invalid", id, "sandbox", "account", "new-b", "14", "Carrier", "1", "Ground",
-                        -1, "CAD", 2, clock.millis() + 600000));
+        var replacement =
+                List.of(
+                        new ShippingQuote(
+                                "replacement-good",
+                                id,
+                                "sandbox",
+                                "account",
+                                "new-a",
+                                "14",
+                                "Carrier",
+                                "1",
+                                "Ground",
+                                2800,
+                                "CAD",
+                                2,
+                                clock.millis() + 600000),
+                        new ShippingQuote(
+                                "replacement-invalid",
+                                id,
+                                "sandbox",
+                                "account",
+                                "new-b",
+                                "14",
+                                "Carrier",
+                                "1",
+                                "Ground",
+                                -1,
+                                "CAD",
+                                2,
+                                clock.millis() + 600000));
         assertThatThrownBy(() -> store.complete(claimed, replacement, clock.millis()))
                 .isInstanceOf(org.springframework.dao.DataAccessException.class);
         // Even the valid first batch row and the earlier DELETE must roll back.
@@ -337,8 +846,7 @@ class ShippingRateRequestTest {
         assertThatThrownBy(() -> service().create("user", "storage-key", intent))
                 .isInstanceOfSatisfying(
                         ShippingException.class,
-                        error -> assertThat(error.code()).isEqualTo("STORE_UNAVAILABLE")
-                );
+                        error -> assertThat(error.code()).isEqualTo("STORE_UNAVAILABLE"));
 
         assertThat(store.byKey("user", "storage-key").orElseThrow().state())
                 .isEqualTo(RateRequest.State.RATE_FAILED);
@@ -348,16 +856,16 @@ class ShippingRateRequestTest {
     @Test
     void reopeningPreservesAbandonedClaimAndAllowsAnExplicitRetry() {
         var dated = intent.dated(LocalDate.of(2026, 10, 23));
-        var claim = new RateRequest(
-                "user",
-                "abandoned",
-                "restart-key",
-                ShippingIntentFingerprint.of(dated),
-                dated,
-                RateRequest.State.RATING,
-                0,
-                clock.millis() + 11000
-        );
+        var claim =
+                new RateRequest(
+                        "user",
+                        "abandoned",
+                        "restart-key",
+                        ShippingIntentFingerprint.of(dated),
+                        dated,
+                        RateRequest.State.RATING,
+                        0,
+                        clock.millis() + 11000);
         assertThat(store.insert(claim, clock.millis())).isTrue();
 
         source.close();
@@ -378,13 +886,11 @@ class ShippingRateRequestTest {
         assertThatThrownBy(() -> service().create("user", "owner-key", intent))
                 .isInstanceOfSatisfying(
                         ShippingException.class,
-                        error -> assertThat(error.code()).isEqualTo("REQUEST_DATE_EXPIRED")
-                );
+                        error -> assertThat(error.code()).isEqualTo("REQUEST_DATE_EXPIRED"));
         assertThatThrownBy(() -> service().get("other", first.result().requestId()))
                 .isInstanceOfSatisfying(
                         ShippingException.class,
-                        error -> assertThat(error.code()).isEqualTo("RESOURCE_NOT_FOUND")
-                );
+                        error -> assertThat(error.code()).isEqualTo("RESOURCE_NOT_FOUND"));
         assertThat(count("shipment_requests")).isEqualTo(1);
     }
 
@@ -393,7 +899,8 @@ class ShippingRateRequestTest {
         var first = service().create("user", "expiry-key", intent);
         clock.advance(Duration.ofMinutes(11));
 
-        assertThat(service().get("user", first.result().requestId()).state()).isEqualTo("QUOTES_EXPIRED");
+        assertThat(service().get("user", first.result().requestId()).state())
+                .isEqualTo("QUOTES_EXPIRED");
         var refreshed = service().create("user", "expiry-key", intent);
         assertThat(refreshed.result().requestId()).isEqualTo(first.result().requestId());
         assertThat(refreshed.result().quotes()).hasSize(1);
@@ -409,45 +916,79 @@ class ShippingRateRequestTest {
         assertThat(row.key()).isEqualTo("baseline-key");
         assertThat(row.state()).isEqualTo(RateRequest.State.READY);
         var jdbc = new JdbcTemplate(source);
-        assertThat(jdbc.queryForList(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", String.class))
-                .containsExactlyInAnyOrder("shipment_requests", "shipment_quotes", "shipment_bookings",
-                        "booking_reconciliation_tasks", "schema_migrations");
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM schema_migrations", Integer.class)).isEqualTo(1);
-        var keyPlan = String.join(" ", jdbc.query(
-                "EXPLAIN QUERY PLAN SELECT request_id, state FROM shipment_requests WHERE user_id=? AND idempotency_key=?",
-                (rs, n) -> rs.getString("detail"), "user", "baseline-key"));
+        assertThat(
+                        jdbc.queryForList(
+                                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+                                String.class))
+                .containsExactlyInAnyOrder(
+                        "shipment_requests",
+                        "shipment_quotes",
+                        "shipment_bookings",
+                        "booking_reconciliation_tasks",
+                        "schema_migrations");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM schema_migrations", Integer.class))
+                .isEqualTo(1);
+        var keyPlan =
+                String.join(
+                        " ",
+                        jdbc.query(
+                                "EXPLAIN QUERY PLAN SELECT request_id, state FROM shipment_requests WHERE user_id=? AND idempotency_key=?",
+                                (rs, n) -> rs.getString("detail"),
+                                "user",
+                                "baseline-key"));
         assertThat(keyPlan).contains("uk_shipment_request_key");
-        var quotesPlan = String.join(" ", jdbc.query(
-                "EXPLAIN QUERY PLAN SELECT quote_id, total_minor FROM shipment_quotes WHERE user_id=? AND request_id=?",
-                (rs, n) -> rs.getString("detail"), "user", row.requestId()));
+        var quotesPlan =
+                String.join(
+                        " ",
+                        jdbc.query(
+                                "EXPLAIN QUERY PLAN SELECT quote_id, total_minor FROM shipment_quotes WHERE user_id=? AND request_id=?",
+                                (rs, n) -> rs.getString("detail"),
+                                "user",
+                                row.requestId()));
         assertThat(quotesPlan).contains("idx_request_quotes");
     }
 
     @Test
     void preservesFullWebInputRoundTripAndClearsDeadlineWhenCompleted() {
-        var richSender = new ShippingAddress(
-                "Alice Sender", "Acme Logistics Ltd.", "100 King St W", "Floor 12, Suite 1200",
-                "Toronto", "ON", "M5X 1A9", "CA", "+1 (416) 555-0199", "alice@acme.ca", true
-        );
-        var richRecipient = new ShippingAddress(
-                "Bob Receiver", "Maritime Imports Inc.", "2000 Barrington St", "Unit 4B",
-                "Halifax", "NS", "B3J 3K1", "CA", "902-555-0100", "bob@maritime.ca", false
-        );
-        var richIntent = new ShippingIntent(
-                richSender,
-                richRecipient,
-                new ShippingIntent.Package(
-                        new BigDecimal("12.3456"),
-                        new BigDecimal("10.5000"),
-                        new BigDecimal("8.25"),
-                        DimensionUnit.CM,
-                        new BigDecimal("5.125"),
-                        WeightUnit.KG,
-                        "PACKAGE"
-                ),
-                LocalDate.of(2026, 10, 23)
-        );
+        var richSender =
+                new ShippingAddress(
+                        "Alice Sender",
+                        "Acme Logistics Ltd.",
+                        "100 King St W",
+                        "Floor 12, Suite 1200",
+                        "Toronto",
+                        "ON",
+                        "M5X 1A9",
+                        "CA",
+                        "+1 (416) 555-0199",
+                        "alice@acme.ca",
+                        true);
+        var richRecipient =
+                new ShippingAddress(
+                        "Bob Receiver",
+                        "Maritime Imports Inc.",
+                        "2000 Barrington St",
+                        "Unit 4B",
+                        "Halifax",
+                        "NS",
+                        "B3J 3K1",
+                        "CA",
+                        "902-555-0100",
+                        "bob@maritime.ca",
+                        false);
+        var richIntent =
+                new ShippingIntent(
+                        richSender,
+                        richRecipient,
+                        new ShippingIntent.Package(
+                                new BigDecimal("12.3456"),
+                                new BigDecimal("10.5000"),
+                                new BigDecimal("8.25"),
+                                DimensionUnit.CM,
+                                new BigDecimal("5.125"),
+                                WeightUnit.KG,
+                                "PACKAGE"),
+                        LocalDate.of(2026, 10, 23));
 
         var created = service().create("user", "rich-roundtrip-key", richIntent);
         var saved = store.request("user", created.result().requestId()).orElseThrow();
@@ -461,7 +1002,8 @@ class ShippingRateRequestTest {
     }
 
     static final class MutableClock extends Clock {
-        final AtomicLong time = new AtomicLong(Instant.parse("2026-10-23T12:00:00Z").toEpochMilli());
+        final AtomicLong time =
+                new AtomicLong(Instant.parse("2026-10-23T12:00:00Z").toEpochMilli());
 
         void advance(Duration value) {
             time.addAndGet(value.toMillis());

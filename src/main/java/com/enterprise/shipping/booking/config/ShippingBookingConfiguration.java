@@ -40,7 +40,8 @@ public class ShippingBookingConfiguration {
             Clock clock,
             @Value("${shipping.provider.create-timeout}") Duration timeout,
             ShippingBookingObserver observer) {
-        return new ShipmentApplicationService(store, quotes, provider, labels, clock, timeout, observer);
+        return new ShipmentApplicationService(
+                store, quotes, provider, labels, clock, timeout, observer);
     }
 
     @Bean

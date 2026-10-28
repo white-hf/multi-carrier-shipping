@@ -34,7 +34,7 @@
 <rect x="55" y="515" width="1070" height="108" rx="12" fill="#f8fafc" stroke="#dbe3ee" stroke-width="1.5"/>
 <text x="75" y="543" text-anchor="start" class="heading">PROVIDER INTEGRATION</text>
 <text x="590" y="575" text-anchor="middle" class="label">Consumer-Owned Adapters · Sandbox Client · Payload Mapping</text>
-<text x="590" y="602" text-anchor="middle" class="detail">Separate rate / create / label pools, bulkheads and circuit breakers</text>
+<text x="590" y="602" text-anchor="middle" class="detail">Shared provider pool and admission; logical-group circuit breakers</text>
 <rect x="55" y="648" width="1070" height="72" rx="12" fill="#f8fafc" stroke="#dbe3ee" stroke-width="1.5"/>
 <text x="75" y="674" text-anchor="start" class="heading">SHARED FOUNDATION</text>
 <text x="590" y="702" text-anchor="middle" class="detail">HTTP Deadlines · JDBC &amp; Migrations · UUIDv7 · Monitoring Support</text>

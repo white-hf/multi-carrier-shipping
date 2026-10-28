@@ -15,30 +15,53 @@ public final class MicrometerQuoteObserver implements QuoteObserver {
     private static final Logger log = LoggerFactory.getLogger(MicrometerQuoteObserver.class);
     private final MeterRegistry registry;
 
-    public MicrometerQuoteObserver(MeterRegistry registry) { this.registry = registry; }
-
-    @Override public void workers(String carrierId, IntSupplier activeCount) {
-        // The supplier is created at registration; retain it so Micrometer's weak reference cannot expire.
-        record(() -> Gauge.builder("shipping.carrier.workers.active", activeCount, value -> value.getAsInt())
-                .tag("carrier", carrierId).strongReference(true).register(registry));
+    public MicrometerQuoteObserver(MeterRegistry registry) {
+        this.registry = registry;
     }
 
-    @Override public void carrierOutcome(String carrierId, OutcomeCode outcome) {
-        record(() -> registry.counter("shipping.carrier.outcomes", "carrier", carrierId,
-                "outcome", outcome.name()).increment());
+    @Override
+    public void workers(String carrierId, IntSupplier activeCount) {
+        // The supplier is created at registration; retain it so Micrometer's weak reference cannot
+        // expire.
+        record(
+                () ->
+                        Gauge.builder(
+                                        "shipping.carrier.workers.active",
+                                        activeCount,
+                                        value -> value.getAsInt())
+                                .tag("carrier", carrierId)
+                                .strongReference(true)
+                                .register(registry));
     }
 
-    @Override public void comparison(ComparisonStatus status, long elapsedNanos) {
-        record(() -> {
-            registry.timer("shipping.aggregation.latency", "status", status.name())
-                    .record(elapsedNanos, TimeUnit.NANOSECONDS);
-            registry.counter("shipping.aggregation.requests", "status", status.name()).increment();
-        });
+    @Override
+    public void carrierOutcome(String carrierId, OutcomeCode outcome) {
+        record(
+                () ->
+                        registry.counter(
+                                        "shipping.carrier.outcomes",
+                                        "carrier",
+                                        carrierId,
+                                        "outcome",
+                                        outcome.name())
+                                .increment());
+    }
+
+    @Override
+    public void comparison(ComparisonStatus status, long elapsedNanos) {
+        record(
+                () -> {
+                    registry.timer("shipping.aggregation.latency", "status", status.name())
+                            .record(elapsedNanos, TimeUnit.NANOSECONDS);
+                    registry.counter("shipping.aggregation.requests", "status", status.name())
+                            .increment();
+                });
     }
 
     private void record(Runnable action) {
-        try { action.run(); }
-        catch (RuntimeException error) {
+        try {
+            action.run();
+        } catch (RuntimeException error) {
             log.warn("Quote metric recording failed type={}", error.getClass().getSimpleName());
         }
     }

@@ -15,8 +15,14 @@ public record ShippingAddress(
         @NotBlank @Size(max = 255) String addressLine1,
         @Size(max = 255) String addressLine2,
         @NotBlank @Size(max = 128) String city,
-        @NotBlank @Size(max = 64) @Pattern(regexp = "BC|AB|SK|MB|ON|QC|NB|NS|PE|NL|YT|NT|NU") String province,
-        @NotBlank @Size(max = 20) @Pattern(regexp = "[ABCEGHJ-NPRSTVXY][0-9][ABCEGHJ-NPRSTV-Z] ?[0-9][ABCEGHJ-NPRSTV-Z][0-9]") String postalCode,
+        @NotBlank @Size(max = 64) @Pattern(regexp = "BC|AB|SK|MB|ON|QC|NB|NS|PE|NL|YT|NT|NU")
+                String province,
+        @NotBlank
+                @Size(max = 20)
+                @Pattern(
+                        regexp =
+                                "[ABCEGHJ-NPRSTVXY][0-9][ABCEGHJ-NPRSTV-Z] ?[0-9][ABCEGHJ-NPRSTV-Z][0-9]")
+                String postalCode,
         @NotBlank @Pattern(regexp = "CA") String countryCode,
         @NotBlank @Size(max = 32) @Pattern(regexp = "[+0-9() .-]{7,32}") String phone,
         @Email @Size(max = 254) String email,

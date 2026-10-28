@@ -45,9 +45,8 @@ public class ShippingAuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected void doFilterInternal(
-            HttpServletRequest request,
-            HttpServletResponse response,
-            FilterChain chain) throws ServletException, IOException {
+            HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws ServletException, IOException {
 
         String id = MDC.get("requestId");
         // 1. Reject cross-origin browser writes
@@ -55,7 +54,7 @@ public class ShippingAuthenticationFilter extends OncePerRequestFilter {
         if (!Set.of("GET", "HEAD", "OPTIONS").contains(request.getMethod())
                 && origin != null
                 && !sameOrigin(origin, request)) {
-            writeJsonError(response, 403, "ORIGIN_NOT_ALLOWED", id);
+            writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, "ORIGIN_NOT_ALLOWED", id);
             return;
         }
 
@@ -65,7 +64,8 @@ public class ShippingAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 3. Extract Bearer token and client fingerprint (fallback to SameSite=Strict cookies on GET)
+        // 3. Extract Bearer token and client fingerprint (fallback to SameSite=Strict cookies on
+        // GET)
         String token = extractBearerToken(request);
         String fingerprint = request.getHeader("X-Client-Fingerprint");
         if ("GET".equals(request.getMethod())) {
@@ -77,14 +77,15 @@ public class ShippingAuthenticationFilter extends OncePerRequestFilter {
             }
         }
 
-        boolean credentialsPresented = request.getHeader("Authorization") != null
-                || request.getHeader("X-Client-Fingerprint") != null
-                || token != null;
+        boolean credentialsPresented =
+                request.getHeader("Authorization") != null
+                        || request.getHeader("X-Client-Fingerprint") != null
+                        || token != null;
 
         if (credentialsPresented || requireToken) {
             Optional<String> verifiedUser = tokens.verifyAndResolveUser(token, fingerprint);
             if (verifiedUser.isEmpty()) {
-                writeJsonError(response, 401, "UNAUTHORIZED", id);
+                writeJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, "UNAUTHORIZED", id);
                 return;
             }
             request.setAttribute(AUTHENTICATED_USER_ATTR, verifiedUser.get());
@@ -117,21 +118,32 @@ public class ShippingAuthenticationFilter extends OncePerRequestFilter {
         return null;
     }
 
-    private void writeJsonError(HttpServletResponse response, int status, String code, String requestId) throws IOException {
+    private void writeJsonError(
+            HttpServletResponse response,
+            int status,
+            String code,
+            String requestId)
+            throws IOException {
         response.setStatus(status);
         response.setContentType("application/json");
-        response.getWriter().write(
-                "{\"code\":\"" + code + "\",\"message\":\"" + code.replace('_', ' ')
-                        + "\",\"requestId\":\"" + requestId + "\",\"fieldErrors\":[]}"
-        );
+        response.getWriter()
+                .write(
+                        "{\"code\":\""
+                                + code
+                                + "\",\"message\":\""
+                                + code.replace('_', ' ')
+                                + "\",\"requestId\":\""
+                                + requestId
+                                + "\",\"fieldErrors\":[]}");
     }
 
     private boolean sameOrigin(String origin, HttpServletRequest request) {
         try {
             URI uri = URI.create(origin);
-            int port = uri.getPort() == -1
-                    ? ("https".equals(uri.getScheme()) ? 443 : 80)
-                    : uri.getPort();
+            int port =
+                    uri.getPort() == -1
+                            ? ("https".equals(uri.getScheme()) ? 443 : 80)
+                            : uri.getPort();
 
             return request.getScheme().equals(uri.getScheme())
                     && request.getServerName().equalsIgnoreCase(uri.getHost())

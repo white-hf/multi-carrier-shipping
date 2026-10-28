@@ -18,7 +18,8 @@ public class ShippingAuthConfiguration {
 
     @Bean
     GuestSessionTokenService guestSessionTokenService(
-            @Value("${shipping.auth.token-secret:local-shipping-hmac-secret-key-2026}") String secret,
+            @Value("${shipping.auth.token-secret:local-shipping-hmac-secret-key-2026}")
+                    String secret,
             @Value("${shipping.auth.token-ttl:2h}") Duration tokenTtl,
             Clock clock) {
         return new GuestSessionTokenService(secret, tokenTtl, clock);
@@ -35,8 +36,10 @@ public class ShippingAuthConfiguration {
         return () -> {
             RequestAttributes attributes = RequestContextHolder.getRequestAttributes();
             if (attributes instanceof ServletRequestAttributes servletAttributes) {
-                Object verified = servletAttributes.getRequest()
-                        .getAttribute(ShippingAuthenticationFilter.AUTHENTICATED_USER_ATTR);
+                Object verified =
+                        servletAttributes
+                                .getRequest()
+                                .getAttribute(ShippingAuthenticationFilter.AUTHENTICATED_USER_ATTR);
                 if (verified instanceof String userId && !userId.isBlank()) {
                     return userId;
                 }

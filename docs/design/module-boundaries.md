@@ -26,7 +26,7 @@ The application is a **modular monolith**: one Spring Boot process, organized by
 
 6. **Framework-Free Domain & Centralized HTTP Error Mapping**
 
-   Domain objects hold business invariants without Spring, JDBC or HTTP framework dependencies. HTTP response mapping belongs at the API boundary. The current shared error type carries error codes and numeric status categories, so it is framework-independent rather than fully transport-agnostic.
+   Domain objects hold business invariants without Spring, JDBC or HTTP framework dependencies. HTTP response mapping belongs at the API boundary. Shared errors carry semantic failure categories, error codes and resource identities. Controllers and exception handlers map these to HTTP statuses, links and response headers.
 
 ## Code Organization
 

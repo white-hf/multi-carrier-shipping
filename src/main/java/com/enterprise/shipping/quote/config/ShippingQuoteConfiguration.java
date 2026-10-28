@@ -13,8 +13,8 @@ import com.enterprise.shipping.quote.port.RateComparisonPort;
 import com.enterprise.shipping.quote.port.RateProviderPort;
 import com.enterprise.shipping.quote.port.ShippingQuoteObserver;
 import com.enterprise.shipping.shared.domain.ShippingMarketPolicy;
-import io.github.resilience4j.bulkhead.BulkheadRegistry;
-import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundClientRegistry;
+import com.enterprise.shipping.quote.infrastructure.provider.ResilientCarrierRateAdapter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
@@ -52,22 +52,33 @@ public class ShippingQuoteConfiguration {
     QuoteStore quoteStore(DataSource source) {
         return new JdbcQuoteStore(
                 new JdbcTemplate(source),
-                new TransactionTemplate(new DataSourceTransactionManager(source))
-        );
+                new TransactionTemplate(new DataSourceTransactionManager(source)));
     }
 
     @Bean
     RateComparisonPort rateComparisonPort(
             RateProviderPort provider,
             ObjectProvider<List<CarrierRatePort>> directCarriers,
-            CircuitBreakerRegistry breakers,
-            BulkheadRegistry bulkheads,
+            OutboundClientRegistry outbound,
             QuoteObserver fanOutObserver,
             QuoteProperties properties,
             ShippingMarketPolicy market) {
         List<CarrierRatePort> carriers = directCarriers.getIfAvailable(List::of);
         if (carriers != null && !carriers.isEmpty()) {
-            return new HighFanOutAggregationEngine(carriers, breakers, bulkheads, fanOutObserver, properties, market);
+            var protectedCarriers =
+                    carriers.stream()
+                            .map(
+                                    carrier ->
+                                            (CarrierRatePort)
+                                                    new ResilientCarrierRateAdapter(
+                                                            carrier,
+                                                            outbound.registerGuard(
+                                                                    carrier.getCarrierId(),
+                                                                    java.util.Set.of("rates")),
+                                                            market))
+                            .toList();
+            return new HighFanOutAggregationEngine(
+                    protectedCarriers, fanOutObserver, properties, market);
         }
         return new SingleProviderRateEngine(provider);
     }
@@ -80,6 +91,7 @@ public class ShippingQuoteConfiguration {
             @Value("${shipping.provider.rate-timeout}") Duration timeout,
             @Value("${shipping.business-timezone:America/Toronto}") String zone,
             ShippingQuoteObserver observer) {
-        return new QuoteApplicationService(store, engine, clock, timeout, ZoneId.of(zone), observer);
+        return new QuoteApplicationService(
+                store, engine, clock, timeout, ZoneId.of(zone), observer);
     }
 }
