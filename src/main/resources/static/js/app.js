@@ -27,6 +27,7 @@
     booking: null,
     creating: false,
     watching: false,
+    replaying: false,
     labelAttempted: false,
     labelObjectUrl: null,
     labelTarget: null,
@@ -846,12 +847,33 @@
     $('outcome-explanation').textContent = 'The provider may have accepted this request. Keep the original operation identity; do not submit it again with a new key.';
     $('unknown-new').textContent = 'Start a different shipment';
     $('check-status-btn').hidden = false;
+    $('check-status-btn').textContent = 'Check Status';
+    $('check-status-btn').dataset.original = 'Check Status';
     go(3);
     $('review-view').hidden = true;
     $('success-view').hidden = true;
     $('unknown-view').hidden = false;
     $('unknown-id').textContent = message || 'Creation outcome is not confirmed. Do not resubmit with a new key.';
     $('check-status-btn').disabled = !(state.bookingId || (state.key && state.selected));
+  }
+
+  function showRetryable(data) {
+    state.booking = { ...data, status: 'RETRYABLE' };
+    if (data.bookingId) state.bookingId = data.bookingId;
+    showPending(`Submission was not sent. ${state.bookingId ? 'Booking: ' + state.bookingId : ''}`);
+    $('outcome-title').textContent = 'Shipment not submitted';
+    $('outcome-explanation').textContent = 'Local capacity protection stopped this attempt before it was sent. Retry the same shipment with its original key.';
+    $('check-status-btn').textContent = 'Retry shipment';
+    $('check-status-btn').dataset.original = 'Retry shipment';
+    $('check-status-btn').disabled = !(state.key && state.selected) || state.replaying;
+    pollToken++;
+    saveActive();
+  }
+
+  function handleNotDispatched(error) {
+    if (!(error instanceof HttpError) || error.code !== 'SHIPMENT_SUBMISSION_NOT_DISPATCHED') return false;
+    showRetryable({ bookingId: error.payload?.operation?.id || state.bookingId });
+    return true;
   }
 
   // Manual review is unresolved, but no longer awaiting automatic recovery.
@@ -1069,9 +1091,14 @@
   }
 
   function handleBooking(data) {
+    state.booking = data;
     if (data.bookingId) state.bookingId = data.bookingId;
     saveActive();
     const status = (data.status || '').toUpperCase();
+    if (status === 'RETRYABLE') {
+      showRetryable(data);
+      return;
+    }
     if (status === 'CONFIRMED') {
       showConfirmed(data);
       return;
@@ -1097,7 +1124,7 @@
       try {
         const reply = await api.status(state.bookingId);
         handleStatus(reply.data);
-        if (['CONFIRMED', 'REJECTED', 'MANUAL_REVIEW'].includes((reply.data.status || '').toUpperCase())) break;
+        if (['CONFIRMED', 'REJECTED', 'MANUAL_REVIEW', 'RETRYABLE'].includes((reply.data.status || '').toUpperCase())) break;
       } catch (e) {
         notice('Status check unavailable: ' + errorText(e));
       }
@@ -1107,7 +1134,10 @@
   }
 
   function handleStatus(data) {
-    if ((data.status || '').toUpperCase() === 'CONFIRMED') showConfirmed(data);
+    state.booking = data;
+    saveActive();
+    if ((data.status || '').toUpperCase() === 'RETRYABLE') showRetryable(data);
+    else if ((data.status || '').toUpperCase() === 'CONFIRMED') showConfirmed(data);
     else if ((data.status || '').toUpperCase() === 'REJECTED') showRejected(data);
     else if ((data.status || '').toUpperCase() === 'MANUAL_REVIEW') showManualReview(data);
     else showPending(`Booking ${state.bookingId}: ${data.status || 'PENDING_CONFIRMATION'}. Do not create another shipment.`);
@@ -1326,6 +1356,7 @@
       const resp = await api.booking(quoteId(state.selected), state.key);
       handleBooking(resp.data);
     } catch (err) {
+      if (handleNotDispatched(err)) return;
       if (err instanceof HttpError && (err.code === 'QUOTE_EXPIRED' || err.code === 'QUOTE_NOT_BOOKABLE')) {
         clearActive();
         state.selected = null;
@@ -1355,19 +1386,25 @@
   });
 
   $('check-status-btn').addEventListener('click', () => {
-    if (state.bookingId) poll();
+    if (state.booking?.status === 'RETRYABLE') recoverByReplay();
+    else if (state.bookingId) poll();
     else if (state.key && state.selected) recoverByReplay();
   });
 
   async function recoverByReplay() {
-    if (!state.key || !state.selected) return;
+    if (!state.key || !state.selected || state.replaying || state.watching) return;
+    state.replaying = true;
     busy('check-status-btn', true, 'Checking…');
     try {
       const r = await api.booking(quoteId(state.selected), state.key);
       handleBooking(r.data);
     } catch (e) {
+      if (handleNotDispatched(e)) return;
+      state.booking = { bookingId: state.bookingId, status: 'PENDING_CONFIRMATION' };
+      saveActive();
       showPending('Could not confirm creation: ' + errorText(e) + '. Retry with the SAME key only.');
     } finally {
+      state.replaying = false;
       busy('check-status-btn', false);
     }
   }
@@ -1458,7 +1495,12 @@
       };
       state.savedService = `${previous.carrierName || ''} · ${previous.serviceName || ''}`;
       if (mock !== previous.mock) mode(previous.mock);
-      if (previous.status === 'MANUAL_REVIEW') {
+      if (previous.status === 'RETRYABLE') {
+        showRetryable({ bookingId: state.bookingId });
+        if (state.bookingId) {
+          api.status(state.bookingId).then(reply => handleStatus(reply.data)).catch(error => notice(errorText(error)));
+        }
+      } else if (previous.status === 'MANUAL_REVIEW') {
         showManualReview({ bookingId: state.bookingId, status: 'MANUAL_REVIEW', errorCode: previous.errorCode });
         // One fresh read may discover a late confirmation; do not restart polling.
         if (state.bookingId) {

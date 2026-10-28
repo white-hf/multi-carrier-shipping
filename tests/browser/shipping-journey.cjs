@@ -216,8 +216,56 @@ async function ctl(mode) {
     await page.waitForSelector('#step-2:not([hidden]) .rate-card');
     await page.click('.rate-card:first-child');
     await page.click('#review-btn');
+    // Exercise the retry UI without sending the first two attempts to the provider.
+    const retryRequests = [];
+    let retryStatusReads = 0;
+    await page.route('**/api/bookings/retryable-ui-booking', async route => {
+      retryStatusReads++;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ bookingId: 'retryable-ui-booking', status: 'RETRYABLE' })
+      });
+    });
+    await page.route('**/api/bookings', async route => {
+      const request = route.request();
+      retryRequests.push({ key: request.headers()['idempotency-key'], body: request.postDataJSON() });
+      if (retryRequests.length <= 2) {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          headers: { 'Retry-After': '2' },
+          body: JSON.stringify({
+            code: 'SHIPMENT_SUBMISSION_NOT_DISPATCHED',
+            operation: { id: 'retryable-ui-booking', statusUrl: '/api/bookings/retryable-ui-booking' }
+          })
+        });
+      } else {
+        await route.continue();
+      }
+    });
     await page.click('#create-btn');
+    await page.waitForFunction(() => document.getElementById('outcome-title').textContent === 'Shipment not submitted');
+    assert.strictEqual((await ctl('stats')).createCalls, 0);
+    assert.strictEqual(await page.textContent('#check-status-btn'), 'Retry shipment');
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForFunction(() => document.getElementById('outcome-title').textContent === 'Shipment not submitted');
+    assert.strictEqual(retryRequests.length, 1, 'Reload must not automatically resubmit');
+    assert.strictEqual(retryStatusReads, 1, 'Restore should check current status once');
+    await page.click('#check-status-btn');
+    await page.waitForFunction(() => !document.getElementById('check-status-btn').disabled);
+    assert.strictEqual(retryRequests.length, 2);
+    assert.strictEqual((await ctl('stats')).createCalls, 0);
+    await page.click('#check-status-btn');
     await page.waitForSelector('#success-view:not([hidden])');
+    assert.strictEqual(retryRequests.length, 3);
+    assert.ok(retryRequests[0].key);
+    for (const request of retryRequests) {
+      assert.strictEqual(request.key, retryRequests[0].key, 'Retry must retain the original key');
+      assert.deepStrictEqual(request.body, retryRequests[0].body, 'Retry must retain the selected quote');
+    }
+    await page.unroute('**/api/bookings');
+    await page.unroute('**/api/bookings/retryable-ui-booking');
     assert.strictEqual(await page.textContent('#result-id'), '98765');
     assert.strictEqual(await page.textContent('#result-tracking'), 'TRK-98765');
     await page.waitForFunction(() => document.getElementById('label-status-text').textContent.includes('Label not ready; use Retry label later.'));

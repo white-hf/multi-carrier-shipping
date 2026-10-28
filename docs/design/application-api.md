@@ -180,9 +180,11 @@ A local create bulkhead rejection or open circuit has not sent a provider reques
 
 `GET /api/bookings/{id}` returns `status: RETRYABLE` and the same error code. A user-triggered retry must resubmit **the same quote ID and Idempotency-Key** to `POST /api/bookings`; it reuses the existing booking. Concurrent retries compete for one version-fenced claim. Do not run a rapid automatic retry loop. Repeated local rejection remains `RETRYABLE` and creates no manual-review task.
 
+The UI renders proven-unsent submissions as **Shipment not submitted**, retains the booking locator and original key/quote across reloads, and offers **Retry shipment**. Reload reads current status without automatically submitting; RETRYABLE ends polling. An explicit retry POST uses the original key and quote even when a booking ID is known.
+
 The backend revalidates the quote before retrying. An expired/unavailable quote is not dispatched; obtain a new quote/request and ask the user to confirm it. Different keys for the original request remain conflicts. A dispatched timeout or lost response is still `PENDING_CONFIRMATION`, not `RETRYABLE`, and must never enable blind resubmission. Generic HTTP/network failures are not proof that creation was unsent.
 
-Frontend support for the new retryable state is a separate handoff; this backend fix does not change frontend code.
+The frontend handles this retryable state explicitly; uncertain dispatched outcomes continue to use status checks rather than a new-key submission.
 
 ## Label: one automatic attempt, then manual retry
 
