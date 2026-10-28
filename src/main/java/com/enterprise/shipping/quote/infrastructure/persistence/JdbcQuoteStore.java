@@ -61,6 +61,9 @@ public final class JdbcQuoteStore implements QuoteStore {
 
     @Override
     public boolean insert(RateRequest request, long now) {
+        if (request.state() != RateRequest.State.RATING) {
+            throw new IllegalArgumentException("Initial rate request must be RATING");
+        }
         String user = request.userId();
         String id = request.requestId();
         ShippingIntent intent = request.intent();
@@ -97,7 +100,7 @@ public final class JdbcQuoteStore implements QuoteStore {
                 p.weightUnit().name(),
                 p.packageType(),
                 intent.shippingDate().toString(),
-                "RATING",
+                request.state().name(),
                 now,
                 now);
 
@@ -153,6 +156,24 @@ public final class JdbcQuoteStore implements QuoteStore {
                         JdbcQuoteStore::request,
                         user,
                         id)
+                .stream()
+                .findFirst();
+    }
+
+    @Override
+    public Optional<RateRequest.BookingContext> bookingContext(String userId, String requestId) {
+        return jdbc.query(
+                        """
+                        SELECT state, shipping_date
+                        FROM shipment_requests
+                        WHERE user_id = ? AND request_id = ?
+                        """,
+                        (row, ignored) ->
+                                new RateRequest.BookingContext(
+                                        RateRequest.State.valueOf(row.getString("state")),
+                                        LocalDate.parse(row.getString("shipping_date"))),
+                        userId,
+                        requestId)
                 .stream()
                 .findFirst();
     }

@@ -98,6 +98,35 @@ class ShippingRateRequestTest {
                     null);
 
     @Test
+    void bookingSelectionReadsOnlyEligibilityContext() {
+        var created = service().create("user", "minimal-context", intent);
+        String quoteId = created.result().quotes().get(0).quoteId();
+        var storage = spy(store);
+        assertThat(service(storage).resolve("user", quoteId).quoteId()).isEqualTo(quoteId);
+        verify(storage).bookingContext("user", created.result().requestId());
+        verify(storage, never()).request(anyString(), anyString());
+        assertThat(store.bookingContext("other", created.result().requestId())).isEmpty();
+    }
+
+    @Test
+    void insertRejectsNonRatingStateWithoutPersistingIt() {
+        var dated = intent.dated(LocalDate.of(2026, 10, 23));
+        var invalid = new RateRequest(
+                "user",
+                "invalid-initial-state",
+                "invalid-initial-key",
+                ShippingIntentFingerprint.of(dated),
+                dated,
+                RateRequest.State.READY,
+                0,
+                null);
+        assertThatThrownBy(() -> store.insert(invalid, clock.millis()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Initial rate request must be RATING");
+        assertThat(count("shipment_requests")).isZero();
+    }
+
+    @Test
     void requestBookingEligibilityBelongsToTheDomainAndUsesTheSuppliedBusinessDate() {
         var today = LocalDate.of(2026, 10, 27);
         for (var state : RateRequest.State.values()) {

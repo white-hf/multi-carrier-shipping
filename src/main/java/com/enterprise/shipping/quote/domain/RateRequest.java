@@ -40,10 +40,22 @@ public record RateRequest(
 
     /** The caller supplies the business date; domain rules never read a system clock. */
     public BookingEligibility bookingEligibility(LocalDate today) {
-        if (!intent.hasCurrentShippingDate(today)) {
-            return BookingEligibility.DATE_EXPIRED;
+        return new BookingContext(state, intent.shippingDate()).eligibility(today);
+    }
+
+    /** Minimal facts needed to validate booking without loading the customer snapshot. */
+    public record BookingContext(State state, LocalDate shippingDate) {
+        public BookingContext {
+            Objects.requireNonNull(state, "Rate state required");
+            Objects.requireNonNull(shippingDate, "Shipping date required");
         }
-        return state == State.READY ? BookingEligibility.ELIGIBLE : BookingEligibility.NOT_READY;
+
+        public BookingEligibility eligibility(LocalDate today) {
+            if (shippingDate.isBefore(today)) {
+                return BookingEligibility.DATE_EXPIRED;
+            }
+            return state == State.READY ? BookingEligibility.ELIGIBLE : BookingEligibility.NOT_READY;
+        }
     }
 
     /** Only the current, unexpired execution may publish a result; SQL repeats this fence atomically. */

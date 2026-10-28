@@ -15,6 +15,9 @@ public interface QuoteStore {
 
     Optional<RateRequest> request(String userId, String requestId);
 
+    Optional<RateRequest.BookingContext> bookingContext(String userId, String requestId);
+
+    /** Inserts an initial RATING claim; other states are rejected. */
     boolean insert(RateRequest request, long now);
 
     boolean claim(RateRequest expected, RateRequest claimed, long now);
