@@ -821,6 +821,7 @@
   }
 
   function clearActive() {
+    pollToken++;
     if (state.labelObjectUrl) {
       URL.revokeObjectURL(state.labelObjectUrl);
       state.labelObjectUrl = null;
@@ -834,6 +835,7 @@
     state.bookingId = null;
     state.booking = null;
     state.creating = false;
+    state.replaying = false;
     updateLabelActions();
   }
 
@@ -873,6 +875,26 @@
   function handleNotDispatched(error) {
     if (!(error instanceof HttpError) || error.code !== 'SHIPMENT_SUBMISSION_NOT_DISPATCHED') return false;
     showRetryable({ bookingId: error.payload?.operation?.id || state.bookingId });
+    return true;
+  }
+
+  function handleUnavailableQuote(error, returnToStep1 = false) {
+    if (!(error instanceof HttpError)) return false;
+    if (!['QUOTE_EXPIRED', 'QUOTE_NOT_BOOKABLE', 'REQUEST_DATE_EXPIRED'].includes(error.code)) {
+      return false;
+    }
+    if (error.code === 'REQUEST_DATE_EXPIRED') {
+      rateOperation = null;
+      saveDraft();
+    }
+    clearActive();
+    state.selected = null;
+    state.quotes = [];
+    state.creating = false;
+    if (returnToStep1) {
+      go(1);
+    }
+    notice(errorText(error));
     return true;
   }
 
@@ -1357,14 +1379,7 @@
       handleBooking(resp.data);
     } catch (err) {
       if (handleNotDispatched(err)) return;
-      if (err instanceof HttpError && (err.code === 'QUOTE_EXPIRED' || err.code === 'QUOTE_NOT_BOOKABLE')) {
-        clearActive();
-        state.selected = null;
-        state.quotes = [];
-        state.creating = false;
-        notice(errorText(err));
-        return;
-      }
+      if (handleUnavailableQuote(err, false)) return;
       if (err instanceof HttpError && err.status === 422) {
         showRejected(err.payload);
         return;
@@ -1393,6 +1408,7 @@
 
   async function recoverByReplay() {
     if (!state.key || !state.selected || state.replaying || state.watching) return;
+    pollToken++;
     state.replaying = true;
     busy('check-status-btn', true, 'Checking…');
     try {
@@ -1400,6 +1416,7 @@
       handleBooking(r.data);
     } catch (e) {
       if (handleNotDispatched(e)) return;
+      if (handleUnavailableQuote(e, true)) return;
       state.booking = { bookingId: state.bookingId, status: 'PENDING_CONFIRMATION' };
       saveActive();
       showPending('Could not confirm creation: ' + errorText(e) + '. Retry with the SAME key only.');
@@ -1451,7 +1468,7 @@
   $('new-shipment-btn').addEventListener('click', reset);
 
   $('unknown-new').addEventListener('click', () => {
-    if (state.booking?.status === 'REJECTED') {
+    if (state.booking?.status === 'REJECTED' || state.booking?.status === 'RETRYABLE') {
       reset();
       return;
     }
@@ -1478,6 +1495,22 @@
     saveDraft();
   }));
 
+  function refreshRestoredStatus() {
+    if (!state.bookingId) return;
+    const token = ++pollToken;
+    const bookingId = state.bookingId;
+    const key = state.key;
+    api.status(bookingId)
+      .then(reply => {
+        if (token !== pollToken || state.replaying || state.bookingId !== bookingId || state.key !== key) return;
+        handleStatus(reply.data);
+      })
+      .catch(error => {
+        if (token !== pollToken || state.replaying || state.bookingId !== bookingId || state.key !== key) return;
+        notice(errorText(error));
+      });
+  }
+
   // Restore active submission on page reload and eagerly initialize the 2-hour Guest Token
   if (!mock) {
     ensureGuestSession(false).catch(() => {});
@@ -1497,15 +1530,11 @@
       if (mock !== previous.mock) mode(previous.mock);
       if (previous.status === 'RETRYABLE') {
         showRetryable({ bookingId: state.bookingId });
-        if (state.bookingId) {
-          api.status(state.bookingId).then(reply => handleStatus(reply.data)).catch(error => notice(errorText(error)));
-        }
+        refreshRestoredStatus();
       } else if (previous.status === 'MANUAL_REVIEW') {
         showManualReview({ bookingId: state.bookingId, status: 'MANUAL_REVIEW', errorCode: previous.errorCode });
         // One fresh read may discover a late confirmation; do not restart polling.
-        if (state.bookingId) {
-          api.status(state.bookingId).then(reply => handleStatus(reply.data)).catch(error => notice(errorText(error)));
-        }
+        refreshRestoredStatus();
       } else {
         showPending(`Restored active shipment submission. ${state.bookingId ? 'Booking: ' + state.bookingId : 'Click Check Status to replay with the original key.'}`);
         if (state.bookingId) poll();
