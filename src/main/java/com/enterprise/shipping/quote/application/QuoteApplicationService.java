@@ -345,11 +345,12 @@ public class QuoteApplicationService implements QuoteSelectionPort {
     public Selection resolve(String userId, String quoteId) {
         var q = store.find(userId, quoteId).orElseThrow(ShippingException::missing);
 
-        var request = store.request(userId, q.requestId()).orElseThrow(ShippingException::missing);
-        switch (request.bookingEligibility(businessDate(clock.millis()))) {
+        var request =
+                store.bookingContext(userId, q.requestId()).orElseThrow(ShippingException::missing);
+        switch (request.eligibility(businessDate(clock.millis()))) {
             case DATE_EXPIRED ->
                     throw ShippingException.conflict("REQUEST_DATE_EXPIRED")
-                            .forQuoteRequest(request.requestId());
+                            .forQuoteRequest(q.requestId());
             case NOT_READY -> throw ShippingException.conflict("QUOTE_NOT_BOOKABLE");
             case ELIGIBLE -> {
                 /* Offer-specific rules are checked by the quote below. */
