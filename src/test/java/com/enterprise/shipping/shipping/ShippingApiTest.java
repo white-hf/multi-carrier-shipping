@@ -1023,6 +1023,24 @@ class ShippingApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.labelStatus").value("AVAILABLE"));
 
+        var jdbc = new JdbcTemplate(source);
+        var beforeReload =
+                jdbc.queryForMap(
+                        """
+                        SELECT version, updated_at FROM shipment_bookings WHERE booking_id = ?
+                        """,
+                        bookingId);
+        mvc.perform(get("/api/bookings/" + bookingId + "/label"))
+                .andExpect(status().isOk())
+                .andExpect(content().bytes(pdfBytes));
+        assertThat(
+                        jdbc.queryForMap(
+                                """
+                                SELECT version, updated_at FROM shipment_bookings WHERE booking_id = ?
+                                """,
+                                bookingId))
+                .isEqualTo(beforeReload);
+
         LABEL_CONTENT_TYPE.set("application/json");
         LABEL_BYTES.set(
                 "{\"labelUrl\":\"https://evil.example.com/label.pdf\"}"

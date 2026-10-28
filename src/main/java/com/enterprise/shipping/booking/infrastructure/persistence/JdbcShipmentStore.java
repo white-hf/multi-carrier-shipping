@@ -181,13 +181,24 @@ public final class JdbcShipmentStore implements ShipmentStore {
             String id,
             String url,
             long now) {
+        // Repeated PDF reads publish the same availability fact; avoid another SQLite write.
         jdbc.update(
-                "UPDATE shipment_bookings SET label_status = 'AVAILABLE', label_url = ?, updated_at = ?, version = version + 1 "
-                        + "WHERE user_id = ? AND booking_id = ? AND status = 'CONFIRMED'",
+                """
+                UPDATE shipment_bookings
+                SET label_status = 'AVAILABLE', label_url = ?, updated_at = ?, version = version + 1
+                WHERE user_id = ? AND booking_id = ? AND status = 'CONFIRMED'
+                  AND (label_status <> 'AVAILABLE'
+                       OR (label_url IS NULL AND ? IS NOT NULL)
+                       OR (label_url IS NOT NULL AND ? IS NULL)
+                       OR label_url <> ?)
+                """,
                 url,
                 now,
                 user,
-                id);
+                id,
+                url,
+                url,
+                url);
     }
 
     @Override
