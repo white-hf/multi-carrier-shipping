@@ -213,48 +213,117 @@ async function ctl(mode) {
     await ctl('normal');
     await ctl('reset-counts');
 
-    // 8.0 Quote CONTENDED (202) response queries GET /api/quotes/{requestId} instead of rendering empty quotes
-    let contendedQuoteStatusCalls = 0;
-    await page.route('**/api/quotes/contended-rate-req', async route => {
-      contendedQuoteStatusCalls++;
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          requestId: 'contended-rate-req',
-          state: 'READY',
-          shippingDate: '2026-10-28',
-          quotes: [{
-            quoteId: 'contended-quote-1',
-            carrierId: '14',
-            carrierName: 'Carrier',
-            serviceId: '1',
-            serviceName: 'Ground',
-            total: { amount: '27.35', currency: 'CAD' },
-            transitDays: 2,
-            expiresAt: new Date(Date.now() + 600000).toISOString()
-          }]
-        })
-      });
-    });
+    // 8.0 Quote response ordering, non-polling in-progress handling, and expired selection protection
     const quotePostMatcher = url => url.pathname === '/api/quotes';
+
+    // (a) Editing input while a rate request is in flight immediately re-enables the button and ignores the obsolete response/error
+    let releaseObsoletePost = null;
+    const obsoletePostStarted = new Promise(resolve => { releaseObsoletePost = resolve; });
+    let allowObsoleteFinish = null;
+    const obsoleteGate = new Promise(resolve => { allowObsoleteFinish = resolve; });
     await page.route(quotePostMatcher, async route => {
+      releaseObsoletePost();
+      await obsoleteGate;
       await route.fulfill({
-        status: 202,
+        status: 502,
         contentType: 'application/json',
-        headers: { Location: '/api/quotes/contended-rate-req', 'Retry-After': '2' },
-        body: JSON.stringify({
-          requestId: 'contended-rate-req',
-          state: 'CONTENDED',
-          shippingDate: '2026-10-28',
-          quotes: []
-        })
+        body: JSON.stringify({ code: 'PROVIDER_UNAVAILABLE', message: 'PROVIDER UNAVAILABLE', fieldErrors: [] })
       });
     });
     await page.click('#get-rates-btn');
+    await obsoletePostStarted;
+    assert.strictEqual(await page.isDisabled('#get-rates-btn'), true, 'Button must be disabled while request is in flight');
+    await page.fill('input[name="from.streetAddress2"]', 'Suite 101');
+    assert.strictEqual(await page.isDisabled('#get-rates-btn'), false, 'Editing input must immediately re-enable Get Rates button');
+    allowObsoleteFinish();
+    await page.waitForTimeout(80);
+    assert.strictEqual(await page.isVisible('#step-1'), true, 'Obsolete response must not leave Step 1');
+    assert.strictEqual(await page.isVisible('#notice'), false, 'Obsolete error must not show a notice after input edit');
+    await page.unroute(quotePostMatcher);
+
+    // (b) In-progress (RATING / CONTENDED) response stops loading without auto-polling, keeps page, and allows user to click again
+    let quoteStatusPolls = 0;
+    await page.route('**/api/quotes/contended-rate-req', async route => {
+      quoteStatusPolls++;
+      await route.abort();
+    });
+    let quotePostAttempt = 0;
+    let notifyFirstPostHeld = null;
+    const firstPostHeld = new Promise(resolve => { notifyFirstPostHeld = resolve; });
+    let releaseLateRatingPost = null;
+    const lateRatingGate = new Promise(resolve => { releaseLateRatingPost = resolve; });
+    await page.route(quotePostMatcher, async route => {
+      quotePostAttempt++;
+      if (quotePostAttempt === 1) {
+        await route.fulfill({
+          status: 202,
+          contentType: 'application/json',
+          headers: { Location: '/api/quotes/contended-rate-req', 'Retry-After': '2' },
+          body: JSON.stringify({
+            requestId: 'contended-rate-req',
+            state: 'CONTENDED',
+            shippingDate: '2026-10-28',
+            quotes: []
+          })
+        });
+      } else if (quotePostAttempt === 2) {
+        notifyFirstPostHeld();
+        await lateRatingGate;
+        await route.fulfill({
+          status: 202,
+          contentType: 'application/json',
+          headers: { Location: '/api/quotes/contended-rate-req', 'Retry-After': '2' },
+          body: JSON.stringify({
+            requestId: 'contended-rate-req',
+            state: 'RATING',
+            shippingDate: '2026-10-28',
+            quotes: []
+          })
+        });
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            requestId: 'contended-rate-req',
+            state: 'READY',
+            shippingDate: '2026-10-28',
+            quotes: [{
+              quoteId: 'contended-quote-1',
+              carrierId: '14',
+              carrierName: 'Carrier',
+              serviceId: '1',
+              serviceName: 'Ground',
+              total: { amount: '27.35', currency: 'CAD' },
+              transitDays: 2,
+              expiresAt: new Date(Date.now() + 600000).toISOString()
+            }]
+          })
+        });
+      }
+    });
+    await page.click('#get-rates-btn');
+    await page.waitForFunction(() => !document.getElementById('notice').hidden && document.getElementById('notice').textContent.includes('Rates are still being retrieved'));
+    assert.strictEqual(quoteStatusPolls, 0, 'Quote must not auto-poll GET /api/quotes/{id}');
+    assert.strictEqual(await page.isDisabled('#get-rates-btn'), false, 'Get Rates button must be re-enabled after in-progress response');
+    assert.strictEqual(await page.isVisible('#step-1'), true);
+
+    // (c) Start Attempt 2 (held in flight), re-trigger Attempt 3 with same signature -> READY, then release Attempt 2's late RATING
+    await page.click('#get-rates-btn');
+    await firstPostHeld;
+    await page.fill('input[name="from.streetAddress2"]', 'Suite 102');
+    await page.fill('input[name="from.streetAddress2"]', 'Suite 101');
+    await page.click('#get-rates-btn');
     await page.waitForSelector('#step-2:not([hidden]) .rate-card');
-    assert.strictEqual(contendedQuoteStatusCalls, 1, 'CONTENDED quote POST must immediately query GET /api/quotes/{requestId}');
     assert.strictEqual(await page.textContent('.rate-card:first-child .rate-name'), 'Carrier');
+    await page.click('.rate-card:first-child');
+    assert.strictEqual(await page.isDisabled('#review-btn'), false);
+    releaseLateRatingPost();
+    await page.waitForTimeout(100);
+    assert.strictEqual(await page.isVisible('#step-2'), true, 'Late RATING response must not leave Step 2');
+    assert.strictEqual(await page.getAttribute('.rate-card:first-child', 'aria-checked'), 'true', 'Late RATING must not clear selection');
+    assert.strictEqual(await page.isDisabled('#review-btn'), false, 'Late RATING must not disable review button');
+    assert.strictEqual(await page.isVisible('#notice'), false, 'Late RATING must not display a stale in-progress notice');
     await page.unroute(quotePostMatcher);
     await page.unroute('**/api/quotes/contended-rate-req');
     await page.click('#step-2 [data-back="1"]');

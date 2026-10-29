@@ -233,6 +233,11 @@
     }
     saveDraft();
     state.revision++;
+    if (rateBusy) {
+      rateBusy = false;
+      stopLoadingBanner();
+      busy('get-rates-btn', false);
+    }
     if (state.quotes.length && !state.key) {
       state.quotes = [];
       state.selected = null;
@@ -639,7 +644,6 @@
     quotes: (data, key) => mock
         ? demo.quotes()
         : http('/api/quotes', { method: 'POST', body: data, headers: { 'Idempotency-Key': key } }),
-    quoteStatus: id => http('/api/quotes/' + encodeURIComponent(id)),
     booking: (quote, key) => mock
         ? demo.booking(quote, key)
         : http('/api/bookings', { method: 'POST', body: { quoteId: quote }, headers: { 'Idempotency-Key': key } }),
@@ -1236,18 +1240,59 @@
     }
   }
 
-  function displayRates(data, req) {
-    if (data.state === 'RATING' || data.state === 'CONTENDED') {
+  function isCurrentRateOperation(operation, rev) {
+    return rev === state.revision && rateOperation === operation;
+  }
+
+  function disableExpiredSelection() {
+    state.selected = null;
+    if ($('review-btn')) $('review-btn').disabled = true;
+    if ($('selected-rate-summary')) {
+      $('selected-rate-summary').textContent = 'Select a shipping option above to continue';
+    }
+    if (state.quotes.length) {
+      renderQuotes();
+    }
+  }
+
+  function acceptRateResponse(data, operation, req) {
+    if (!data || typeof data !== 'object') {
+      throw new Error('Invalid /api/quotes response');
+    }
+    if (data.requestId) {
+      operation.requestId = data.requestId;
+      saveDraft();
+    }
+
+    const requestState = String(data.state || '').toUpperCase();
+    if (requestState === 'RATING' || requestState === 'CONTENDED') {
       notice('Rates are still being retrieved. Click Get Rates again to check or retry safely.', 'info');
       return;
     }
-    if (data.state === 'RATE_FAILED' || data.state === 'QUOTES_EXPIRED') {
-      notice(data.state === 'RATE_FAILED'
-          ? 'Rates could not be retrieved. Click Get Rates to retry the saved request.'
-          : 'These rates have expired. Click Get Rates to refresh them.', 'info');
+
+    if (requestState === 'RATE_FAILED') {
+      if (!state.key && state.requestId === operation.requestId) {
+        disableExpiredSelection();
+      }
+      notice('Rates could not be retrieved. Click Get Rates to retry the saved request.', 'info');
       return;
     }
-    if (!Array.isArray(data.quotes)) throw Error('Invalid /api/quotes response: quotes[] missing');
+
+    if (requestState === 'QUOTES_EXPIRED') {
+      if (!state.key) {
+        disableExpiredSelection();
+      }
+      notice('These rates have expired. Click Get Rates to refresh them.', 'info');
+      return;
+    }
+
+    if (requestState !== 'READY' && requestState !== 'NO_RATES') {
+      throw new Error(`Unsupported quote state: ${requestState || 'UNKNOWN'}`);
+    }
+    if (!Array.isArray(data.quotes)) {
+      throw new Error('Invalid /api/quotes response: quotes[] missing');
+    }
+
     const discoveredCarriers = [...new Set(data.quotes.map(q => carrier(q)).filter(Boolean))];
     if (discoveredCarriers.length) {
       const merged = [...state.supportedCarriers];
@@ -1258,14 +1303,15 @@
       }
       state.supportedCarriers = merged;
     }
+
     state.request = req;
     state.requestId = data.requestId;
-    state.quotes = data.quotes;
+    state.quotes = requestState === 'NO_RATES' ? [] : data.quotes;
     state.selected = null;
     routes();
     renderQuotes();
     go(2);
-    if (!state.quotes.length) {
+    if (requestState === 'NO_RATES' || !state.quotes.length) {
       notice('No shipping rates available. Please edit shipment details.', 'info');
     }
   }
@@ -1273,12 +1319,17 @@
   // Step 1 form events
   $('shipping-form').addEventListener('input', () => {
     updateTabSummaries();
-    saveDraft();
     state.revision++;
+    if (rateBusy) {
+      rateBusy = false;
+      stopLoadingBanner();
+      busy('get-rates-btn', false);
+    }
     if (state.quotes.length && !state.key) {
       state.quotes = [];
       state.selected = null;
     }
+    saveDraft();
   });
 
   $('shipping-form').addEventListener('submit', async e => {
@@ -1306,25 +1357,9 @@
       }
       const operation = rateOperation;
       saveDraft();
-      let response = await api.quotes(req, operation.key);
-      if (rev !== state.revision || rateOperation !== operation) return;
-      if (response.data.requestId) {
-        operation.requestId = response.data.requestId;
-      }
-      saveDraft();
-      // CONTENDED is a response-only claim loss; immediately inspect the stored request state.
-      if (!mock && response.data.state === 'CONTENDED' && operation.requestId) {
-        response = await api.quoteStatus(operation.requestId);
-        if (rev !== state.revision || rateOperation !== operation) return;
-      }
-      // Status reads never trigger a provider request. Retries remain user initiated.
-      for (let i = 0; !mock && (response.data.state === 'RATING' || response.data.state === 'CONTENDED') && operation.requestId && i < 5; i++) {
-        await delay(2000);
-        if (rev !== state.revision || rateOperation !== operation) return;
-        response = await api.quoteStatus(operation.requestId);
-      }
-      if (rev !== state.revision || rateOperation !== operation) return;
-      displayRates(response.data, req);
+      const response = await api.quotes(req, operation.key);
+      if (!isCurrentRateOperation(operation, rev)) return;
+      acceptRateResponse(response.data, operation, req);
     } catch (err) {
       if (rev === state.revision) {
         if (err instanceof HttpError) {
@@ -1340,9 +1375,11 @@
         notice(errorText(err));
       }
     } finally {
-      rateBusy = false;
-      stopLoadingBanner();
-      busy('get-rates-btn', false);
+      if (rev === state.revision) {
+        rateBusy = false;
+        stopLoadingBanner();
+        busy('get-rates-btn', false);
+      }
     }
   });
 
@@ -1352,6 +1389,11 @@
   $('review-btn').addEventListener('click', () => {
     const q = state.selected;
     if (!q) return;
+    if (q.expiresAt && Date.now() >= new Date(q.expiresAt).getTime() - 15000) {
+      disableExpiredSelection();
+      notice('These rates have expired. Click Get Rates to refresh them.', 'info');
+      return;
+    }
     const s = state.request.sender;
     const r = state.request.recipient;
     const p = state.request.parcel;
