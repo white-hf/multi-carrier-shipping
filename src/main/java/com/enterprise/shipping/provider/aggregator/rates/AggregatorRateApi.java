@@ -1,34 +1,77 @@
-package com.enterprise.shipping.provider.aggregator;
+package com.enterprise.shipping.provider.aggregator.rates;
 
-import com.enterprise.shipping.provider.aggregator.api.dto.AddressPayload;
-import com.enterprise.shipping.provider.aggregator.api.dto.CreateShipmentResponse;
-import com.enterprise.shipping.provider.aggregator.api.dto.LineItemPayload;
-import com.enterprise.shipping.provider.aggregator.api.dto.RateApiRequest;
-import com.enterprise.shipping.provider.aggregator.api.dto.RateApiResponse;
-import com.enterprise.shipping.provider.aggregator.api.dto.RateItem;
-import com.enterprise.shipping.provider.aggregator.model.ProviderModels.CreationOutcome;
-import com.enterprise.shipping.provider.aggregator.model.ProviderModels.RateOffer;
+import com.enterprise.shipping.provider.aggregator.config.AggregatorContext;
+import com.enterprise.shipping.provider.aggregator.rates.dto.AddressPayload;
+import com.enterprise.shipping.provider.aggregator.rates.dto.LineItemPayload;
+import com.enterprise.shipping.provider.aggregator.rates.dto.RateApiRequest;
+import com.enterprise.shipping.provider.aggregator.rates.dto.RateApiResponse;
+import com.enterprise.shipping.provider.aggregator.rates.dto.RateItem;
 import com.enterprise.shipping.shared.domain.DimensionUnit;
 import com.enterprise.shipping.shared.domain.ShippingAddress;
 import com.enterprise.shipping.shared.domain.ShippingException;
 import com.enterprise.shipping.shared.domain.ShippingIntent;
 import com.enterprise.shipping.shared.domain.WeightUnit;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundClient;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundEndpoint;
+import com.enterprise.shipping.shared.infrastructure.http.ResponseDecoder;
+import com.enterprise.shipping.shared.infrastructure.http.StatusPolicy;
+import com.enterprise.shipping.shared.infrastructure.monitoring.MonitorCarrierApi;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Predicate;
+import java.util.Objects;
 
 /**
- * Translates between domain shipping intent, typed aggregator DTOs, and neutral provider models.
+ * Self-contained rate-quoting API slice for the aggregator provider.
+ * Owns its endpoint contract, unit conversion, and response mapping independently of other APIs.
  */
-public final class AggregatorMapper {
+public class AggregatorRateApi {
 
     private static final BigDecimal POUNDS_TO_KILOGRAMS = new BigDecimal("0.45359237");
-    private final int collectionSeconds;
+    private static final OutboundEndpoint<RateApiRequest, RateApiResponse> ENDPOINT =
+            OutboundEndpoint.post(
+                            "rates",
+                            "/rest/rates",
+                            RateApiRequest.class,
+                            RateApiResponse.class)
+                    .decoder(
+                            ResponseDecoder.json(RateApiResponse.class)
+                                    .validate(AggregatorRateApi::validateCurrency))
+                    .statusPolicy(
+                            StatusPolicy.<RateApiResponse>of(200)
+                                    .onExpected(404, RateApiResponse::empty)
+                                    .onError(
+                                            400,
+                                            () ->
+                                                    ShippingException.invalidInput(
+                                                            "PROVIDER_REQUEST_REJECTED"))
+                                    .otherwiseThrow(AggregatorContext::readFailure));
 
-    public AggregatorMapper(int collectionSeconds) {
-        this.collectionSeconds = collectionSeconds;
+    private final OutboundClient outbound;
+    private final AggregatorContext context;
+    private final Clock clock;
+
+    public AggregatorRateApi(
+            OutboundClient outbound,
+            AggregatorContext context,
+            Clock clock) {
+        this.outbound = Objects.requireNonNull(outbound, "outbound");
+        this.context = Objects.requireNonNull(context, "context");
+        this.clock = Objects.requireNonNull(clock, "clock");
+        this.outbound.register(ENDPOINT);
+    }
+
+    @MonitorCarrierApi(carrier = "shipping-provider")
+    public List<RateOffer> fetchRates(ShippingIntent intent, long deadline) {
+        // 1. Convert units and invoke the self-contained rate endpoint
+        RateApiResponse response = outbound.invoke(ENDPOINT, toRateRequest(intent), deadline);
+
+        // 2. Map validated rate items into neutral rate offers
+        var p = context.properties();
+        long expiresAt = clock.millis() + p.quoteLifetimeSeconds() * 1000L;
+        return toRateOffers(response, p.providerId(), p.accountAlias(), expiresAt);
     }
 
     public RateApiRequest toRateRequest(ShippingIntent intent) {
@@ -62,7 +105,7 @@ public final class AggregatorMapper {
                                 weight)),
                 imperial ? "IMPERIAL" : "METRIC",
                 intent.shippingDate().toString(),
-                collectionSeconds);
+                context.properties().collectionSeconds());
     }
 
     public static void validateCurrency(RateApiResponse response) {
@@ -73,7 +116,7 @@ public final class AggregatorMapper {
         }
     }
 
-    public List<RateOffer> toRateOffers(
+    private static List<RateOffer> toRateOffers(
             RateApiResponse response,
             String providerId,
             String accountAlias,
@@ -102,23 +145,6 @@ public final class AggregatorMapper {
                             expiresAt));
         }
         return result;
-    }
-
-    public CreationOutcome toCreationOutcome(
-            CreateShipmentResponse response, Predicate<String> allowedUrl) {
-        if (response.rejected()) {
-            return CreationOutcome.rejection();
-        }
-        String tracking =
-                response.trackingNumbers().isEmpty()
-                        ? null
-                        : response.trackingNumbers().get(0);
-        String url = response.labelUrl();
-        return new CreationOutcome(
-                response.shipmentId(),
-                tracking,
-                allowedUrl.test(url) ? url : null,
-                false);
     }
 
     private static AddressPayload toAddress(ShippingAddress address) {

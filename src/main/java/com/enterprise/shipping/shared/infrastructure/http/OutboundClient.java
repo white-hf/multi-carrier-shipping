@@ -16,6 +16,11 @@ public interface OutboundClient {
         ResponseEntity<byte[]> post(String path, Object body);
     }
 
+    default void register(OutboundEndpoint<?, ?> endpoint) {
+        throw new UnsupportedOperationException(
+                "Endpoint registration requires a registered OutboundClient");
+    }
+
     default <Req, Resp> Resp invoke(
             OutboundEndpoint<Req, Resp> endpoint,
             Req request,

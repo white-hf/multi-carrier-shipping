@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
 
@@ -33,7 +34,7 @@ public final class OutboundGuard {
     private record Group(Bulkhead capacity, CircuitBreaker breaker, Duration timeout) {}
 
     private final String dependency;
-    private final Set<String> operations;
+    private final Set<String> operations = ConcurrentHashMap.newKeySet();
     private final Bulkhead total;
     private final Map<String, Group> groups;
     private final MeterRegistry metrics;
@@ -45,7 +46,9 @@ public final class OutboundGuard {
             MeterRegistry metrics,
             Predicate<Throwable> ignoredFailure) {
         this.dependency = dependency;
-        this.operations = Set.copyOf(operations);
+        for (String operation : operations) {
+            registerOperation(operation);
+        }
         this.metrics = metrics;
         total = capacity(dependency, policy.concurrency());
         var configured = new LinkedHashMap<String, Group>();
@@ -108,6 +111,15 @@ public final class OutboundGuard {
             /* Metrics must not change admission behavior. */
 
           }
+    }
+
+    void registerOperation(String operation) {
+        if (operation == null
+                || !operation.matches("[a-zA-Z0-9_-]{1,64}")
+                || !operations.add(operation)) {
+            throw new IllegalArgumentException(
+                    "Invalid or duplicate outbound operation for " + dependency + ": " + operation);
+        }
     }
 
     private static Bulkhead capacity(String name, int limit) {

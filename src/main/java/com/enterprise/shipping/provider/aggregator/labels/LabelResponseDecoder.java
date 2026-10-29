@@ -1,7 +1,6 @@
-package com.enterprise.shipping.provider.aggregator.api.codec;
+package com.enterprise.shipping.provider.aggregator.labels;
 
-import com.enterprise.shipping.provider.aggregator.api.dto.LabelUrlResponse;
-import com.enterprise.shipping.provider.aggregator.model.ProviderModels.LabelData;
+import com.enterprise.shipping.provider.aggregator.labels.dto.LabelUrlResponse;
 import com.enterprise.shipping.shared.domain.ShippingException;
 import com.enterprise.shipping.shared.infrastructure.http.ResponseDecoder;
 import java.util.Objects;
