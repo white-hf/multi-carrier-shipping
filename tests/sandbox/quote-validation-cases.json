@@ -1,0 +1,308 @@
+{
+  "schemaVersion": 1,
+  "scope": "Read-only quote validation; creation must not be called by this catalog.",
+  "status": "Case definitions only. No live execution or automated runner is claimed.",
+  "baseline": {
+    "sender": {
+      "contactName": "Validation Sender",
+      "addressLine1": "100 King St W",
+      "city": "Toronto",
+      "province": "ON",
+      "postalCode": "M5X 1A9",
+      "countryCode": "CA",
+      "phone": "4165550100",
+      "email": null,
+      "residential": false
+    },
+    "recipient": {
+      "contactName": "Validation Recipient",
+      "addressLine1": "2000 Barrington St",
+      "city": "Halifax",
+      "province": "NS",
+      "postalCode": "B3J 3K1",
+      "countryCode": "CA",
+      "phone": "9025550100",
+      "email": null,
+      "residential": false
+    },
+    "parcel": {
+      "length": 12,
+      "width": 10,
+      "height": 8,
+      "dimensionUnit": "IN",
+      "weight": 5,
+      "weightUnit": "LB",
+      "packageType": "PACKAGE"
+    }
+  },
+  "baselineNote": "Synthetic/public example inputs derived from the UI defaults, not verified carrier addresses. First establish a real sandbox 200 baseline; otherwise stop and correct the fixture.",
+  "cases": [
+    {
+      "id": "FE-01",
+      "entry": "browser",
+      "changes": {
+        "sender.contactName": ""
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "note": "Required field; no POST /api/quotes."
+    },
+    {
+      "id": "FE-02",
+      "entry": "browser",
+      "changes": {
+        "recipient.city": "   "
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "note": "Trimmed required field; no quote POST."
+    },
+    {
+      "id": "FE-03",
+      "entry": "browser",
+      "changes": {
+        "sender.email": "invalid-email"
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "note": "HTML email validity; no quote POST."
+    },
+    {
+      "id": "FE-04",
+      "entry": "browser",
+      "changes": {
+        "parcel.weight": 0
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "note": "Positive measurement check; no quote POST."
+    },
+    {
+      "id": "FE-05",
+      "entry": "browser",
+      "changes": {
+        "parcel.length": 0.05
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "note": "HTML min=0.1; backend alone accepts this positive value."
+    },
+    {
+      "id": "FE-06",
+      "entry": "browser",
+      "changes": {
+        "parcel.width": 1.12345
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "note": "At most four effective decimal places; no quote POST."
+    },
+    {
+      "id": "BE-01",
+      "entry": "browser-and-backend-api",
+      "changes": {
+        "recipient.postalCode": "12345"
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "INVALID_REQUEST",
+      "note": "Postal input has no HTML pattern; backend rejects syntax."
+    },
+    {
+      "id": "BE-02",
+      "entry": "browser-and-backend-api",
+      "changes": {
+        "recipient.phone": "abcdefg"
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "INVALID_REQUEST",
+      "note": "Phone input has no HTML pattern; backend rejects letters."
+    },
+    {
+      "id": "BE-03",
+      "entry": "backend-api",
+      "changes": {
+        "recipient.province": "XX"
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "INVALID_REQUEST"
+    },
+    {
+      "id": "BE-04",
+      "entry": "backend-api",
+      "changes": {
+        "recipient.countryCode": "US"
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "INVALID_REQUEST",
+      "note": "Browser always emits CA."
+    },
+    {
+      "id": "BE-05",
+      "entry": "backend-api",
+      "changes": {
+        "parcel.dimensionUnit": "M"
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "INVALID_REQUEST"
+    },
+    {
+      "id": "BE-06",
+      "entry": "backend-api",
+      "changes": {
+        "parcel.weight": null
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "INVALID_REQUEST"
+    },
+    {
+      "id": "BE-07",
+      "entry": "backend-api",
+      "changes": {
+        "shippingDate": "2020-01-01"
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "INVALID_SHIPPING_DATE",
+      "note": "Browser does not submit shippingDate; use direct API."
+    },
+    {
+      "id": "BE-08",
+      "entry": "backend-api",
+      "changes": {
+        "unexpectedField": true
+      },
+      "providerExpected": false,
+      "execution": "NOT_RUN",
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "INVALID_REQUEST"
+    },
+    {
+      "id": "SB-01",
+      "entry": "live-browser",
+      "changes": {
+        "recipient.province": "ON"
+      },
+      "providerExpected": true,
+      "execution": "NOT_RUN",
+      "note": "Halifax and B3J 3K1 retained: province mismatch.",
+      "fixtureStatus": "UNCONFIRMED_CANDIDATE",
+      "targetProviderStatus": 400,
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "PROVIDER_REQUEST_REJECTED"
+    },
+    {
+      "id": "SB-02",
+      "entry": "live-browser",
+      "changes": {
+        "recipient.city": "Toronto"
+      },
+      "providerExpected": true,
+      "execution": "NOT_RUN",
+      "note": "NS and B3J 3K1 retained: city mismatch.",
+      "fixtureStatus": "UNCONFIRMED_CANDIDATE",
+      "targetProviderStatus": 400,
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "PROVIDER_REQUEST_REJECTED"
+    },
+    {
+      "id": "SB-03",
+      "entry": "live-browser",
+      "changes": {
+        "recipient.postalCode": "M5X 1A9"
+      },
+      "providerExpected": true,
+      "execution": "NOT_RUN",
+      "note": "Halifax and NS retained: postal/province mismatch.",
+      "fixtureStatus": "UNCONFIRMED_CANDIDATE",
+      "targetProviderStatus": 400,
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "PROVIDER_REQUEST_REJECTED"
+    },
+    {
+      "id": "SB-04",
+      "entry": "live-browser",
+      "changes": {
+        "sender.city": "Ottawa"
+      },
+      "providerExpected": true,
+      "execution": "NOT_RUN",
+      "note": "ON and Toronto postal code retained: mismatch within one province.",
+      "fixtureStatus": "UNCONFIRMED_CANDIDATE",
+      "targetProviderStatus": 400,
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "PROVIDER_REQUEST_REJECTED"
+    },
+    {
+      "id": "SB-05",
+      "entry": "live-browser",
+      "changes": {
+        "sender.province": "NS"
+      },
+      "providerExpected": true,
+      "execution": "NOT_RUN",
+      "note": "Toronto and M5X 1A9 retained: sender mismatch.",
+      "fixtureStatus": "UNCONFIRMED_CANDIDATE",
+      "targetProviderStatus": 400,
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "PROVIDER_REQUEST_REJECTED"
+    },
+    {
+      "id": "SB-06",
+      "entry": "live-browser",
+      "changes": {
+        "recipient.addressLine1": "1 Nonexistent Validation Test Road"
+      },
+      "providerExpected": true,
+      "execution": "NOT_RUN",
+      "note": "Provider may accept an unverified street; do not assume a 400.",
+      "fixtureStatus": "UNCONFIRMED_CANDIDATE",
+      "targetProviderStatus": 400,
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "PROVIDER_REQUEST_REJECTED"
+    },
+    {
+      "id": "SB-07",
+      "entry": "live-browser",
+      "changes": {
+        "parcel.length": 10000
+      },
+      "providerExpected": true,
+      "execution": "NOT_RUN",
+      "note": "Local numeric bounds pass; provider may return 400, 404, or valid offers. Record actual behavior.",
+      "fixtureStatus": "UNCONFIRMED_CANDIDATE",
+      "targetProviderStatus": 400,
+      "expectedLocalHttpStatus": 400,
+      "expectedLocalCode": "PROVIDER_REQUEST_REJECTED"
+    }
+  ],
+  "candidateVerdict": "A candidate is not a confirmed negative fixture. If sandbox returns 200/404, record FIXTURE_NOT_TRIGGERED, not a passed validation-rejection test. Confirmed samples require actual correlated provider evidence.",
+  "evidenceFields": [
+    "caseId",
+    "commit",
+    "entry",
+    "localHttpStatus",
+    "localCode",
+    "providerStatus",
+    "providerReached",
+    "correlationId",
+    "quoteRequestId",
+    "dbState",
+    "uiOutcome",
+    "elapsedMs",
+    "verdict"
+  ],
+  "secretPolicy": "Do not store auth tokens, credentials, private endpoints, request headers or raw personal/error payloads in reports."
+}

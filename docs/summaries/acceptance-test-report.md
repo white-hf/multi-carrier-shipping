@@ -1,5 +1,7 @@
 # Shipping workflow — acceptance report
 
+> Scope clarification (2026-10-29): the reproducible backend/browser commands below use local provider stubs. They do not establish fresh browser-to-real-sandbox acceptance, especially invalid-address validation. The [real sandbox validation plan](../runbooks/sandbox-validation.md) defines the pending layered negative-input cases; no live passes are claimed by this update.
+
 > Schema note: historical migration names below describe development work. The current first-release schema is consolidated in `src/main/resources/db/shipping/V001__shipping_schema.sql`; earlier development migration scripts are no longer shipped.
 
 Date: 2026-10-23  

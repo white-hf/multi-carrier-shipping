@@ -108,3 +108,5 @@ Backend checks run with `./mvnw clean test`. Browser checks run separately with 
 - [Performance tools and chart regeneration](../tests/performance/README.md) — reproduce tests or redraw charts without additional Python packages.
 
 These charts describe the historical `78c729e` run. The subsequent booking admission fix has regression coverage; the full load suite has not been rerun.
+
+- [Real sandbox validation plan](runbooks/sandbox-validation.md) — code-derived interception boundaries, negative-input cases and pending live acceptance gates; distinct from local-stub E2E.
