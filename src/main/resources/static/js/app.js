@@ -644,7 +644,6 @@
     quotes: (data, key) => mock
         ? demo.quotes()
         : http('/api/quotes', { method: 'POST', body: data, headers: { 'Idempotency-Key': key } }),
-    quoteStatus: id => http('/api/quotes/' + encodeURIComponent(id)),
     booking: (quote, key) => mock
         ? demo.booking(quote, key)
         : http('/api/bookings', { method: 'POST', body: { quoteId: quote }, headers: { 'Idempotency-Key': key } }),
@@ -1261,26 +1260,17 @@
       throw new Error('Invalid /api/quotes response');
     }
     if (data.requestId) {
-      if (operation.requestId && data.requestId !== operation.requestId) {
-        return 'IGNORED';
-      }
       operation.requestId = data.requestId;
       saveDraft();
     }
 
     const requestState = String(data.state || '').toUpperCase();
     if (requestState === 'RATING' || requestState === 'CONTENDED') {
-      // Once this operation has accepted a final quote result, ignore late in-progress snapshots.
-      if (operation.completed && state.step >= 2 && state.requestId && state.requestId === operation.requestId) {
-        return;
-      }
       notice('Rates are still being retrieved. Click Get Rates again to check or retry safely.', 'info');
       return;
     }
 
     if (requestState === 'RATE_FAILED') {
-      operation.completed = false;
-      saveDraft();
       if (!state.key && state.requestId === operation.requestId) {
         disableExpiredSelection();
       }
@@ -1289,8 +1279,6 @@
     }
 
     if (requestState === 'QUOTES_EXPIRED') {
-      operation.completed = false;
-      saveDraft();
       if (!state.key) {
         disableExpiredSelection();
       }
@@ -1304,9 +1292,6 @@
     if (!Array.isArray(data.quotes)) {
       throw new Error('Invalid /api/quotes response: quotes[] missing');
     }
-
-    operation.completed = true;
-    saveDraft();
 
     const discoveredCarriers = [...new Set(data.quotes.map(q => carrier(q)).filter(Boolean))];
     if (discoveredCarriers.length) {
@@ -1368,7 +1353,7 @@
         const key = crypto.randomUUID
             ? crypto.randomUUID()
             : `rate-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-        rateOperation = { key, signature, requestId: null, completed: false };
+        rateOperation = { key, signature, requestId: null };
       }
       const operation = rateOperation;
       saveDraft();
@@ -1376,7 +1361,7 @@
       if (!isCurrentRateOperation(operation, rev)) return;
       acceptRateResponse(response.data, operation, req);
     } catch (err) {
-      if (rev === state.revision && !(rateOperation?.completed && state.step >= 2)) {
+      if (rev === state.revision) {
         if (err instanceof HttpError) {
           showFieldErrors(err.fieldErrors);
           if (rateOperation && err.payload?.operation?.id) {
