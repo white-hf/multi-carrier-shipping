@@ -47,7 +47,8 @@ This API follows a **RESTful HTTP-native protocol convention** (aligned with Str
 | `201 Created` | Initial Resource Creation | Returns newly created quote set or confirmed booking JSON + `Location` header |
 | `202 Accepted` | Async / Pending Outcome | `RATING` in progress, `PENDING_CONFIRMATION` booking, or `PENDING` label + `Retry-After` header |
 | `400 Bad Request` | Validation Failure | `INVALID_REQUEST`, `MISSING_IDEMPOTENCY_KEY`, `INVALID_IDEMPOTENCY_KEY`, `INVALID_SHIPPING_DATE` |
-| `401 Unauthorized` | Auth / Token Failure | `UNAUTHORIZED` (missing, expired, or fingerprint-mismatched guest token) |
+| `401 Unauthorized` | Auth / Token Failure | `UNAUTHORIZED` (missing, expired, or fingerprint-mismatched account token) |
+| `429 Too Many Requests` | Login / API Quota | `AUTH_RATE_LIMITED`, `API_RATE_LIMITED` + `Retry-After` |
 | `403 Forbidden` | Cross-Origin Write | `ORIGIN_NOT_ALLOWED` |
 | `404 Not Found` | Missing / Foreign Owner | `RESOURCE_NOT_FOUND` |
 | `409 Conflict` | State / Key Conflict | `IDEMPOTENCY_CONFLICT`, `SHIPMENT_ALREADY_SUBMITTED`, `QUOTE_EXPIRED`, `QUOTE_NOT_BOOKABLE`, `REQUEST_DATE_EXPIRED` |
@@ -56,39 +57,45 @@ This API follows a **RESTful HTTP-native protocol convention** (aligned with Str
 
 ---
 
-## 2. Guest Session Token (2-hour TTL, Fingerprint-Bound)
+## 2. Account Session (2-hour TTL, Fingerprint-Bound)
 
-`POST /api/auth/guest`
-
-```json
-{
-  "clientId": "client-...",
-  "fingerprint": "fp-..."
-}
-```
-
-`200` returns a 2-hour (`7200s`) HMAC-SHA256 signed token bound to the client's fingerprint, the list of supported carriers configured for the market, and sets `SameSite=Strict; HttpOnly` cookies (`shipping_guest_token`, `shipping_guest_fp`) for top-level label navigation:
+`POST /api/auth/login` is the only credential-issuing endpoint. Guest issuance is removed.
 
 ```json
 {
-  "token": "<base64url-payload>.<base64url-hmac>",
-  "userId": "guest-...",
-  "mode": "GUEST",
-  "expiresAt": "2026-10-23T17:20:00Z",
-  "ttlSeconds": 7200,
-  "supportedCarriers": [
-    "Canada Post",
-    "Purolator",
-    "FedEx",
-    "UPS",
-    "DHL Express",
-    "Canpar",
-    "Loomis Express"
-  ]
+  "username": "configured-operator",
+  "password": "<configured-password>",
+  "fingerprint": "fp-client-device-123"
 }
 ```
 
-All `/api/quotes` and `/api/bookings/**` requests require a valid token and matching `X-Client-Fingerprint` (returning `401 UNAUTHORIZED` when missing, expired, or fingerprint-mismatched). Downstream controllers and services resolve the verified `userId` uniformly through `UserContext`.
+`200` returns `token`, `userId`, `username`, `displayName`, `mode: "AUTHENTICATED"`,
+`expiresAt`, `ttlSeconds` (default 7200), and `supportedCarriers`. Login sets the existing
+`shipping_guest_token` and `shipping_guest_fp` cookie names for compatible label navigation:
+`SameSite=Strict; HttpOnly; Path=/api`, plus `Secure` when the container reports HTTPS.
+The token signature uses a new account-specific domain, invalidating previously issued guest tokens.
+
+All other `/api/**` requests require a valid account token and matching `X-Client-Fingerprint`.
+For GET label navigation, cookies supply the token and fingerprint. Missing/expired/mismatched
+credentials or removed account identities return `401 UNAUTHORIZED`. Incorrect login credentials
+return `401 INVALID_CREDENTIALS` with the same message for nonexistent users and wrong passwords.
+
+`POST /api/auth/logout` returns `204` and expires both cookies. The browser clears its session
+and workspace and returns to sign-in. Tokens are stateless: a previously copied token/fingerprint
+pair remains usable until expiry; logout does not revoke copies on other clients. Changing the
+signing secret invalidates all existing tokens, and removing an account blocks its user ID.
+
+Login and logout remain subject to same-origin write checks. Login has a global 5/sec sliding
+limit, plus IP/account failure lockouts (5 failures in 5 minutes → 15 minutes). Authenticated
+requests have independent sliding quotas per user and peer IP: 10 quote POSTs, 5 booking POSTs,
+and 20 label GETs/HEADs per minute. Same-key replays count too. `429 AUTH_RATE_LIMITED` or
+`429 API_RATE_LIMITED` includes integer `Retry-After` seconds. Limits are per process, with a
+bounded 4096-entry table that rejects new keys while full and reclaims expired entries.
+
+The frontend requires explicit sign-in, never refreshes anonymously, and never automatically
+replays a write on 401. Switching accounts clears drafts/operation caches; the same account can
+re-authenticate after expiry and recover its active operation. Local demo preview makes no backend
+calls. See [Account access deployment](../runbooks/account-access.md) for credentials and proxy setup.
 
 ## Rates
 
@@ -198,7 +205,7 @@ When confirmation has a pending label, the frontend may make **one automatic ret
 
 ## Label actions (I5)
 
-No new API is required. The confirmation screen uses the existing label endpoint (retaining the 2-hour fingerprint-bound Guest Token headers) and keeps shipment confirmation separate from label readiness.
+No new API is required. The confirmation screen uses the existing label endpoint (retaining the 2-hour fingerprint-bound account token headers) and keeps shipment confirmation separate from label readiness.
 
 - PDF response: retain a `File` and object URL in browser memory for viewing, downloading and capability-detected native file sharing. Clear/revoke these on replacement or a new shipment; never persist PDF bytes or object URLs in browser storage.
 - Provider URL response: View opens the validated location. Saving/printing takes place in that viewer; do not depend on cross-origin JavaScript access or pretend a URL response is a PDF attachment.

@@ -36,7 +36,7 @@
             <input type="checkbox" id="mock-toggle" checked>
             <span>Demo mode</span>
           </label>
-          <span class="user-avatar" id="user-avatar" title="Guest session">GS</span>
+          <button class="account-button" id="user-avatar" type="button">Sign in</button>
         </div>
       </header>
 
@@ -529,6 +529,23 @@
     </div>
   </div>
 
+  <dialog id="login-modal" class="login-modal" aria-labelledby="login-title">
+    <form id="login-form" class="login-card">
+      <div class="eyebrow">SHIPPING WORKSPACE</div>
+      <h2 id="login-title">Sign in</h2>
+      <p>Sign in to request carrier rates and create shipments.</p>
+      <label class="field">Username
+        <input id="login-username" name="username" autocomplete="username" required maxlength="64">
+      </label>
+      <label class="field">Password
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
+      </label>
+      <p id="login-error" class="login-error" role="alert" hidden></p>
+      <button id="login-submit" class="button primary" type="submit">Sign in</button>
+      <button id="login-preview" class="button" type="button">Explore local demo</button>
+      <p class="login-preview-note">Local demo uses sample data and makes no carrier API calls.</p>
+    </form>
+  </dialog>
   <script src="/js/app.js" id="app-js" defer></script>
   <script>
     if (location.protocol === 'file:') {

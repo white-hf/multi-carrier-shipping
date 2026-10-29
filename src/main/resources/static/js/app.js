@@ -11,7 +11,8 @@
   const activeStorage = 'shipping.activeBooking.v1';
   const mockStorage = 'shipping.mockMode.v1';
   const clientIdStorage = 'shipping.clientId.v1';
-  const guestSessionStorage = 'shipping.guestSession.v1';
+  const sessionKey = 'shipping.accountSession.v1';
+  const ownerStorage = 'shipping.workspaceOwner.v1';
 
   const state = {
     step: 1,
@@ -33,8 +34,8 @@
     labelTarget: null,
     labelFile: null,
     labelBusy: false,
-    guestToken: null,
-    guestUserId: null,
+    sessionToken: null,
+    sessionUserId: null,
     fingerprint: null,
     supportedCarriers: [
       'Canada Post',
@@ -198,6 +199,7 @@
     $('mode-indicator').textContent = on ? 'Demo preview' : 'Backend API';
     $('environment-tag').textContent = on ? '● DEMO PREVIEW' : '● BACKEND API';
     localStorage.setItem(mockStorage, String(on));
+    renderAccount();
   }
 
   mode(mock);
@@ -478,75 +480,113 @@
     return state.fingerprint;
   }
 
-  let sessionPromise = null;
-  async function ensureGuestSession(forceRefresh = false) {
-    if (mock) return null;
-    const fp = await computeClientFingerprint();
-
-    if (!forceRefresh) {
-      try {
-        const cached = JSON.parse(sessionStorage.getItem(guestSessionStorage) || 'null');
-        if (cached?.token && cached?.fingerprint === fp && cached?.expiresAt) {
-          const remainingMs = new Date(cached.expiresAt).getTime() - Date.now();
-          if (remainingMs > 60000) {
-            state.guestToken = cached.token;
-            state.guestUserId = cached.userId;
-            if (Array.isArray(cached.supportedCarriers) && cached.supportedCarriers.length) {
-              state.supportedCarriers = cached.supportedCarriers;
-            }
-            const avatar = $('user-avatar');
-            if (avatar && cached.userId) avatar.title = `Guest session: ${cached.userId}`;
-            return cached;
-          }
-        }
-      } catch {
-        // Ignore malformed cache and request a fresh guest token
-      }
-    }
-
-    if (sessionPromise) return sessionPromise;
-
-    sessionPromise = (async () => {
-      const clientId = resolveClientId();
-      const res = await fetch('/api/auth/guest', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-Fingerprint': fp
-        },
-        body: JSON.stringify({ clientId, fingerprint: fp })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.token) {
-        throw new HttpError(res.status, data);
-      }
-      if (Array.isArray(data.supportedCarriers) && data.supportedCarriers.length) {
-        state.supportedCarriers = data.supportedCarriers;
-      }
-      const session = {
-        token: data.token,
-        userId: data.userId,
-        expiresAt: data.expiresAt,
-        fingerprint: fp,
-        supportedCarriers: state.supportedCarriers
-      };
-      sessionStorage.setItem(guestSessionStorage, JSON.stringify(session));
-      state.guestToken = session.token;
-      state.guestUserId = session.userId;
-      const avatar = $('user-avatar');
-      if (avatar && session.userId) avatar.title = `Guest session: ${session.userId}`;
-      return session;
-    })();
-
+  function cachedSession() {
     try {
-      return await sessionPromise;
-    } finally {
-      sessionPromise = null;
+      const session = JSON.parse(sessionStorage.getItem(sessionKey) || 'null');
+      return session?.mode === 'AUTHENTICATED' && session.token
+          && new Date(session.expiresAt).getTime() > Date.now() ? session : null;
+    } catch {
+      return null;
     }
   }
 
-  async function http(path, { method = 'GET', body = null, headers = {}, retriedAuth = false } = {}) {
-    const session = await ensureGuestSession(false);
+  function renderAccount() {
+    const session = cachedSession();
+    const dialog = $('login-modal');
+    $('user-avatar').textContent = session
+        ? `${session.displayName || session.username} · Sign out` : 'Sign in';
+    if (!mock && !session && !dialog.open) dialog.showModal();
+    if ((mock || session) && dialog.open) dialog.close();
+  }
+
+  async function ensureSession() {
+    const session = cachedSession();
+    const fingerprint = await computeClientFingerprint();
+    if (!session || session.fingerprint !== fingerprint) {
+      sessionStorage.removeItem(sessionKey);
+      renderAccount();
+      throw new HttpError(401, { code: 'UNAUTHORIZED', message: 'Please sign in to continue.' });
+    }
+    state.sessionToken = session.token;
+    state.sessionUserId = session.userId;
+    state.supportedCarriers = session.supportedCarriers || state.supportedCarriers;
+    return session;
+  }
+
+  function clearWorkspace() {
+    localStorage.removeItem(draftStorage);
+    localStorage.removeItem(activeStorage);
+    sessionStorage.removeItem(activeStorage);
+  }
+
+  function expireSession() {
+    sessionStorage.removeItem(sessionKey);
+    // Reload discards callbacks from the old document. Keep same-account operation recovery.
+    location.reload();
+  }
+
+  $('login-modal').addEventListener('cancel', event => event.preventDefault());
+  $('login-preview').addEventListener('click', () => {
+    clearWorkspace();
+    localStorage.setItem(mockStorage, 'true');
+    location.reload();
+  });
+  $('login-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    busy('login-submit', true, 'Signing in…');
+    $('login-error').hidden = true;
+    try {
+      const fingerprint = await computeClientFingerprint();
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: $('login-username').value,
+          password: $('login-password').value, fingerprint })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.token) {
+        const wait = res.headers.get('Retry-After');
+        throw new Error(res.status === 429
+            ? `Too many sign-in attempts. Try again in ${wait || 'a few'} seconds.`
+            : res.status === 401 ? 'Invalid username or password.' : 'Sign-in failed. Please try again.');
+      }
+      if (sessionStorage.getItem(ownerStorage) !== data.userId || mock) clearWorkspace();
+      sessionStorage.setItem(ownerStorage, data.userId);
+      sessionStorage.removeItem('shipping.guestSession.v1');
+      sessionStorage.setItem(sessionKey, JSON.stringify({ ...data, fingerprint }));
+      localStorage.setItem(mockStorage, 'false');
+      location.reload();
+    } catch (error) {
+      $('login-error').textContent = error.message;
+      $('login-error').hidden = false;
+    } finally {
+      $('login-password').value = '';
+      busy('login-submit', false);
+    }
+  });
+  $('user-avatar').addEventListener('click', async () => {
+    const session = cachedSession();
+    if (!session) {
+      $('login-modal').showModal();
+      return;
+    }
+    if ((state.key || state.creating || rateBusy) && !confirm(
+        'An operation is active. Signing out clears its local recovery information. Sign out anyway?')) return;
+    try {
+      const res = await fetch('/api/auth/logout', { method: 'POST' });
+      if (!res.ok) throw new Error('Sign-out failed. Please try again.');
+      sessionStorage.removeItem(sessionKey);
+      sessionStorage.removeItem(ownerStorage);
+      clearWorkspace();
+      localStorage.setItem(mockStorage, 'false');
+      location.reload();
+    } catch (error) {
+      notice(error.message);
+    }
+  });
+
+  async function http(path, { method = 'GET', body = null, headers = {} } = {}) {
+    const session = await ensureSession();
     const fp = await computeClientFingerprint();
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 125000);
@@ -562,10 +602,9 @@
         body: body ? JSON.stringify(body) : undefined,
         signal: ctrl.signal
       });
-      if (res.status === 401 && !retriedAuth) {
-        sessionStorage.removeItem(guestSessionStorage);
-        await ensureGuestSession(true);
-        return http(path, { method, body, headers, retriedAuth: true });
+      if (res.status === 401) {
+        expireSession();
+        throw new HttpError(401, { code: 'UNAUTHORIZED', message: 'Session expired. Please sign in.' });
       }
       let data = {};
       if (res.status !== 204) {
@@ -823,7 +862,8 @@
       labelAttempted: state.labelAttempted,
       status: state.booking?.status,
       errorCode: state.booking?.errorCode,
-      mock
+      mock,
+      userId: cachedSession()?.userId || sessionStorage.getItem(ownerStorage)
     }));
   }
 
@@ -1050,7 +1090,7 @@
     busy('refresh-label-btn', true, 'Checking label…');
     updateLabelActions();
     try {
-      const session = await ensureGuestSession(false);
+      const session = await ensureSession();
       const fp = await computeClientFingerprint();
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 45000);
@@ -1068,6 +1108,7 @@
         clearTimeout(timeout);
       }
       if (state.bookingId !== bookingId) return;
+      if (res.status === 401) { expireSession(); return; }
       if (res.status === 202) {
         $('label-status-text').textContent = 'Shipment confirmed. Label not ready; use Retry label later.';
         return;
@@ -1213,6 +1254,7 @@
     try {
       localStorage.setItem(draftStorage, JSON.stringify({
         savedAt: Date.now(),
+        userId: cachedSession()?.userId || sessionStorage.getItem(ownerStorage),
         mock,
         unitSystem: state.unitSystem,
         fields,
@@ -1226,7 +1268,8 @@
   function restoreDraft() {
     try {
       const draft = JSON.parse(localStorage.getItem(draftStorage) || 'null');
-      if (!draft || Date.now() - draft.savedAt > 86400000) {
+      if (!draft || draft.mock !== mock || (!mock && draft.userId !== cachedSession()?.userId)
+          || Date.now() - draft.savedAt > 86400000) {
         localStorage.removeItem(draftStorage);
         return;
       }
@@ -1605,13 +1648,12 @@
       });
   }
 
-  // Restore active submission on page reload and eagerly initialize the 2-hour Guest Token
-  if (!mock) {
-    ensureGuestSession(false).catch(() => {});
-  }
+  // Restore only the workspace of a signed-in account, or the local sample demo.
+  renderAccount();
   try {
     const previous = JSON.parse(sessionStorage.getItem(activeStorage) || 'null');
-    if (previous?.key && previous?.quoteId) {
+    if ((mock || (cachedSession() && previous?.userId === cachedSession().userId))
+        && previous?.key && previous?.quoteId) {
       state.labelAttempted = !!previous.labelAttempted;
       state.key = previous.key;
       state.bookingId = previous.bookingId || null;
@@ -1621,7 +1663,7 @@
         serviceName: previous.serviceName
       };
       state.savedService = `${previous.carrierName || ''} · ${previous.serviceName || ''}`;
-      if (mock !== previous.mock) mode(previous.mock);
+      if (mock !== previous.mock) { clearActive(); go(1); return; }
       if (previous.status === 'RETRYABLE') {
         showRetryable({ bookingId: state.bookingId });
         refreshRestoredStatus();

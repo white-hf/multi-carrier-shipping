@@ -1514,3 +1514,13 @@ button {
     flex: 1;
   }
 }
+
+/* Account access uses the same fields and buttons as the shipping workspace. */
+.account-button { border: 1px solid var(--border, #dce3eb); border-radius: 24px; background: white; padding: 8px 14px; color: #173454; font: inherit; cursor: pointer; }
+.login-modal { width: min(420px, calc(100vw - 32px)); border: 1px solid #dce3eb; border-radius: 16px; padding: 0; color: #173454; box-shadow: 0 18px 70px #0b1e3933; }
+.login-modal::backdrop { background: #0b1e3980; backdrop-filter: blur(3px); }
+.login-card { padding: 28px; display: grid; gap: 16px; }
+.login-card h2, .login-card p { margin: 0; }
+.login-card .field { display: grid; gap: 8px; }
+.login-error { color: #b42318; }
+.login-preview-note { font-size: 12px; color: #66788b; }
