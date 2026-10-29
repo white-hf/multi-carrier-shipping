@@ -201,7 +201,7 @@ class ShippingApiTest {
                         } else if (query.contains("mode=expire-quotes")) {
                             TEST_JDBC.get().update("UPDATE shipment_quotes SET expires_at=0");
                         } else if (query.contains("mode=create-reject")) {
-                            CREATE_STATUS.set(422);
+                            CREATE_STATUS.set(400);
                             CREATE_RESPONSE.set("{\"error\":\"rejected\"}");
                         } else if (query.contains("mode=create-uncertain")) {
                             CREATE_STATUS.set(500);
@@ -272,27 +272,27 @@ class ShippingApiTest {
     }
 
     @LocalServerPort
-    int port;
+     int port;
     @Autowired
-    MockMvc mvc;
+     MockMvc mvc;
     @Autowired
-    ObjectMapper mapper;
+     ObjectMapper mapper;
     @Autowired
-    DataSource source;
+     DataSource source;
     @Autowired
-    QuoteSelectionPort selections;
+     QuoteSelectionPort selections;
     @Autowired
-    PendingShipmentDiscovery discovery;
+     PendingShipmentDiscovery discovery;
     @Autowired
-    ProviderProperties providerProperties;
+     ProviderProperties providerProperties;
     @Autowired
-    RecoveryCapabilityPort recoveryCapabilities;
+     RecoveryCapabilityPort recoveryCapabilities;
     @Autowired
-    MeterRegistry meterRegistry;
+     MeterRegistry meterRegistry;
     @Autowired
-    SandboxProviderClient adapter;
+     SandboxProviderClient adapter;
     @Autowired
-    com.enterprise.shipping.shared.infrastructure.http.OutboundClientRegistry outbound;
+     com.enterprise.shipping.shared.infrastructure.http.OutboundClientRegistry outbound;
 
     static final String ADDRESS =
             """
@@ -533,7 +533,7 @@ class ShippingApiTest {
                                 .header("Idempotency-Key", UUID.randomUUID().toString())
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(INPUT))
-                .andExpect(status().isBadGateway())
+                .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.code").value("PROVIDER_AUTHENTICATION_FAILED"));
 
         STATUS.set(200);
@@ -718,10 +718,118 @@ class ShippingApiTest {
         assertThat(CREATE_CALLS).hasValue(1);
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({
+        "404,201,NO_RATES",
+        "400,502,PROVIDER_REQUEST_REJECTED",
+        "401,503,PROVIDER_AUTHENTICATION_FAILED",
+        "403,502,PROVIDER_UNEXPECTED_RESPONSE",
+        "429,502,PROVIDER_RATE_LIMITED",
+        "500,502,PROVIDER_UNAVAILABLE",
+        "201,502,PROVIDER_UNEXPECTED_RESPONSE",
+        "204,502,PROVIDER_UNEXPECTED_RESPONSE"
+    })
+    void ratesInterpretStatusBeforeRequiringAResponseBody(
+            int providerStatus, int expectedStatus, String result) throws Exception {
+        STATUS.set(providerStatus);
+        RATE_RESPONSE.set("");
+        var response =
+                mvc.perform(
+                                post("/api/quotes")
+                                        .header("Idempotency-Key", UUID.randomUUID().toString())
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(INPUT))
+                        .andExpect(status().is(expectedStatus));
+        if (providerStatus == 404) {
+            response.andExpect(jsonPath("$.state").value(result))
+                    .andExpect(jsonPath("$.quotes").isEmpty());
+        } else {
+            response.andExpect(jsonPath("$.code").value(result));
+        }
+    }
+
+    @Test
+    void invalidRateRequestsDoNotOpenTheSharedProviderCircuit() throws Exception {
+        STATUS.set(400);
+        RATE_RESPONSE.set("{\"messages\":[\"Invalid package\"]}");
+        for (int i = 0; i < 6; i++) {
+            mvc.perform(
+                            post("/api/quotes")
+                                    .header("Idempotency-Key", UUID.randomUUID().toString())
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(INPUT))
+                    .andExpect(status().isBadGateway())
+                    .andExpect(jsonPath("$.code").value("PROVIDER_REQUEST_REJECTED"));
+        }
+        STATUS.set(200);
+        RATE_RESPONSE.set(DEFAULT_RATES);
+        assertThat(rates().path("state").asText()).isEqualTo("READY");
+    }
+
+    @Test
+    void authenticationRejectionIsKnownUncreatedAndMayRetryAfterConfigurationRecovery()
+            throws Exception {
+        String quoteId = rates().path("quotes").get(0).path("quoteId").asText();
+        String key = UUID.randomUUID().toString();
+        CREATE_STATUS.set(401);
+        CREATE_RESPONSE.set("");
+        var failure =
+                mvc.perform(
+                                post("/api/bookings")
+                                        .header("Idempotency-Key", key)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"quoteId\":\"" + quoteId + "\"}"))
+                        .andExpect(status().isServiceUnavailable())
+                        .andExpect(jsonPath("$.code").value("PROVIDER_AUTHENTICATION_FAILED"))
+                        .andReturn();
+        String id =
+                mapper.readTree(failure.getResponse().getContentAsString())
+                        .path("operation")
+                        .path("id")
+                        .asText();
+        mvc.perform(get("/api/bookings/" + id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("RETRYABLE"))
+                .andExpect(jsonPath("$.errorCode").value("PROVIDER_AUTHENTICATION_FAILED"));
+        CREATE_STATUS.set(201);
+        CREATE_RESPONSE.set("{\"shipId\":123,\"trackingNumbers\":[\"TRACK123\"]}");
+        mvc.perform(
+                        post("/api/bookings")
+                                .header("Idempotency-Key", key)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"quoteId\":\"" + quoteId + "\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bookingId").value(id));
+        assertThat(CREATE_CALLS.get()).isEqualTo(2);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {400, 403, 409, 422, 429, 500, 202, 204})
+    void createDoesNotGuessSafeRetriesFromUndocumentedStatuses(int providerStatus)
+            throws Exception {
+        String quoteId = rates().path("quotes").get(0).path("quoteId").asText();
+        CREATE_STATUS.set(providerStatus);
+        CREATE_RESPONSE.set("");
+        var response =
+                mvc.perform(
+                        post("/api/bookings")
+                                .header("Idempotency-Key", UUID.randomUUID().toString())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("{\"quoteId\":\"" + quoteId + "\"}"));
+        if (providerStatus == 400) {
+            response.andExpect(status().isUnprocessableEntity())
+                    .andExpect(jsonPath("$.status").value("REJECTED"));
+        } else {
+            response.andExpect(status().isAccepted())
+                    .andExpect(jsonPath("$.status").value("PENDING_CONFIRMATION"));
+        }
+        assertThat(CREATE_CALLS.get()).isEqualTo(1);
+    }
+
     @Test
     void definiteProviderRejectionReturns422AndReplaysAs200Rejected() throws Exception {
         String quoteId = rates().path("quotes").get(0).path("quoteId").asText();
-        CREATE_STATUS.set(422);
+        CREATE_STATUS.set(400);
         var rejected =
                 mvc.perform(
                                 post("/api/bookings")

@@ -101,11 +101,18 @@ public final class ShipmentBooking {
         this.status = BookingStatus.PENDING_INQUIRY;
     }
 
-    /** Local admission refused dispatch; only this state may regain submission permission. */
+    /** Local admission refused dispatch; RETRYABLE also accepts documented no-creation evidence. */
     public void markNotDispatched() {
         requireStatus(BookingStatus.PENDING);
         this.status = BookingStatus.RETRYABLE;
         this.errorCode = "SHIPMENT_SUBMISSION_NOT_DISPATCHED";
+    }
+
+    /** The documented authentication rejection proves no shipment was created, not that no HTTP was sent. */
+    public void markAuthenticationFailed() {
+        requireStatus(BookingStatus.PENDING);
+        this.status = BookingStatus.RETRYABLE;
+        this.errorCode = "PROVIDER_AUTHENTICATION_FAILED";
     }
 
     /** The caller must still win the durable version-fenced retry claim before dispatch. */
@@ -164,7 +171,10 @@ public final class ShipmentBooking {
         String expectedError =
                 switch (status) {
                     case PENDING -> null;
-                    case RETRYABLE -> "SHIPMENT_SUBMISSION_NOT_DISPATCHED";
+                    case RETRYABLE ->
+                            "PROVIDER_AUTHENTICATION_FAILED".equals(errorCode)
+                                    ? "PROVIDER_AUTHENTICATION_FAILED"
+                                    : "SHIPMENT_SUBMISSION_NOT_DISPATCHED";
                     case FAILED -> RejectionReason.CARRIER_REJECTED.name();
                     case PENDING_INQUIRY -> OUTCOME_UNKNOWN;
                     case MANUAL_REVIEW ->

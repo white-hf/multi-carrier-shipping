@@ -5,6 +5,7 @@ import com.enterprise.shipping.provider.sandbox.model.ProviderModels.CreateSubmi
 import com.enterprise.shipping.booking.port.ShipmentProviderPort;
 import com.enterprise.shipping.booking.port.ShipmentNotDispatchedException;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundAdmissionRejectedException;
+import com.enterprise.shipping.shared.domain.ShippingException;
 
 /** Booking-owned bridge; provider transport values do not escape into the application. */
 public final class SandboxShipmentAdapter implements ShipmentProviderPort {
@@ -35,6 +36,11 @@ public final class SandboxShipmentAdapter implements ShipmentProviderPort {
                         case CIRCUIT_OPEN -> ShipmentNotDispatchedException.Reason.CIRCUIT_OPEN;
                     };
             throw new ShipmentNotDispatchedException(reason);
+        } catch (ShippingException failure) {
+            if (failure.code().equals("PROVIDER_AUTHENTICATION_FAILED")) {
+                return Outcome.authenticationFailed();
+            }
+            throw failure;
         }
     }
 }
