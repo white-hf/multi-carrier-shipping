@@ -177,10 +177,12 @@ class OutboundClientTest {
         var payload =
                 new java.util.concurrent.atomic.AtomicReference<>(
                         "[{\"code\":\"DELIVERED\",\"timestamp\":1700000000}]");
+        var receivedRawPath = new java.util.concurrent.atomic.AtomicReference<String>();
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext(
-                "/shipments/ship-42/events",
+                "/shipments/",
                 exchange -> {
+                    receivedRawPath.set(exchange.getRequestURI().getRawPath());
                     byte[] bytes = payload.get().getBytes(StandardCharsets.UTF_8);
                     exchange.sendResponseHeaders(status.get(), bytes.length);
                     exchange.getResponseBody().write(bytes);
@@ -196,9 +198,13 @@ class OutboundClientTest {
                         .statusPolicy(
                                 StatusPolicy.<java.util.List<TrackEvent>>of(200)
                                         .onExpected(404, java.util.List::of)
-                                        .otherwiseThrow(StatusPolicy::standardReadFailure));
+                                        .otherwiseThrow(
+                                                code ->
+                                                        ShippingException.dependencyFailure(
+                                                                "PROVIDER_UNEXPECTED_RESPONSE")));
         var unregistered =
                 OutboundEndpoint.get("unregistered", "/shipments", TrackEvent.class);
+        assertThat(ResponseDecoder.class.getDeclaredFields()).isEmpty();
 
         var registry =
                 new OutboundClientRegistry(new OutboundProperties(), new SimpleMeterRegistry());
@@ -228,6 +234,29 @@ class OutboundClientTest {
                             new TrackRequest("ref-1"),
                             OutboundDeadline.after(Duration.ofSeconds(3)));
             assertThat(events).containsExactly(new TrackEvent("DELIVERED", 1700000000L));
+            assertThat(receivedRawPath.get()).isEqualTo("/shipments/ship-42/events");
+
+            // Path variables with spaces, non-ASCII characters, and '%' are encoded exactly once.
+            client.invoke(
+                    endpoint,
+                    java.util.Map.of("shipmentId", "A B"),
+                    new TrackRequest("ref-space"),
+                    OutboundDeadline.after(Duration.ofSeconds(3)));
+            assertThat(receivedRawPath.get()).isEqualTo("/shipments/A%20B/events");
+
+            client.invoke(
+                    endpoint,
+                    java.util.Map.of("shipmentId", "包裹"),
+                    new TrackRequest("ref-utf8"),
+                    OutboundDeadline.after(Duration.ofSeconds(3)));
+            assertThat(receivedRawPath.get()).isEqualTo("/shipments/%E5%8C%85%E8%A3%B9/events");
+
+            client.invoke(
+                    endpoint,
+                    java.util.Map.of("shipmentId", "100%"),
+                    new TrackRequest("ref-percent"),
+                    OutboundDeadline.after(Duration.ofSeconds(3)));
+            assertThat(receivedRawPath.get()).isEqualTo("/shipments/100%25/events");
 
             status.set(404);
             assertThat(

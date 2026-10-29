@@ -55,7 +55,7 @@ public final class StatusPolicy<Resp> {
                 Map.of(),
                 Map.of(),
                 Map.of(),
-                StatusPolicy::standardReadFailure,
+                StatusPolicy::defaultUnhandledStatus,
                 Function.identity());
     }
 
@@ -65,7 +65,7 @@ public final class StatusPolicy<Resp> {
                 Map.of(),
                 Map.of(),
                 Map.of(),
-                StatusPolicy::standardReadFailure,
+                StatusPolicy::defaultUnhandledStatus,
                 Function.identity());
     }
 
@@ -152,7 +152,7 @@ public final class StatusPolicy<Resp> {
         }
         int status = response.getStatusCode().value();
 
-        // 1. Expected business branches (e.g. 404 empty rates or 202 pending label)
+        // 1. Expected business branches (e.g. 404 empty result or 202 pending resource)
         if (expectedBranches.containsKey(status)) {
             return expectedBranches.get(status).get();
         }
@@ -181,15 +181,7 @@ public final class StatusPolicy<Resp> {
         throw unhandledStatusMapper.apply(status);
     }
 
-    public static ShippingException standardReadFailure(int status) {
-        return switch (status) {
-            case 401 -> ShippingException.integrationUnavailable("PROVIDER_AUTHENTICATION_FAILED");
-            case 429 -> ShippingException.dependencyFailure("PROVIDER_RATE_LIMITED");
-            default ->
-                    ShippingException.dependencyFailure(
-                            status >= 500
-                                    ? "PROVIDER_UNAVAILABLE"
-                                    : "PROVIDER_UNEXPECTED_RESPONSE");
-        };
+    private static RuntimeException defaultUnhandledStatus(int status) {
+        return ShippingException.dependencyFailure("PROVIDER_UNAVAILABLE");
     }
 }

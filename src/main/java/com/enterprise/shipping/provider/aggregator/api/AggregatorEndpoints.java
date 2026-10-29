@@ -39,7 +39,7 @@ public final class AggregatorEndpoints {
                                         () ->
                                                 ShippingException.invalidInput(
                                                         "PROVIDER_REQUEST_REJECTED"))
-                                .otherwiseThrow(StatusPolicy::standardReadFailure));
+                                .otherwiseThrow(AggregatorEndpoints::readFailure));
     }
 
     public static OutboundEndpoint<CreateShipmentRequest, CreateShipmentResponse> createShipment(
@@ -73,6 +73,18 @@ public final class AggregatorEndpoints {
                         StatusPolicy.<LabelData>of2xx()
                                 .onExpected(202, () -> null)
                                 .onExpected(404, () -> null)
-                                .otherwiseThrow(StatusPolicy::standardReadFailure));
+                                .otherwiseThrow(AggregatorEndpoints::readFailure));
+    }
+
+    public static ShippingException readFailure(int status) {
+        return switch (status) {
+            case 401 -> ShippingException.integrationUnavailable("PROVIDER_AUTHENTICATION_FAILED");
+            case 429 -> ShippingException.dependencyFailure("PROVIDER_RATE_LIMITED");
+            default ->
+                    ShippingException.dependencyFailure(
+                            status >= 500
+                                    ? "PROVIDER_UNAVAILABLE"
+                                    : "PROVIDER_UNEXPECTED_RESPONSE");
+        };
     }
 }

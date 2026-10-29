@@ -19,8 +19,6 @@ import org.springframework.http.ResponseEntity;
 @FunctionalInterface
 public interface ResponseDecoder<Resp> {
 
-    ObjectMapper STRICT_JSON = createStrictMapper();
-
     Resp decode(ResponseEntity<byte[]> response);
 
     default ResponseDecoder<Resp> validate(Consumer<Resp> validator) {
@@ -36,15 +34,23 @@ public interface ResponseDecoder<Resp> {
 
     static <Resp> ResponseDecoder<Resp> json(Class<Resp> type) {
         Objects.requireNonNull(type, "type");
-        return json(STRICT_JSON.getTypeFactory().constructType(type));
+        return JsonCodec.decoder(JsonCodec.STRICT_JSON.getTypeFactory().constructType(type));
     }
 
     static <Resp> ResponseDecoder<Resp> json(TypeReference<Resp> type) {
         Objects.requireNonNull(type, "type");
-        return json(STRICT_JSON.getTypeFactory().constructType(type));
+        return JsonCodec.decoder(JsonCodec.STRICT_JSON.getTypeFactory().constructType(type));
+    }
+}
+
+final class JsonCodec {
+
+    static final ObjectMapper STRICT_JSON = createStrictMapper();
+
+    private JsonCodec() {
     }
 
-    private static <Resp> ResponseDecoder<Resp> json(JavaType type) {
+    static <Resp> ResponseDecoder<Resp> decoder(JavaType type) {
         return response -> {
             if (response == null) {
                 throw protocolFailure(null);
@@ -72,7 +78,7 @@ public interface ResponseDecoder<Resp> {
         };
     }
 
-    private static ShippingException protocolFailure( Throwable cause) {
+    private static ShippingException protocolFailure(Throwable cause) {
         return cause == null
                 ? ShippingException.dependencyFailure("PROVIDER_INVALID_RESPONSE")
                 : new ShippingException(

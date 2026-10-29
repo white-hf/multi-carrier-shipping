@@ -2,6 +2,7 @@ package com.enterprise.shipping.shared.infrastructure.http;
 
 import com.enterprise.shipping.shared.domain.ShippingException;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.net.URI;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -15,7 +16,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.web.util.UriBuilder;
 import reactor.core.publisher.Mono;
 import reactor.netty.resources.ConnectionProvider;
 
@@ -125,6 +126,7 @@ public final class OutboundClientRegistry implements AutoCloseable {
                                             c.defaultCodecs()
                                                     .maxInMemorySize(policy.maxResponseBytes()));
             authentication.accept(builder);
+            URI origin = URI.create(baseUrl);
             WebClient client = builder.build();
             pools.put(id, pool);
             return new OutboundClient() {
@@ -150,9 +152,17 @@ public final class OutboundClientRegistry implements AutoCloseable {
                                 if (effective - System.nanoTime() <= 0) {
                                     throw ShippingException.dependencyTimeout("PROVIDER_TIMEOUT");
                                 }
-                                String path = expandPath(endpoint.pathTemplate(), uriVariables);
+                                validateUriInputs(endpoint.pathTemplate(), uriVariables);
                                 long started = System.nanoTime();
-                                var spec = client.method(endpoint.method()).uri(path);
+                                var spec =
+                                        client.method(endpoint.method())
+                                                .uri(
+                                                        uriBuilder ->
+                                                                buildSameOriginUri(
+                                                                        origin,
+                                                                        uriBuilder,
+                                                                        endpoint.pathTemplate(),
+                                                                        uriVariables));
                                 var headersSpec =
                                         request == null
                                                 ? spec
@@ -330,7 +340,7 @@ public final class OutboundClientRegistry implements AutoCloseable {
                         });
     }
 
-    private static String expandPath(String pathTemplate, Map<String, ?> uriVariables) {
+    private static void validateUriInputs(String pathTemplate, Map<String, ?> uriVariables) {
         OutboundEndpoint.validatePathTemplate(pathTemplate);
         if (uriVariables.isEmpty()) {
             if (pathTemplate.contains("{") || pathTemplate.contains("}")) {
@@ -338,7 +348,7 @@ public final class OutboundClientRegistry implements AutoCloseable {
                         "Missing URI variables for outbound template: " + pathTemplate);
             }
             requireRelativePath(pathTemplate);
-            return pathTemplate;
+            return;
         }
         for (Map.Entry<String, ?> entry : uriVariables.entrySet()) {
             Object raw = entry.getValue();
@@ -357,17 +367,27 @@ public final class OutboundClientRegistry implements AutoCloseable {
                         "Unsafe URI variable value for: " + entry.getKey());
             }
         }
-        String expanded =
-                UriComponentsBuilder.fromPath(pathTemplate)
-                        .buildAndExpand(uriVariables)
-                        .encode()
-                        .toUriString();
-        if (expanded.contains("{") || expanded.contains("}")) {
-            throw new IllegalArgumentException(
-                    "Unresolved URI template variable in: " + pathTemplate);
+    }
+
+    private static URI buildSameOriginUri(
+            URI origin,
+            UriBuilder uriBuilder,
+            String pathTemplate,
+            Map<String, ?> uriVariables) {
+        // Delegate expansion and encoding to WebClient's UriBuilder in a single pass
+        // so path variables with spaces, non-ASCII characters, or '%' are never double-encoded.
+        URI resolved = uriBuilder.path(pathTemplate).build(uriVariables);
+        String rawPath = resolved.getRawPath();
+        if (!Objects.equals(origin.getScheme(), resolved.getScheme())
+                || !Objects.equals(origin.getHost(), resolved.getHost())
+                || origin.getPort() != resolved.getPort()
+                || resolved.getUserInfo() != null
+                || resolved.getRawQuery() != null
+                || resolved.getRawFragment() != null) {
+            throw new IllegalArgumentException("Outbound URI must stay on the configured origin");
         }
-        requireRelativePath(expanded);
-        return expanded;
+        requireRelativePath(rawPath);
+        return resolved;
     }
 
     private static void requireRelativePath(String path) {
