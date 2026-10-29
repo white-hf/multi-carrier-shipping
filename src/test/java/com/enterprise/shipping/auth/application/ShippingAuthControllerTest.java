@@ -3,6 +3,7 @@ package com.enterprise.shipping.auth.application;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -49,5 +50,22 @@ class ShippingAuthControllerTest {
                 .andExpect(jsonPath("$.code").value("AUTH_RATE_LIMITED"))
                 .andExpect(header().string("Retry-After", "899"));
         verify(accounts, times(5)).authenticate("alpha", "wrong-password");
+
+        // The target account still accepts the correct password from an unrelated client.
+        when(accounts.authenticate("alpha", "test-alpha-password"))
+                .thenReturn(new AccountAuthenticator.Account("alpha", "user-alpha", "Alpha"));
+        mvc.perform(
+                        post("/api/auth/login")
+                                .with(
+                                        request -> {
+                                            request.setRemoteAddr("192.0.2.42");
+                                            return request;
+                                        })
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        "{\"username\":\"alpha\",\"password\":\"test-alpha-password\",\"fingerprint\":\"fingerprint-test-123\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value("user-alpha"));
+        verify(accounts).authenticate("alpha", "test-alpha-password");
     }
 }

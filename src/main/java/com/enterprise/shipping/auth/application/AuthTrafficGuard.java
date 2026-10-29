@@ -34,7 +34,11 @@ public final class AuthTrafficGuard {
         }
     }
 
-    private record Key(String scope, String identity) {}
+    private record Key(String scope, String identity, String username) {
+        private Key(String scope, String identity) {
+            this(scope, identity, "");
+        }
+    }
 
     private static final class Counter {
         long expiresAt;
@@ -58,24 +62,30 @@ public final class AuthTrafficGuard {
 
     public synchronized void beforeLogin(String ip, String username) {
         long now = clock.millis();
+        discardExpired(now);
+        var keys = loginKeys(ip, username);
+        // Reject known abusive sources without consuming shared password-verification capacity.
+        for (Key key : keys) {
+            Counter existing = counters.get(key);
+            if (existing != null && existing.lockedUntil > now) {
+                throw limited("AUTH_RATE_LIMITED", existing.lockedUntil, now);
+            }
+        }
         trim(logins, now - 1000);
         if (logins.size() >= p.loginPerSecond()) {
             throw limited("AUTH_RATE_LIMITED", logins.peekFirst() + 1000, now);
         }
-        logins.addLast(now);
-        for (Key key : loginKeys(ip, username)) {
-            Counter counter = counter(key, p.failureWindow(), "AUTH_RATE_LIMITED", now);
-            if (counter.lockedUntil > now) {
-                throw limited("AUTH_RATE_LIMITED", counter.lockedUntil, now);
-            }
+        for (Key key : keys) {
+            counter(key, p.failureWindow(), "AUTH_RATE_LIMITED", now);
         }
+        logins.addLast(now);
     }
 
     public synchronized void loginResult(String ip, String username, boolean success) {
         long now = clock.millis();
         if (success) {
             // A successful account must not erase failures from other accounts on this IP.
-            counters.remove(new Key("login-user", username));
+            counters.remove(new Key("login-account", ip, username));
             return;
         }
         for (Key key : loginKeys(ip, username)) {
@@ -119,7 +129,7 @@ public final class AuthTrafficGuard {
             Duration window,
             String code,
             long now) {
-        counters.entrySet().removeIf(entry -> entry.getValue().expiresAt <= now);
+        discardExpired(now);
         Counter existing = counters.get(key);
         if (existing != null) {
             return existing;
@@ -134,6 +144,10 @@ public final class AuthTrafficGuard {
         return created;
     }
 
+    private void discardExpired(long now) {
+        counters.entrySet().removeIf(entry -> entry.getValue().expiresAt <= now);
+    }
+
     private static void trim(Deque<Long> events, long cutoff) {
         while (!events.isEmpty() && events.peekFirst() <= cutoff) {
             events.removeFirst();
@@ -141,7 +155,8 @@ public final class AuthTrafficGuard {
     }
 
     private static List<Key> loginKeys(String ip, String username) {
-        return List.of(new Key("login-ip", ip), new Key("login-user", username));
+        // Anonymous failures must not disable an account's correct-password login from another IP.
+        return List.of(new Key("login-ip", ip), new Key("login-account", ip, username));
     }
 
     private static Limited limited(String code, long expiresAt, long now) {

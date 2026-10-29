@@ -619,6 +619,13 @@ async function signIn(page) {
     assert.ok(expiredActive.key && expiredActive.quoteId);
     assert.strictEqual(expiredActive.userId, 'guest-user');
     assert.strictEqual(expiredCreates, 1);
+    // Old preview entry points must not erase a real pending operation after session expiry.
+    await page.evaluate(() => localStorage.setItem('shipping.mockMode.v1', 'true'));
+    await page.goto(appUrl + '?mock=1', { waitUntil: 'networkidle' });
+    await page.waitForSelector('#login-modal[open]');
+    const afterLegacyPreview = await page.evaluate(() => JSON.parse(sessionStorage.getItem('shipping.activeBooking.v1')));
+    assert.strictEqual(afterLegacyPreview.key, expiredActive.key);
+    assert.strictEqual(afterLegacyPreview.quoteId, expiredActive.quoteId);
     await page.unroute('**/api/bookings');
     await signIn(page);
     await page.waitForSelector('#unknown-view:not([hidden])');

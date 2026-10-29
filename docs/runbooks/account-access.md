@@ -60,9 +60,12 @@ No existing guest data is automatically transferred to an account.
 
 ## Limits and deployment boundary
 
-- Login: 5 attempts/second globally; 5 failed attempts per IP or username in 5 minutes lock for
-  15 minutes. Success clears the username failure history, not the IP history. Account lockouts
-  can also deny a legitimate user temporarily; choose thresholds appropriate to the demo audience.
+- Login: 5 admitted password checks/second globally; 5 failed attempts per IP or IP/username
+  pair in 5 minutes lock that source for 15 minutes. Locked sources are rejected before reserving
+  a global login slot. Success clears only the successful IP/username pair, not the IP history.
+  A targeted username is not globally locked: correct-password login from an unrelated IP remains
+  available. Users sharing an abusive client's peer IP can still share its lockout; distributed
+  guessing remains subject to the global budget and strong passwords.
 - Authenticated traffic: 10 quote requests, 5 booking requests and 20 label reads per minute,
   independently by account and peer IP. Replays count; ordinary status GETs do not dispatch.
 - The counter table is bounded (4096 entries); saturation returns 429 rather than forgetting

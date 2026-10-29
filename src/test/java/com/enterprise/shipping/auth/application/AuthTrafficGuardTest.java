@@ -35,25 +35,26 @@ class AuthTrafficGuardTest {
     }
 
     @Test
-    void locksIpAndUsernameAcrossDifferentCounterpartsAndExpires() {
+    void locksAbusiveIpWithoutLockingTheAccountOnOtherIpsAndExpires() {
         var guard = new AuthTrafficGuard(properties(4096), clock);
         for (int i = 0; i < 5; i++) {
             guard.beforeLogin("ip-a", "alpha");
             guard.loginResult("ip-a", "alpha", false);
             clock.advance(Duration.ofSeconds(1));
         }
-        assertThatThrownBy(() -> guard.beforeLogin("ip-b", "alpha"))
+        assertThatThrownBy(() -> guard.beforeLogin("ip-a", "alpha"))
                 .isInstanceOfSatisfying(
                         AuthTrafficGuard.Limited.class,
                         limited -> assertThat(limited.retryAfter()).isBetween(895L, 900L));
         assertThatThrownBy(() -> guard.beforeLogin("ip-a", "other"))
                 .isInstanceOf(AuthTrafficGuard.Limited.class);
+        guard.beforeLogin("ip-b", "alpha");
         clock.advance(Duration.ofMinutes(15));
         guard.beforeLogin("ip-a", "alpha");
     }
 
     @Test
-    void successfulLoginResetsUserFailuresButNotIpFailures() {
+    void successfulLoginResetsItsIpAccountFailuresButNotIpFailures() {
         var guard = new AuthTrafficGuard(properties(4096), clock);
         for (int i = 0; i < 4; i++) {
             guard.beforeLogin("ip-a", "alpha");
@@ -79,6 +80,45 @@ class AuthTrafficGuardTest {
                         limited -> assertThat(limited.retryAfter()).isEqualTo(1));
         clock.advance(Duration.ofSeconds(1));
         guard.beforeLogin("new-ip", "new-user");
+    }
+
+    @Test
+    void lockedOutFloodDoesNotConsumeHealthyClientsGlobalLoginBudget() {
+        var guard = new AuthTrafficGuard(properties(4096), clock);
+        for (int i = 0; i < 5; i++) {
+            guard.beforeLogin("abusive-ip", "alpha");
+            guard.loginResult("abusive-ip", "alpha", false);
+            clock.advance(Duration.ofSeconds(1));
+        }
+        for (int i = 0; i < 20; i++) {
+            String username = "target-" + i;
+            assertThatThrownBy(() -> guard.beforeLogin("abusive-ip", username))
+                    .isInstanceOfSatisfying(
+                            AuthTrafficGuard.Limited.class,
+                            limited -> assertThat(limited.retryAfter()).isEqualTo(899));
+        }
+        for (int i = 0; i < 5; i++) {
+            guard.beforeLogin("healthy-ip-" + i, "alpha");
+        }
+        assertThatThrownBy(() -> guard.beforeLogin("sixth-ip", "alpha"))
+                .isInstanceOfSatisfying(
+                        AuthTrafficGuard.Limited.class,
+                        limited -> assertThat(limited.retryAfter()).isEqualTo(1));
+    }
+
+    @Test
+    void globalRejectionsDoNotFillTheCounterTable() {
+        var guard = new AuthTrafficGuard(properties(12), clock);
+        for (int i = 0; i < 5; i++) {
+            guard.beforeLogin("ip-" + i, "alpha");
+        }
+        for (int i = 0; i < 20; i++) {
+            String ip = "rejected-ip-" + i;
+            assertThatThrownBy(() -> guard.beforeLogin(ip, "alpha"))
+                    .isInstanceOf(AuthTrafficGuard.Limited.class);
+        }
+        clock.advance(Duration.ofSeconds(1));
+        guard.beforeLogin("new-healthy-ip", "alpha");
     }
 
     @Test

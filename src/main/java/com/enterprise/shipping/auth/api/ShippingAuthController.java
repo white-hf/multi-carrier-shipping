@@ -138,7 +138,10 @@ public class ShippingAuthController {
     }
 
     private static String cookie(
-            String name, String value, long ttlSeconds, HttpServletRequest request) {
+            String name,
+            String value,
+            long ttlSeconds,
+            HttpServletRequest request) {
         // Only container/trusted-proxy configuration may determine HTTPS; never trust raw headers.
         return ResponseCookie.from(name, value)
                 .httpOnly(true)

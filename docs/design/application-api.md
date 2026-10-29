@@ -86,7 +86,9 @@ pair remains usable until expiry; logout does not revoke copies on other clients
 signing secret invalidates all existing tokens, and removing an account blocks its user ID.
 
 Login and logout remain subject to same-origin write checks. Login has a global 5/sec sliding
-limit, plus IP/account failure lockouts (5 failures in 5 minutes → 15 minutes). Authenticated
+limit, plus IP and IP/username-pair failure lockouts (5 failures in 5 minutes → 15 minutes).
+Locked sources do not consume the shared login budget. Anonymous failures do not lock a username
+globally, so the same account can sign in from another IP. Authenticated
 requests have independent sliding quotas per user and peer IP: 10 quote POSTs, 5 booking POSTs,
 and 20 label GETs/HEADs per minute. Same-key replays count too. `429 AUTH_RATE_LIMITED` or
 `429 API_RATE_LIMITED` includes integer `Retry-After` seconds. Limits are per process, with a
