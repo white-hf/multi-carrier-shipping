@@ -8,10 +8,13 @@ import java.util.Set;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.resources.ConnectionProvider;
+import reactor.core.publisher.Mono;
+import org.springframework.web.reactive.function.client.ClientResponse;
 
 /**
  * Lifecycle owner of one transport pool per registered dependency. Templates share values,
@@ -100,6 +103,8 @@ public final class OutboundClientRegistry implements AutoCloseable {
                         String operation,
                         long deadline,
                         Work<T> work) {
+                    // Response callbacks run on Netty threads without the caller's MDC.
+                    String requestId = MDC.get("requestId");
                     return guard.execute(
                             group,
                             operation,
@@ -110,16 +115,18 @@ public final class OutboundClientRegistry implements AutoCloseable {
                                                 @Override
                                                 public ResponseEntity<byte[]> get(String path) {
                                                     requireRelativePath(path);
+                                                    long started = System.nanoTime();
                                                     return OutboundDeadline.await(
                                                             client.get()
                                                                     .uri(path)
                                                                     .exchangeToMono(
                                                                             response ->
-                                                                                    response
-                                                                                            .toEntity(
-                                                                                                    byte
-                                                                                                                    []
-                                                                                                            .class)),
+                                                                                    receive(
+                                                                                            response,
+                                                                                            id,
+                                                                                            operation,
+                                                                                            started,
+                                                                                            requestId)),
                                                             effective);
                                                 }
 
@@ -127,6 +134,7 @@ public final class OutboundClientRegistry implements AutoCloseable {
                                                 public ResponseEntity<byte[]> post(
                                                         String path, Object body) {
                                                     requireRelativePath(path);
+                                                    long started = System.nanoTime();
                                                     return OutboundDeadline.await(
                                                             client.post()
                                                                     .uri(path)
@@ -136,11 +144,12 @@ public final class OutboundClientRegistry implements AutoCloseable {
                                                                     .bodyValue(body)
                                                                     .exchangeToMono(
                                                                             response ->
-                                                                                    response
-                                                                                            .toEntity(
-                                                                                                    byte
-                                                                                                                    []
-                                                                                                            .class)),
+                                                                                    receive(
+                                                                                            response,
+                                                                                            id,
+                                                                                            operation,
+                                                                                            started,
+                                                                                            requestId)),
                                                             effective);
                                                 }
                                             }));
@@ -151,6 +160,59 @@ public final class OutboundClientRegistry implements AutoCloseable {
             guards.remove(id);
             throw failure;
         }
+    }
+
+    private static Mono<ResponseEntity<byte[]>> receive(
+            ClientResponse response,
+            String dependency,
+            String operation,
+            long started,
+            String requestId) {
+        int status = response.statusCode().value();
+        var recorded = new java.util.concurrent.atomic.AtomicBoolean();
+        return response.toEntity(byte[].class)
+                .doOnNext(
+                        received -> {
+                            if (recorded.compareAndSet(false, true)) {
+                                OutboundDiagnostics.response(
+                                        dependency,
+                                        operation,
+                                        status,
+                                        started,
+                                        requestId,
+                                        received.getBody(),
+                                        null);
+                            }
+                        })
+                .doOnError(
+                        error -> {
+                            if (recorded.compareAndSet(false, true)) {
+                                OutboundDiagnostics.response(
+                                        dependency,
+                                        operation,
+                                        status,
+                                        started,
+                                        requestId,
+                                        null,
+                                        "[BODY_READ_FAILED:"
+                                                + OutboundDiagnostics.reason(error)
+                                                + "]");
+                            }
+                        })
+                .doOnCancel(
+                        () -> {
+                            // Overall timeout cancels body consumption after headers have arrived.
+                            if (recorded.compareAndSet(false, true)) {
+                                OutboundDiagnostics.response(
+                                        dependency,
+                                        operation,
+                                        status,
+                                        started,
+                                        requestId,
+                                        null,
+                                        "[BODY_READ_CANCELLED]");
+                            }
+                        });
     }
 
     private static void requireRelativePath(String path) {

@@ -16,8 +16,12 @@ public final class OutboundFailures {
             Thread.currentThread().interrupt();
         }
         return isTimeout(failure)
-                ? ShippingException.dependencyTimeout("PROVIDER_TIMEOUT")
-                : ShippingException.dependencyFailure("PROVIDER_UNAVAILABLE");
+                ? new ShippingException(
+                        "PROVIDER_TIMEOUT", ShippingException.Category.DEPENDENCY_TIMEOUT, failure)
+                : new ShippingException(
+                        "PROVIDER_UNAVAILABLE",
+                        ShippingException.Category.DEPENDENCY_FAILURE,
+                        failure);
     }
 
     public static boolean isInterrupted(Throwable failure) {
@@ -32,6 +36,9 @@ public final class OutboundFailures {
     public static boolean isTimeout(Throwable failure) {
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
             if (cause instanceof TimeoutException
+                    || cause instanceof io.netty.channel.ConnectTimeoutException
+                    || cause instanceof java.net.SocketTimeoutException
+                    || cause.getClass().getSimpleName().equals("PoolAcquireTimeoutException")
                     || cause instanceof io.netty.handler.timeout.ReadTimeoutException
                     || cause instanceof ShippingException shipping
                             && shipping.category() == ShippingException.Category.DEPENDENCY_TIMEOUT

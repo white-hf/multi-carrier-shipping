@@ -40,11 +40,19 @@ public class ShippingException extends RuntimeException {
     private final Operation operation;
 
     public ShippingException(String code, Category category) {
-        this(code, category, null);
+        this(code, category, null, null);
     }
 
-    private ShippingException(String code, Category category, Operation operation) {
-        super(Objects.requireNonNull(code, "Failure code required"));
+    public ShippingException(String code, Category category, Throwable cause) {
+        this(code, category, null, cause);
+    }
+
+    private ShippingException(
+            String code,
+            Category category,
+            Operation operation,
+            Throwable cause) {
+        super(Objects.requireNonNull(code, "Failure code required"), cause);
         this.code = code;
         this.category = Objects.requireNonNull(category, "Failure category required");
         this.operation = operation;
@@ -107,6 +115,6 @@ public class ShippingException extends RuntimeException {
     }
 
     public ShippingException forOperation(Resource resource, String id) {
-        return new ShippingException(code, category, new Operation(resource, id));
+        return new ShippingException(code, category, new Operation(resource, id), getCause());
     }
 }

@@ -1,17 +1,29 @@
 package com.enterprise.shipping.provider.sandbox;
 
 import com.enterprise.shipping.provider.sandbox.config.ProviderProperties;
-import com.enterprise.shipping.provider.sandbox.model.ProviderModels.*;
+import com.enterprise.shipping.provider.sandbox.model.ProviderModels.Capabilities;
+import com.enterprise.shipping.provider.sandbox.model.ProviderModels.CreateSubmission;
+import com.enterprise.shipping.provider.sandbox.model.ProviderModels.CreationOutcome;
+import com.enterprise.shipping.provider.sandbox.model.ProviderModels.LabelData;
+import com.enterprise.shipping.provider.sandbox.model.ProviderModels.LabelIdentity;
+import com.enterprise.shipping.provider.sandbox.model.ProviderModels.RateOffer;
+import com.enterprise.shipping.provider.sandbox.model.ProviderModels.Support;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundClient;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundClientRegistry;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundDeadline;
-import com.enterprise.shipping.shared.domain.*;
+import com.enterprise.shipping.shared.domain.ShippingException;
+import com.enterprise.shipping.shared.domain.ShippingIntent;
 import com.enterprise.shipping.shared.infrastructure.monitoring.MonitorCarrierApi;
-import com.fasterxml.jackson.databind.*;
-import org.springframework.http.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import java.net.URI;
-import java.time.*;
-import java.util.*;
+import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Handles Sandbox Shipping Provider API requests, payload parsing, and unit conversion.
@@ -70,12 +82,19 @@ public class SandboxProviderClient {
                     }
 
                     var response = post(exchange, "/rest/rates", payloads.rateRequest(intent));
-                    if (!response.getStatusCode().is2xxSuccessful()) {
-                        throw readFailure(response.getStatusCode().value());
+                    int status = response.getStatusCode().value();
+                    if (status == 404) {
+                        return List.of();
+                    }
+                    if (status == 400) {
+                        throw ShippingException.invalidInput("PROVIDER_REQUEST_REJECTED");
+                    }
+                    if (status != 200) {
+                        throw readFailure(status);
                     }
 
                     try {
-                        var body = mapper.readTree(response.getBody());
+                        var body = mapper.readTree(requiredBody(response));
                         var available = body.get("availableRates");
                         if (available == null || !available.isArray()) {
                             throw protocol();
@@ -145,7 +164,7 @@ public class SandboxProviderClient {
                     var response = post(exchange, p.shipmentsPath(), Map.of("quoteId", quote));
                     int status = response.getStatusCode().value();
 
-                    if (status == 400 || status == 401 || status == 403 || status == 422) {
+                    if (status == 400) {
                         return CreationOutcome.rejection();
                     }
                     if (status != 200 && status != 201) {
@@ -153,7 +172,7 @@ public class SandboxProviderClient {
                     }
 
                     try {
-                        var body = mapper.readTree(response.getBody());
+                        var body = mapper.readTree(requiredBody(response));
                         String id = SandboxPayloadMapper.shipmentId(body);
                         String tracking =
                                 body.path("trackingNumbers").isArray()
@@ -244,7 +263,7 @@ public class SandboxProviderClient {
     private ResponseEntity<byte[]> post(
             OutboundClient.Exchange exchange, String path, Object body) {
         var response = exchange.post(path, body);
-        if (response == null || response.getBody() == null) {
+        if (response == null) {
             throw protocol();
         }
         return response;
@@ -254,10 +273,22 @@ public class SandboxProviderClient {
         return ShippingException.dependencyFailure("PROVIDER_INVALID_RESPONSE");
     }
 
+    private static byte[] requiredBody(ResponseEntity<byte[]> response) {
+        if (response.getBody() == null || response.getBody().length == 0) {
+            throw protocol();
+        }
+        return response.getBody();
+    }
+
     private static ShippingException readFailure(int status) {
-        return ShippingException.dependencyFailure(
-                status == 401 || status == 403
-                        ? "PROVIDER_AUTHENTICATION_FAILED"
-                        : "PROVIDER_UNAVAILABLE");
+        return switch (status) {
+            case 401 -> ShippingException.integrationUnavailable("PROVIDER_AUTHENTICATION_FAILED");
+            case 429 -> ShippingException.dependencyFailure("PROVIDER_RATE_LIMITED");
+            default ->
+                    ShippingException.dependencyFailure(
+                            status >= 500
+                                    ? "PROVIDER_UNAVAILABLE"
+                                    : "PROVIDER_UNEXPECTED_RESPONSE");
+        };
     }
 }

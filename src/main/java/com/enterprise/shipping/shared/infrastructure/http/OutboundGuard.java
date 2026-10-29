@@ -161,9 +161,11 @@ public final class OutboundGuard {
             outcome = "success";
             return result;
         } catch (OutboundAdmissionRejectedException rejected) {
+            OutboundDiagnostics.failure(dependency, groupName, operation, rejected, start);
             outcome = rejected.reason().name().toLowerCase(java.util.Locale.ROOT);
             throw rejected;
         } catch (Exception failure) {
+            OutboundDiagnostics.failure(dependency, groupName, operation, failure, start);
             if (OutboundFailures.isInterrupted(failure)) {
                 Thread.currentThread().interrupt();
             }
