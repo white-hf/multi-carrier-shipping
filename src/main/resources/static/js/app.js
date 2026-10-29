@@ -233,6 +233,11 @@
     }
     saveDraft();
     state.revision++;
+    if (rateBusy) {
+      rateBusy = false;
+      stopLoadingBanner();
+      busy('get-rates-btn', false);
+    }
     if (state.quotes.length && !state.key) {
       state.quotes = [];
       state.selected = null;
@@ -1267,9 +1272,10 @@
     if (requestState === 'RATING' || requestState === 'CONTENDED') {
       // Once this operation has accepted a final quote result, ignore late in-progress snapshots.
       if (operation.completed && state.step >= 2 && state.requestId && state.requestId === operation.requestId) {
-        return 'IGNORED';
+        return;
       }
-      return 'PENDING';
+      notice('Rates are still being retrieved. Click Get Rates again to check or retry safely.', 'info');
+      return;
     }
 
     if (requestState === 'RATE_FAILED') {
@@ -1279,7 +1285,7 @@
         disableExpiredSelection();
       }
       notice('Rates could not be retrieved. Click Get Rates to retry the saved request.', 'info');
-      return 'FAILED';
+      return;
     }
 
     if (requestState === 'QUOTES_EXPIRED') {
@@ -1289,7 +1295,7 @@
         disableExpiredSelection();
       }
       notice('These rates have expired. Click Get Rates to refresh them.', 'info');
-      return 'EXPIRED';
+      return;
     }
 
     if (requestState !== 'READY' && requestState !== 'NO_RATES') {
@@ -1323,7 +1329,6 @@
     if (requestState === 'NO_RATES' || !state.quotes.length) {
       notice('No shipping rates available. Please edit shipment details.', 'info');
     }
-    return 'COMPLETED';
   }
 
   // Step 1 form events
@@ -1367,30 +1372,9 @@
       }
       const operation = rateOperation;
       saveDraft();
-      let response = await api.quotes(req, operation.key);
+      const response = await api.quotes(req, operation.key);
       if (!isCurrentRateOperation(operation, rev)) return;
-      let outcome = acceptRateResponse(response.data, operation, req);
-
-      // CONTENDED is a response-only claim loss; immediately inspect the stored request state.
-      if (!mock && outcome === 'PENDING' && response.data.state === 'CONTENDED' && operation.requestId) {
-        response = await api.quoteStatus(operation.requestId);
-        if (!isCurrentRateOperation(operation, rev)) return;
-        outcome = acceptRateResponse(response.data, operation, req);
-      }
-
-      // Status reads never trigger a provider request. Retries remain user initiated.
-      for (let i = 0; !mock && outcome === 'PENDING' && operation.requestId && i < 5; i++) {
-        await delay(window.__RATE_POLL_DELAY_MS__ ?? 2000);
-        if (!isCurrentRateOperation(operation, rev)) return;
-        response = await api.quoteStatus(operation.requestId);
-        if (!isCurrentRateOperation(operation, rev)) return;
-        outcome = acceptRateResponse(response.data, operation, req);
-      }
-
-      if (!isCurrentRateOperation(operation, rev)) return;
-      if (outcome === 'PENDING') {
-        notice('Rates are still being retrieved. Click Get Rates again to check or retry safely.', 'info');
-      }
+      acceptRateResponse(response.data, operation, req);
     } catch (err) {
       if (rev === state.revision && !(rateOperation?.completed && state.step >= 2)) {
         if (err instanceof HttpError) {
