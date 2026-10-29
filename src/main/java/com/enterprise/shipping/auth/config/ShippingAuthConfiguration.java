@@ -1,28 +1,30 @@
 package com.enterprise.shipping.auth.config;
 
-import com.enterprise.shipping.auth.application.GuestSessionTokenService;
+import com.enterprise.shipping.auth.application.SessionTokenService;
 import com.enterprise.shipping.auth.infrastructure.ShippingAuthenticationFilter;
 import com.enterprise.shipping.shared.identity.UserContext;
-import java.time.Clock;
-import java.time.Duration;
+
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
-/** Owns token configuration and the authenticated identity exposed through the shared UserContext contract. */
+import java.time.Clock;
+
+/**
+ * Owns token configuration and the authenticated identity exposed through the shared UserContext
+ * contract.
+ */
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(ShippingAuthProperties.class)
 public class ShippingAuthConfiguration {
 
     @Bean
-    GuestSessionTokenService guestSessionTokenService(
-            @Value("${shipping.auth.token-secret:local-shipping-hmac-secret-key-2026}")
-                    String secret,
-            @Value("${shipping.auth.token-ttl:2h}") Duration tokenTtl,
-            Clock clock) {
-        return new GuestSessionTokenService(secret, tokenTtl, clock);
+    SessionTokenService sessionTokenService(ShippingAuthProperties properties, Clock clock) {
+        return new SessionTokenService(properties.tokenSecret(), properties.tokenTtl(), clock);
     }
 
     @Bean
@@ -31,8 +33,8 @@ public class ShippingAuthConfiguration {
             throw new IllegalArgumentException("A valid fallback user ID is required");
         }
 
-        // Resolve the verified principal from the active request context so Guest and future
-        // logged-in users are handled identically by downstream controllers and services.
+        // Resolve the verified principal from the active request context so authenticated
+        // account users are handled identically by downstream controllers and services.
         return () -> {
             RequestAttributes attributes = RequestContextHolder.getRequestAttributes();
             if (attributes instanceof ServletRequestAttributes servletAttributes) {

@@ -203,7 +203,13 @@ public class HttpLoadRunner {
                                 "--shipping.provider.read-timeout=1s",
                                 "--shipping.outbound.dependencies.sandbox.concurrency=4",
                                 "--shipping.auth.token-secret=" + key(),
-                                "--shipping.auth.require-token=true",
+                                "--shipping.auth.users[0].username=load-test",
+                                "--shipping.auth.users[0].password=local-load-test-password",
+                                "--shipping.auth.users[0].user-id=load-user",
+                                "--shipping.auth.users[0].display-name=Load Test",
+                                "--shipping.auth.quotes-per-minute=100000",
+                                "--shipping.auth.bookings-per-minute=100000",
+                                "--shipping.auth.labels-per-minute=100000",
                                 "--shipping.recovery.discovery-interval-ms=3600000",
                                 "--logging.level.root=WARN",
                                 "--logging.level.com.enterprise.shipping=ERROR",
@@ -212,12 +218,12 @@ public class HttpLoadRunner {
             var auth =
                     call(
                             "POST",
-                            "/api/auth/guest",
+                            "/api/auth/login",
                             JSON.writeValueAsString(
-                                    Map.of("clientId", "load-client-2026", "fingerprint", FP)),
+                                    Map.of("username", "load-test", "password", "local-load-test-password", "fingerprint", FP)),
                             null,
                             null);
-            require(auth.status == 200, "Guest auth failed");
+            require(auth.status == 200, "Account auth failed");
             token = auth.body.path("token").asText();
             var jdbc = new JdbcTemplate(ctx.getBean(DataSource.class));
             var checks = new LinkedHashMap<String, Object>();

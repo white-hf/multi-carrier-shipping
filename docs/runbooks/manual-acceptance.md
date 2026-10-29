@@ -12,13 +12,18 @@ On a new machine, copy the [configuration template](../../.env.example) only if 
 cp .env.example .env
 ```
 
-Edit `.env` and supply these three required values:
+Edit `.env` and supply the provider credentials and separate application login settings:
 
 ```sh
 SHIPPING_PROVIDER_BASE_URL=''
 SHIPPING_PROVIDER_USERNAME=''
 SHIPPING_PROVIDER_PASSWORD=''
+SHIPPING_AUTH_USERNAME=''
+SHIPPING_AUTH_PASSWORD='' # unique password, at least 12 characters
+SHIPPING_AUTH_TOKEN_SECRET='' # generate with: openssl rand -hex 32
 ```
+
+See [account access](account-access.md) for password hashes, multiple accounts, quotas and HTTPS/proxy setup. Application login credentials are separate from provider credentials.
 
 Use your provider's integration URL and credentials. Keep `.env` local; it is ignored by Git. The template also includes optional ports, database path and timeout settings. Existing exported variables work too; values defined in `.env` take precedence. For another local file, set `SHIPPING_ENV_FILE` to its absolute path.
 
@@ -36,7 +41,7 @@ Verify the settings without calling the provider:
 
 The script loads the local configuration, builds the application and starts it.
 
-Open <http://127.0.0.1:8080/> after startup. Ensure **Demo mode is off** and the indicator says **Backend API**.
+Open <http://127.0.0.1:8080/> after startup. Sign in using the application account configured above. The workspace uses the backend API; there is no local demo mode.
 
 ## Try the workflow
 

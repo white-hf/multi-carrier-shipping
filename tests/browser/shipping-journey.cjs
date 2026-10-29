@@ -7,6 +7,16 @@ async function ctl(mode) {
   const res = await fetch(`${controlUrl}?mode=${mode}`);
   return res.json();
 }
+async function signIn(page) {
+  await page.waitForSelector('#login-modal[open]');
+  await page.fill('#login-username', 'alpha');
+  await page.fill('#login-password', 'test-alpha-password');
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'networkidle' }),
+    page.click('#login-submit')
+  ]);
+  await page.waitForFunction(() => !!sessionStorage.getItem('shipping.accountSession.v1'));
+}
 (async () => {
   const browser = await chromium.launch();
   try {
@@ -14,20 +24,30 @@ async function ctl(mode) {
     let page = await context.newPage();
     page.on('dialog', dialog => dialog.accept());
 
-    // 1. Default Backend Mode, 2-Hour Guest Token Issuance & Step 1
+    // 1. Default Backend Mode, Account Login & Step 1
     await ctl('normal');
     await ctl('reset-counts');
     await page.goto(appUrl, { waitUntil: 'networkidle' });
-    assert.strictEqual(await page.isChecked('#mock-toggle'), false, 'Should default to backend mode');
+    await page.waitForSelector('#login-modal[open]');
+    assert.strictEqual(await page.evaluate(() => sessionStorage.getItem('shipping.accountSession.v1')), null);
+    assert.strictEqual((await ctl('stats')).rateCalls, 0);
+    await page.fill('#login-username', 'alpha');
+    await page.fill('#login-password', 'wrong-password');
+    await page.click('#login-submit');
+    await page.waitForSelector('#login-error:not([hidden])');
+    assert.ok((await page.textContent('#login-error')).includes('Invalid username or password'));
+    await signIn(page);
+    assert.strictEqual(await page.locator('#mock-toggle').count(), 0);
+    assert.strictEqual(await page.locator('#login-preview').count(), 0);
     assert.strictEqual(await page.textContent('#mode-indicator'), 'Backend API');
     assert.strictEqual(await page.isVisible('#step-1'), true);
     assert.strictEqual(await page.isVisible('#step-2'), false);
 
-    // Verify 2-hour fingerprint-bound Guest Token was issued and unauthenticated requests are blocked (401)
-    await page.waitForFunction(() => !!sessionStorage.getItem('shipping.guestSession.v1'));
-    const guestSession = await page.evaluate(() => JSON.parse(sessionStorage.getItem('shipping.guestSession.v1')));
-    assert.ok(guestSession.token && guestSession.token.includes('.'), 'Guest token must be signed');
-    assert.ok(guestSession.userId && guestSession.userId.startsWith('guest-'), 'Guest userId must be derived');
+    // Verify 2-hour fingerprint-bound account token was issued and unauthenticated requests are blocked (401)
+    await page.waitForFunction(() => !!sessionStorage.getItem('shipping.accountSession.v1'));
+    const guestSession = await page.evaluate(() => JSON.parse(sessionStorage.getItem('shipping.accountSession.v1')));
+    assert.ok(guestSession.token && guestSession.token.includes('.'), 'Account token must be signed');
+    assert.ok(guestSession.userId && guestSession.userId === 'guest-user', 'Account userId must match configured identity');
     assert.ok(guestSession.fingerprint && guestSession.fingerprint.startsWith('fp-'), 'Client fingerprint must be bound');
     const unauthStatus = await page.evaluate(async () => {
       const res = await fetch('/api/quotes', {
@@ -37,7 +57,7 @@ async function ctl(mode) {
       });
       return res.status;
     });
-    assert.strictEqual(unauthStatus, 401, 'Unauthenticated API call without Guest Token must return 401');
+    assert.strictEqual(unauthStatus, 401, 'Unauthenticated API call without an account token must return 401');
 
     // 2. Client-side & server-side field validation across 3-Tab workstation + input retention
     // Empty recipient field while on Sender tab must switch to and display Recipient tab (not Package tab)
@@ -168,11 +188,6 @@ async function ctl(mode) {
     assert.strictEqual(await page.textContent('#outcome-title'), 'Pending confirmation');
     assert.strictEqual((await ctl('stats')).createCalls, 1);
 
-    // Mode switch is blocked while a submission is active
-    await page.click('#mock-toggle');
-    assert.strictEqual(await page.isChecked('#mock-toggle'), false);
-    assert.ok((await page.textContent('#notice')).includes('Finish or resolve the active shipment'));
-
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForSelector('#unknown-view:not([hidden])');
     assert.strictEqual(await page.textContent('#outcome-title'), 'Pending confirmation');
@@ -208,6 +223,7 @@ async function ctl(mode) {
     context = await browser.newContext();
     page = await context.newPage();
     await page.goto(appUrl, { waitUntil: 'networkidle' });
+    await signIn(page);
 
     // 8. Happy path creation + delayed label (1 automatic attempt -> 202 -> manual Retry label -> PDF available)
     await ctl('normal');
@@ -573,18 +589,91 @@ async function ctl(mode) {
     assert.strictEqual(await page.getAttribute('#label-link', 'href'), '#');
     assert.strictEqual(await page.isDisabled('#label-download-btn'), true);
 
-    // Demo preview never pretends to provide a real shipping label.
-    await page.goto(appUrl + '?mock=1', { waitUntil: 'networkidle' });
+    // 401 prompts explicit re-authentication without anonymously refreshing or re-POSTing.
+    let expiredPosts = 0;
+    await page.route('**/api/quotes', async route => {
+      expiredPosts++;
+      await route.fulfill({ status: 401, contentType: 'application/json', body: '{"code":"UNAUTHORIZED"}' });
+    });
+    await page.click('#get-rates-btn');
+    await page.waitForSelector('#login-modal[open]');
+    assert.strictEqual(expiredPosts, 1);
+    await page.unroute('**/api/quotes');
+    await signIn(page);
+
+    // An expired create session keeps its original operation identity for explicit same-key recovery.
+    await ctl('normal');
     await page.click('#get-rates-btn');
     await page.waitForSelector('#step-2:not([hidden]) .rate-card');
     await page.click('.rate-card:first-child');
     await page.click('#review-btn');
+    let expiredCreates = 0;
+    await page.route('**/api/bookings', async route => {
+      expiredCreates++;
+      await route.fulfill({ status: 401, contentType: 'application/json', body: '{"code":"UNAUTHORIZED"}' });
+    });
+    const createsBeforeReauth = (await ctl('stats')).createCalls;
     await page.click('#create-btn');
+    await page.waitForSelector('#login-modal[open]');
+    const expiredActive = await page.evaluate(() => JSON.parse(sessionStorage.getItem('shipping.activeBooking.v1')));
+    assert.ok(expiredActive.key && expiredActive.quoteId);
+    assert.strictEqual(expiredActive.userId, 'guest-user');
+    assert.strictEqual(expiredCreates, 1);
+    // Old preview entry points must not erase a real pending operation after session expiry.
+    await page.evaluate(() => localStorage.setItem('shipping.mockMode.v1', 'true'));
+    await page.goto(appUrl + '?mock=1', { waitUntil: 'networkidle' });
+    await page.waitForSelector('#login-modal[open]');
+    const afterLegacyPreview = await page.evaluate(() => JSON.parse(sessionStorage.getItem('shipping.activeBooking.v1')));
+    assert.strictEqual(afterLegacyPreview.key, expiredActive.key);
+    assert.strictEqual(afterLegacyPreview.quoteId, expiredActive.quoteId);
+    await page.unroute('**/api/bookings');
+    await signIn(page);
+    await page.waitForSelector('#unknown-view:not([hidden])');
+    assert.strictEqual((await ctl('stats')).createCalls, createsBeforeReauth, 'Login must not replay an unresolved write');
+    const restoredActive = await page.evaluate(() => JSON.parse(sessionStorage.getItem('shipping.activeBooking.v1')));
+    assert.strictEqual(restoredActive.key, expiredActive.key);
+    await page.click('#check-status-btn');
     await page.waitForSelector('#success-view:not([hidden])');
-    assert.ok((await page.textContent('#label-status-text')).includes('no real shipment or label'));
-    assert.strictEqual(await page.isDisabled('#label-download-btn'), true);
-    assert.strictEqual(await page.getAttribute('#label-email-link', 'aria-disabled'), 'true');
-    assert.strictEqual((await ctl('stats')).createCalls, 1);
+    assert.strictEqual((await ctl('stats')).createCalls, createsBeforeReauth + 1);
+    await page.click('#new-shipment-btn');
+
+    // A different account cannot restore the prior identity's drafts or active booking.
+    await page.evaluate(() => {
+      localStorage.setItem('shipping.rateDraft.v1', JSON.stringify({
+        savedAt: Date.now(), mock: false, userId: 'user-beta', fields: { 'from.attention': 'FOREIGN DRAFT' }
+      }));
+      sessionStorage.setItem('shipping.activeBooking.v1', JSON.stringify({
+        userId: 'user-beta', key: 'foreign-key', quoteId: 'foreign-quote', bookingId: 'foreign-booking', mock: false
+      }));
+    });
+    await page.reload({ waitUntil: 'networkidle' });
+    assert.notStrictEqual(await page.inputValue('input[name="from.attention"]'), 'FOREIGN DRAFT');
+    assert.strictEqual(await page.isVisible('#step-1'), true);
+
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'networkidle' }),
+      page.click('#user-avatar')
+    ]);
+    await page.waitForSelector('#login-modal[open]');
+    assert.strictEqual(await page.evaluate(() => sessionStorage.getItem('shipping.accountSession.v1')), null);
+    assert.strictEqual(await page.evaluate(() => sessionStorage.getItem('shipping.activeBooking.v1')), null);
+    assert.strictEqual(await page.evaluate(() => localStorage.getItem('shipping.rateDraft.v1')), null);
+    const cookies = await context.cookies();
+    assert.ok(!cookies.some(cookie => cookie.name === 'shipping_guest_token'));
+
+    // Legacy preview query parameters and stored mode flags cannot bypass sign-in.
+    await page.evaluate(() => {
+      localStorage.setItem('shipping.mockMode.v1', 'true');
+      localStorage.setItem('shipping.rateDraft.v1', JSON.stringify({
+        savedAt: Date.now(), mock: true, userId: 'guest-user', fields: { 'from.attention': 'OLD DEMO' }
+      }));
+    });
+    await page.goto(appUrl + '?mock=1', { waitUntil: 'networkidle' });
+    await page.waitForSelector('#login-modal[open]');
+    assert.strictEqual(await page.textContent('#mode-indicator'), 'Backend API');
+    assert.strictEqual(await page.locator('#login-preview').count(), 0);
+    assert.strictEqual(await page.evaluate(() => localStorage.getItem('shipping.rateDraft.v1')), null);
+    assert.strictEqual((await ctl('stats')).createCalls, 2);
   } finally {
     await browser.close();
   }
