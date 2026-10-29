@@ -1,6 +1,8 @@
 package com.enterprise.shipping.quote;
 
 import com.enterprise.shipping.quote.application.QuoteApplicationService;
+import com.enterprise.shipping.quote.api.ShippingQuoteController;
+import org.springframework.http.HttpStatus;
 import com.enterprise.shipping.quote.domain.RateRequest;
 import com.enterprise.shipping.quote.domain.ShippingIntentFingerprint;
 import com.enterprise.shipping.quote.domain.ShippingQuote;
@@ -37,6 +39,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -54,7 +59,7 @@ import static org.mockito.ArgumentMatchers.*;
 class ShippingRateRequestTest {
 
     @TempDir
-    Path directory;
+     Path directory;
 
     HikariDataSource source;
     JdbcQuoteStore store;
@@ -308,6 +313,147 @@ class ShippingRateRequestTest {
                         jdbc.queryForList("PRAGMA table_info(shipment_requests)").stream()
                                 .map(row -> row.get("name")))
                 .doesNotContain("last_error_code");
+    }
+
+    @Test
+    void simultaneousEmptyReadsReturnTheWinnerIdentityWithoutASecondClaim() throws Exception {
+        var storage = spy(store);
+        var barrier = new java.util.concurrent.CyclicBarrier(2);
+        var initialReads = new AtomicInteger();
+        doAnswer(
+                        call -> {
+                            Object result = call.callRealMethod();
+                            if (initialReads.getAndIncrement() < 2) {
+                                barrier.await(5, TimeUnit.SECONDS);
+                            }
+                            return result;
+                        })
+                .when(storage)
+                .byKey("user", "insert-race");
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            var a = executor.submit(() -> service(storage).create("user", "insert-race", intent));
+            var b = executor.submit(() -> service(storage).create("user", "insert-race", intent));
+            var first = a.get(10, TimeUnit.SECONDS);
+            var second = b.get(10, TimeUnit.SECONDS);
+            assertThat(first.result().requestId())
+                    .isNotBlank()
+                    .isEqualTo(second.result().requestId());
+            assertThat(calls).hasValue(1);
+            verify(storage, times(2)).insert(any(), anyLong());
+            verify(storage, never()).claim(any(), any(), anyLong());
+            verify(storage, never()).fail(any(), anyLong());
+            assertThat(count("shipment_requests")).isEqualTo(1);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void insertLoserChecksTheWinnerFingerprintWithoutDispatching() {
+        service().create("user", "insert-conflict", intent);
+        var storage = spy(store);
+        doReturn(java.util.Optional.empty(), store.byKey("user", "insert-conflict"))
+                .when(storage)
+                .byKey("user", "insert-conflict");
+        var changed =
+                intent.dated(LocalDate.ofInstant(clock.instant(), ZoneOffset.UTC).plusDays(1));
+        assertThatThrownBy(() -> service(storage).create("user", "insert-conflict", changed))
+                .isInstanceOfSatisfying(
+                        ShippingException.class,
+                        error -> assertThat(error.code()).isEqualTo("IDEMPOTENCY_CONFLICT"));
+        verify(storage, never()).claim(any(), any(), anyLong());
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void insertLoserReturnsFailedWinnerWithoutTakingOver() {
+        rates =
+                (input, deadline) -> {
+                    calls.incrementAndGet();
+                    throw ShippingException.dependencyTimeout("PROVIDER_TIMEOUT");
+                };
+        assertThatThrownBy(() -> service().create("user", "failed-winner", intent))
+                .isInstanceOf(ShippingException.class);
+        var storage = spy(store);
+        doReturn(java.util.Optional.empty(), store.byKey("user", "failed-winner"))
+                .when(storage)
+                .byKey("user", "failed-winner");
+        var result = service(storage).create("user", "failed-winner", intent);
+        assertThat(result.result().state()).isEqualTo("RATE_FAILED");
+        assertThat(result.disposition()).isEqualTo(QuoteApplicationService.Disposition.EXISTING);
+        verify(storage, never()).claim(any(), any(), anyLong());
+        verify(storage, never()).fail(any(), anyLong());
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void retryClaimLoserReturnsOnlyKnownIdentityWithoutRereadsOrWrites() {
+        var row = active("claim-lost", clock.millis() - 1);
+        var storage = spy(store);
+        doReturn(false).when(storage).claim(any(), any(), anyLong());
+        var result = service(storage).create("user", "claim-lost", row.intent());
+        assertThat(result.disposition()).isEqualTo(QuoteApplicationService.Disposition.PENDING);
+        assertThat(result.result().state()).isEqualTo("CONTENDED");
+        assertThat(result.result().requestId()).isEqualTo(row.requestId());
+        verify(storage, times(1)).byKey("user", "claim-lost");
+        verify(storage, times(1)).claim(any(), any(), anyLong());
+        verify(storage, never()).request(anyString(), anyString());
+        verify(storage, never()).quotes(anyString(), anyString());
+        verify(storage, never()).fail(any(), anyLong());
+        assertThat(calls).hasValue(0);
+    }
+
+    @Test
+    void quoteContentionResponseProvidesARealPollingLocation() {
+        var row = active("claim-api", clock.millis() - 1);
+        var storage = spy(store);
+        doReturn(false).when(storage).claim(any(), any(), anyLong());
+        var controller = new ShippingQuoteController(service(storage), () -> "user");
+        var response = controller.create("claim-api", row.intent());
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        assertThat(response.getHeaders().getLocation().getPath())
+                .isEqualTo("/api/quotes/" + row.requestId());
+        assertThat(response.getHeaders().getFirst("Retry-After")).isEqualTo("2");
+        assertThat(response.getBody())
+                .isInstanceOfSatisfying(
+                        QuoteApplicationService.Result.class,
+                        body -> {
+                            assertThat(body.requestId()).isEqualTo(row.requestId());
+                            assertThat(body.state()).isEqualTo("CONTENDED");
+                            assertThat(body.quotes()).isEmpty();
+                        });
+        assertThat(calls).hasValue(0);
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void completionLoserDoesNotFailAnOverdueSnapshot(CapturedOutput output) {
+        var storage = spy(store);
+        doAnswer(
+                        call -> {
+                            RateRequest claim = call.getArgument(0);
+                            var newer =
+                                    claim.claimed(claim.deadline(), claim.deadline() + 1000, false);
+                            assertThat(store.claim(claim, newer, claim.deadline())).isTrue();
+                            clock.advance(Duration.ofSeconds(20));
+                            return call.callRealMethod();
+                        })
+                .when(storage)
+                .complete(any(), anyList(), anyLong());
+        var result = service(storage).create("user", "completion-lost", intent);
+        assertThat(result.disposition()).isEqualTo(QuoteApplicationService.Disposition.PENDING);
+        verify(storage, never()).fail(any(), anyLong());
+        // One read belongs to the repository conflict snapshot; the service adds none.
+        verify(storage, times(1)).request(anyString(), anyString());
+        verify(storage, never()).quotes(anyString(), anyString());
+        assertThat(calls).hasValue(1);
+        var persisted = store.byKey("user", "completion-lost").orElseThrow();
+        assertThat(persisted.state()).isEqualTo(RateRequest.State.RATING);
+        assertThat(persisted.version()).isEqualTo(1);
+        assertThat(output.getOut())
+                .contains("Stale rate completion discarded requestId=")
+                .doesNotContain("Rate execution expired requestId=");
     }
 
     @Test
@@ -713,7 +859,7 @@ class ShippingRateRequestTest {
     }
 
     @Test
-    void expiredCompletionCannotPublishOrChangeItsRequestState() {
+    void expiredCompletionFailsOnlyItsOwnVersionWithoutPublishingQuotes() {
         var row = active("expired-completion", clock.millis());
         var completion =
                 store.complete(
@@ -721,9 +867,63 @@ class ShippingRateRequestTest {
                         List.of(identifiedOffer("late", row.requestId(), "late-token")),
                         clock.millis());
         assertThat(completion.applied()).isFalse();
-        assertThat(completion.request()).isEqualTo(row);
+        assertThat(completion.outcome()).isEqualTo(QuoteStore.Completion.Outcome.EXPIRED);
+        assertThat(completion.request()).isEqualTo(row.failed());
+        assertThat(store.request("user", row.requestId()).orElseThrow()).isEqualTo(row.failed());
         assertThat(completion.quotes()).isEmpty();
         assertThat(count("shipment_quotes")).isZero();
+    }
+
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void pausedExecutionReturnsFailedWithoutAStatusGet(CapturedOutput output) {
+        var storage = spy(store);
+        rates =
+                (input, deadline) -> {
+                    calls.incrementAndGet();
+                    clock.advance(Duration.ofSeconds(20));
+                    return offers("too-late", 2735);
+                };
+        var result = service(storage).create("user", "paused-completion", intent);
+        assertThat(result.result().state()).isEqualTo("RATE_FAILED");
+        assertThat(result.disposition()).isEqualTo(QuoteApplicationService.Disposition.EXISTING);
+        assertThat(result.result().quotes()).isEmpty();
+        verify(storage, times(1)).fail(any(), anyLong());
+        verify(storage, never()).request(anyString(), anyString());
+        verify(storage, never()).quotes(anyString(), anyString());
+        assertThat(store.byKey("user", "paused-completion").orElseThrow().state())
+                .isEqualTo(RateRequest.State.RATE_FAILED);
+        assertThat(count("shipment_quotes")).isZero();
+        assertThat(calls).hasValue(1);
+        assertThat(output.getOut())
+                .contains("WARN", "Rate execution expired requestId=")
+                .doesNotContain("Stale rate completion discarded");
+    }
+
+    @Test
+    void expiredCompletionCannotFailANewerClaim() {
+        var row = active("expiry-takeover", clock.millis());
+        var newer = row.claimed(clock.millis(), clock.millis() + 10000, false);
+        var storage = spy(store);
+        doAnswer(
+                        call -> {
+                            assertThat(store.claim(row, newer, clock.millis())).isTrue();
+                            return call.callRealMethod();
+                        })
+                .when(storage)
+                .fail(any(), anyLong());
+        var completion =
+                storage.complete(
+                        row,
+                        List.of(identifiedOffer("late", row.requestId(), "late-token")),
+                        clock.millis());
+        assertThat(completion.applied()).isFalse();
+        assertThat(completion.outcome()).isEqualTo(QuoteStore.Completion.Outcome.STALE);
+        assertThat(completion.request()).isEqualTo(newer);
+        assertThat(store.request("user", row.requestId()).orElseThrow()).isEqualTo(newer);
+        assertThat(count("shipment_quotes")).isZero();
+        verify(storage, times(1)).fail(eq(row), anyLong());
+        verify(storage, times(1)).request("user", row.requestId());
     }
 
     @Test
@@ -755,7 +955,7 @@ class ShippingRateRequestTest {
                             QuoteStore.Completion saved =
                                     (QuoteStore.Completion) call.callRealMethod();
                             return new QuoteStore.Completion(
-                                    saved.request(), List.of(invalidProjection), true);
+                                    saved.request(), List.of(invalidProjection), saved.outcome());
                         })
                 .when(storage)
                 .complete(any(), anyList(), anyLong());

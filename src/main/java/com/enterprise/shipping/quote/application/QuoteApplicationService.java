@@ -102,19 +102,16 @@ public class QuoteApplicationService implements QuoteSelectionPort {
             if (store.insert(claim, now)) {
                 return execute(claim, Disposition.CREATED);
             }
-            existing = store.byKey(userId, key);
+            // The winner owns execution. Read its identity/result, but never claim again here.
+            var winner =
+                    store.byKey(userId, key).orElseThrow(ShippingException::storageUnavailable);
+            requireMatching(winner, input);
+            return submission(winner, offersFor(winner), Disposition.EXISTING, clock.millis());
         }
 
         // 3. Verify that the replayed request has identical canonical content
         var row = existing.orElseThrow(() -> ShippingException.storageUnavailable());
-        // Reuse the stored default date so crossing midnight does not turn a matching replay into a
-        // conflict
-        String candidateFingerprint =
-                ShippingIntentFingerprint.of(dated(input, row.intent().shippingDate()));
-        if (!row.matches(candidateFingerprint)) {
-            throw ShippingException.conflict("IDEMPOTENCY_CONFLICT")
-                    .forQuoteRequest(row.requestId());
-        }
+        requireMatching(row, input);
 
         // 4. Only READY requests need stored offers to decide whether rating should refresh.
         long now = clock.millis();
@@ -126,11 +123,24 @@ public class QuoteApplicationService implements QuoteSelectionPort {
             if (store.claim(row, claimed, now)) {
                 return execute(claimed, Disposition.EXISTING);
             }
-            // A lost claim invalidates this snapshot; never execute from the stale version.
-            row = current(userId, row.requestId());
-            offers = offersFor(row);
+            // A failed fence does not prove another execution is still running. Return only
+            // the known identity; the client can inspect current state without redispatching.
+            return new Submission(
+                    new Result(
+                            row.requestId(), "CONTENDED", row.intent().shippingDate(), List.of()),
+                    Disposition.PENDING);
         }
         return submission(row, offers, Disposition.EXISTING, clock.millis());
+    }
+
+    private void requireMatching(RateRequest row, ShippingIntent input) {
+        // Retain the saved default date across midnight; an explicit changed date still conflicts.
+        String fingerprint =
+                ShippingIntentFingerprint.of(dated(input, row.intent().shippingDate()));
+        if (!row.matches(fingerprint)) {
+            throw ShippingException.conflict("IDEMPOTENCY_CONFLICT")
+                    .forQuoteRequest(row.requestId());
+        }
     }
 
     /** Reads current state without invoking the external provider. */
@@ -170,15 +180,17 @@ public class QuoteApplicationService implements QuoteSelectionPort {
             var completion = fetchAndComplete(claim);
             var row = completion.request();
             var offers = completion.quotes();
-            if (!completion.applied()) {
+            if (completion.outcome() == QuoteStore.Completion.Outcome.EXPIRED) {
+                // The store returns only after commit, so warn only for committed self-expiry.
+                log.warn(
+                        "Rate execution expired requestId={} version={}",
+                        claim.requestId(),
+                        claim.version());
+            } else if (completion.outcome() == QuoteStore.Completion.Outcome.STALE) {
                 log.info(
                         "Stale rate completion discarded requestId={} version={}",
                         claim.requestId(),
                         claim.version());
-                if (row.overdue(clock.millis())) {
-                    row = current(row);
-                    offers = offersFor(row);
-                }
             }
 
             // 2. Projection is pure and outside failure-state updates. Use one observation time.
@@ -237,7 +249,8 @@ public class QuoteApplicationService implements QuoteSelectionPort {
                 if (latest.version() > claim.version()
                         || latest.state() == RateRequest.State.READY
                         || latest.state() == RateRequest.State.NO_RATES) {
-                    return new QuoteStore.Completion(latest, offersFor(latest), false);
+                    return new QuoteStore.Completion(
+                            latest, offersFor(latest), QuoteStore.Completion.Outcome.STALE);
                 }
             }
         } catch (RuntimeException storageFailure) {

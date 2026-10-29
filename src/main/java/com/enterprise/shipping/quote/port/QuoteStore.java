@@ -25,9 +25,20 @@ public interface QuoteStore {
     /** Successful writes return their committed facts; conflicts return a current storage snapshot. */
     Completion complete(RateRequest expected, List<ShippingQuote> quotes, long now);
 
-    record Completion(RateRequest request, List<ShippingQuote> quotes, boolean applied) {
+    record Completion(RateRequest request, List<ShippingQuote> quotes, Outcome outcome) {
+        public enum Outcome {
+            PUBLISHED,
+            EXPIRED,
+            STALE
+        }
+
+        public boolean applied() {
+            return outcome == Outcome.PUBLISHED;
+        }
+
         public Completion {
             Objects.requireNonNull(request, "Rate request required");
+            Objects.requireNonNull(outcome, "Completion outcome required");
             quotes = List.copyOf(quotes);
         }
     }

@@ -202,6 +202,11 @@ public final class JdbcQuoteStore implements QuoteStore {
                             // An old execution may arrive after a newer claim. Do not apply its
                             // quotes.
                             if (expected.overdue(now)) {
+                                // End only this expired execution. The original version fence
+                                // prevents a late completion from failing a newer execution.
+                                if (fail(expected, now)) {
+                                    return new Completion(expected.failed(), List.of(), Completion.Outcome.EXPIRED);
+                                }
                                 return currentCompletion(expected);
                             }
                             var completed = expected.completed(!saved.isEmpty(), now);
@@ -262,7 +267,7 @@ public final class JdbcQuoteStore implements QuoteStore {
                                             statement.setLong(14, q.expiresAt());
                                         });
                             }
-                            return new Completion(completed, saved, true);
+                            return new Completion(completed, saved, Completion.Outcome.PUBLISHED);
                         }),
                 "Completion transaction returned no result");
     }
@@ -277,7 +282,7 @@ public final class JdbcQuoteStore implements QuoteStore {
                 current.state() == RateRequest.State.READY
                         ? quotes(current.userId(), current.requestId())
                         : List.<ShippingQuote>of();
-        return new Completion(current, offers, false);
+        return new Completion(current, offers, Completion.Outcome.STALE);
     }
 
     @Override
