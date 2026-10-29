@@ -16,7 +16,7 @@ Shared transport returns status, headers and bounded body bytes. The provider ad
 | Create | 5xx or other non-200/201/400 status | Unknown creation outcome (HTTP 202 PENDING_CONFIRMATION); never automatically resubmit |
 | Create | Success status, invalid receipt | Unknown creation outcome |
 
-RETRYABLE remains strictly reserved for local admission refusal before any HTTP request is dispatched (`SHIPMENT_SUBMISSION_NOT_DISPATCHED`). Provider HTTP status handling stays inside `provider/aggregator` and `shared/infrastructure/http` without polluting `booking` domain or application layers.
+RETRYABLE remains strictly reserved for local admission refusal before any HTTP request is dispatched (`SHIPMENT_SUBMISSION_NOT_DISPATCHED`). Provider HTTP status handling stays inside `provider/sandbox` and `shared/infrastructure/http` without polluting `booking` domain or application layers.
 
 ## Backend diagnostics
 
