@@ -165,10 +165,20 @@ class ModuleBoundariesTest {
     }
 
     @Test
-    void providerApiSlicesRemainMutuallyIndependent() throws Exception {
+    void providerCoreAndApiSlicesRemainMutuallyIndependent() throws Exception {
+        Path coreDir = ROOT.resolve("provider/core");
+        assertThat(Files.exists(coreDir)).isTrue();
+        try (var files = Files.walk(coreDir)) {
+            for (var file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
+                assertThat(Files.readString(file))
+                        .as("%s in provider.core must remain vendor-neutral", file)
+                        .doesNotContain("com.enterprise.shipping.provider.sandbox.");
+            }
+        }
+
         List<String> slices = List.of("rates", "shipments", "labels");
         for (String slice : slices) {
-            Path sliceDir = ROOT.resolve("provider/aggregator").resolve(slice);
+            Path sliceDir = ROOT.resolve("provider/sandbox").resolve(slice);
             assertThat(Files.exists(sliceDir)).isTrue();
             try (var files = Files.walk(sliceDir)) {
                 for (var file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
@@ -180,7 +190,7 @@ class ModuleBoundariesTest {
                         assertThat(source)
                                 .as("%s must not import peer provider slice %s", file, peer)
                                 .doesNotContain(
-                                        "com.enterprise.shipping.provider.aggregator."
+                                        "com.enterprise.shipping.provider.sandbox."
                                                 + peer
                                                 + ".");
                     }
