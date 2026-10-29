@@ -1,15 +1,20 @@
-package com.enterprise.shipping.provider.sandbox.config;
+package com.enterprise.shipping.provider.sandbox;
 
-import jakarta.validation.constraints.*;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.net.URI;
 import java.time.Duration;
+import java.util.Locale;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
 @Validated
 @ConfigurationProperties("shipping.provider")
-public record ProviderProperties(
+public record SandboxProviderProperties(
         @NotBlank String baseUrl,
         @NotBlank String username,
         @NotBlank String password,
@@ -22,12 +27,15 @@ public record ProviderProperties(
         @Min(5) @Max(30) int collectionSeconds,
         @Min(10) @Max(840) int quoteLifetimeSeconds,
         Set<String> labelHosts) {
+
+    public static final String DEFAULT_SHIPMENTS_PATH = "/rest/shipments";
+
     @Override
     public String toString() {
-        return "ProviderProperties[providerId=" + providerId + ", credentials=REDACTED]";
+        return "SandboxProviderProperties[providerId=" + providerId + ", credentials=REDACTED]";
     }
 
-    public ProviderProperties {
+    public SandboxProviderProperties {
         if (baseUrl != null && !baseUrl.isBlank()) {
             URI uri = URI.create(baseUrl);
             if (uri.getUserInfo() != null
@@ -42,14 +50,23 @@ public record ProviderProperties(
                         "Provider URL must use HTTPS, except loopback HTTP test servers");
             }
         }
+        shipmentsPath =
+                shipmentsPath == null || shipmentsPath.isBlank()
+                        ? DEFAULT_SHIPMENTS_PATH
+                        : shipmentsPath;
+        if (!shipmentsPath.startsWith("/")
+                || shipmentsPath.contains("..")
+                || shipmentsPath.contains("?")) {
+            throw new IllegalArgumentException("Invalid shipment resource path");
+        }
         labelHosts =
                 labelHosts == null
                         ? Set.of()
                         : labelHosts.stream()
                                 .map(String::strip)
                                 .filter(v -> !v.isEmpty())
-                                .map(v -> v.toLowerCase(java.util.Locale.ROOT))
-                                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+                                .map(v -> v.toLowerCase(Locale.ROOT))
+                                .collect(Collectors.toUnmodifiableSet());
         for (Duration duration : new Duration[] {rateTimeout, createTimeout, readTimeout}) {
             if (duration != null && (duration.isNegative() || duration.isZero())) {
                 throw new IllegalArgumentException("Positive provider deadlines required");
@@ -57,12 +74,6 @@ public record ProviderProperties(
         }
         if (rateTimeout != null && rateTimeout.toSeconds() <= collectionSeconds) {
             throw new IllegalArgumentException("Rate deadline must exceed collection window");
-        }
-        if (shipmentsPath != null
-                && (!shipmentsPath.startsWith("/")
-                        || shipmentsPath.contains("..")
-                        || shipmentsPath.contains("?"))) {
-            throw new IllegalArgumentException("Invalid shipment resource path");
         }
     }
 }

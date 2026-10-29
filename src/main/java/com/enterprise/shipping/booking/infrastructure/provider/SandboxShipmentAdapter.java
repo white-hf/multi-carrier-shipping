@@ -1,24 +1,25 @@
 package com.enterprise.shipping.booking.infrastructure.provider;
 
-import com.enterprise.shipping.provider.sandbox.SandboxProviderClient;
-import com.enterprise.shipping.provider.sandbox.model.ProviderModels.CreateSubmission;
-import com.enterprise.shipping.booking.port.ShipmentProviderPort;
 import com.enterprise.shipping.booking.port.ShipmentNotDispatchedException;
+import com.enterprise.shipping.booking.port.ShipmentProviderPort;
+import com.enterprise.shipping.provider.sandbox.shipments.CreateSubmission;
+import com.enterprise.shipping.provider.sandbox.shipments.SandboxCreateOperation;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundAdmissionRejectedException;
 
 /** Booking-owned bridge; provider transport values do not escape into the application. */
 public final class SandboxShipmentAdapter implements ShipmentProviderPort {
-    private final SandboxProviderClient client;
 
-    public SandboxShipmentAdapter(SandboxProviderClient client) {
-        this.client = client;
+    private final SandboxCreateOperation createOperation;
+
+    public SandboxShipmentAdapter(SandboxCreateOperation createOperation) {
+        this.createOperation = createOperation;
     }
 
     @Override
     public Outcome create(Submission submission) {
         try {
             var result =
-                    client.create(
+                    createOperation.create(
                             new CreateSubmission(
                                     submission.providerId(),
                                     submission.accountAlias(),
