@@ -180,7 +180,13 @@ public class QuoteApplicationService implements QuoteSelectionPort {
             var completion = fetchAndComplete(claim);
             var row = completion.request();
             var offers = completion.quotes();
-            if (!completion.applied()) {
+            if (completion.outcome() == QuoteStore.Completion.Outcome.EXPIRED) {
+                // The store returns only after commit, so warn only for committed self-expiry.
+                log.warn(
+                        "Rate execution expired requestId={} version={}",
+                        claim.requestId(),
+                        claim.version());
+            } else if (completion.outcome() == QuoteStore.Completion.Outcome.STALE) {
                 log.info(
                         "Stale rate completion discarded requestId={} version={}",
                         claim.requestId(),
@@ -243,7 +249,8 @@ public class QuoteApplicationService implements QuoteSelectionPort {
                 if (latest.version() > claim.version()
                         || latest.state() == RateRequest.State.READY
                         || latest.state() == RateRequest.State.NO_RATES) {
-                    return new QuoteStore.Completion(latest, offersFor(latest), false);
+                    return new QuoteStore.Completion(
+                            latest, offersFor(latest), QuoteStore.Completion.Outcome.STALE);
                 }
             }
         } catch (RuntimeException storageFailure) {

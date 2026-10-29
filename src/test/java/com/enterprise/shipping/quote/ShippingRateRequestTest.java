@@ -39,6 +39,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -383,7 +386,8 @@ class ShippingRateRequestTest {
     }
 
     @Test
-    void completionLoserDoesNotFailAnOverdueSnapshot() {
+    @ExtendWith(OutputCaptureExtension.class)
+    void completionLoserDoesNotFailAnOverdueSnapshot(CapturedOutput output) {
         var storage = spy(store);
         doAnswer(
                         call -> {
@@ -406,6 +410,9 @@ class ShippingRateRequestTest {
         var persisted = store.byKey("user", "completion-lost").orElseThrow();
         assertThat(persisted.state()).isEqualTo(RateRequest.State.RATING);
         assertThat(persisted.version()).isEqualTo(1);
+        assertThat(output.getOut())
+                .contains("Stale rate completion discarded requestId=")
+                .doesNotContain("Rate execution expired requestId=");
     }
 
     @Test
@@ -819,6 +826,7 @@ class ShippingRateRequestTest {
                         List.of(identifiedOffer("late", row.requestId(), "late-token")),
                         clock.millis());
         assertThat(completion.applied()).isFalse();
+        assertThat(completion.outcome()).isEqualTo(QuoteStore.Completion.Outcome.EXPIRED);
         assertThat(completion.request()).isEqualTo(row.failed());
         assertThat(store.request("user", row.requestId()).orElseThrow()).isEqualTo(row.failed());
         assertThat(completion.quotes()).isEmpty();
@@ -826,7 +834,8 @@ class ShippingRateRequestTest {
     }
 
     @Test
-    void pausedExecutionReturnsFailedWithoutAStatusGet() {
+    @ExtendWith(OutputCaptureExtension.class)
+    void pausedExecutionReturnsFailedWithoutAStatusGet(CapturedOutput output) {
         var storage = spy(store);
         rates =
                 (input, deadline) -> {
@@ -845,6 +854,9 @@ class ShippingRateRequestTest {
                 .isEqualTo(RateRequest.State.RATE_FAILED);
         assertThat(count("shipment_quotes")).isZero();
         assertThat(calls).hasValue(1);
+        assertThat(output.getOut())
+                .contains("WARN", "Rate execution expired requestId=")
+                .doesNotContain("Stale rate completion discarded");
     }
 
     @Test
@@ -865,6 +877,7 @@ class ShippingRateRequestTest {
                         List.of(identifiedOffer("late", row.requestId(), "late-token")),
                         clock.millis());
         assertThat(completion.applied()).isFalse();
+        assertThat(completion.outcome()).isEqualTo(QuoteStore.Completion.Outcome.STALE);
         assertThat(completion.request()).isEqualTo(newer);
         assertThat(store.request("user", row.requestId()).orElseThrow()).isEqualTo(newer);
         assertThat(count("shipment_quotes")).isZero();
@@ -901,7 +914,7 @@ class ShippingRateRequestTest {
                             QuoteStore.Completion saved =
                                     (QuoteStore.Completion) call.callRealMethod();
                             return new QuoteStore.Completion(
-                                    saved.request(), List.of(invalidProjection), true);
+                                    saved.request(), List.of(invalidProjection), saved.outcome());
                         })
                 .when(storage)
                 .complete(any(), anyList(), anyLong());

@@ -15,3 +15,7 @@ Handle CONTENDED as a prompt to GET the known request ID. A bounded query/retry 
 ## Verification
 
 Tests force two initial empty reads before competing inserts, assert a single provider execution and a shared persisted identity, reject conflicting fingerprints, and verify retry losers do not reread or mutate state. A completion-conflict test verifies an overdue newer snapshot is not repaired by the old completion handler.
+
+## Completion diagnostics
+
+The internal completion outcome distinguishes PUBLISHED, EXPIRED (the original version was committed as RATE_FAILED), and STALE (no completion write won its fence). The application logs a warning for committed EXPIRED and an informational stale-result message for STALE. It logs only after the store transaction returns; failed commits must not produce a successful-expiry warning. These internal outcomes do not change API states or metrics.
