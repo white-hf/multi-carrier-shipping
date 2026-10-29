@@ -2,28 +2,28 @@ package com.enterprise.shipping.booking.infrastructure.provider;
 
 import com.enterprise.shipping.booking.port.ShipmentNotDispatchedException;
 import com.enterprise.shipping.booking.port.ShipmentProviderPort;
-import com.enterprise.shipping.provider.aggregator.AggregatorProviderClient;
-import com.enterprise.shipping.provider.aggregator.model.ProviderModels.CreateSubmission;
+import com.enterprise.shipping.provider.aggregator.shipments.AggregatorShipmentApi;
+import com.enterprise.shipping.provider.aggregator.shipments.CreateSubmission;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundAdmissionRejectedException;
 
 /** Booking-owned bridge; provider transport values do not escape into the application. */
 public final class AggregatorShipmentAdapter implements ShipmentProviderPort {
 
-    private final AggregatorProviderClient client;
+    private final AggregatorShipmentApi shipmentApi;
 
-    public AggregatorShipmentAdapter(AggregatorProviderClient client) {
-        this.client = client;
+    public AggregatorShipmentAdapter(AggregatorShipmentApi shipmentApi) {
+        this.shipmentApi = shipmentApi;
     }
 
     @Override
     public Outcome create(Submission submission) {
         try {
             var result =
-                    client.create(
+                    shipmentApi.create(
                             new CreateSubmission(
-                                     submission.providerId(),
-                                     submission.accountAlias(),
-                                     submission.providerQuoteId()));
+                                    submission.providerId(),
+                                    submission.accountAlias(),
+                                    submission.providerQuoteId()));
             return result.rejected()
                     ? Outcome.rejection()
                     : Outcome.confirmed(

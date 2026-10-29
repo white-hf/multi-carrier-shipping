@@ -1,11 +1,15 @@
 package com.enterprise.shipping.provider.aggregator;
 
-import com.enterprise.shipping.provider.aggregator.api.codec.LabelResponseDecoder;
-import com.enterprise.shipping.provider.aggregator.api.dto.CreateShipmentResponse;
-import com.enterprise.shipping.provider.aggregator.api.dto.RateApiResponse;
+import com.enterprise.shipping.provider.aggregator.config.AggregatorContext;
 import com.enterprise.shipping.provider.aggregator.config.ProviderProperties;
-import com.enterprise.shipping.provider.aggregator.model.ProviderModels.CreateSubmission;
-import com.enterprise.shipping.provider.aggregator.model.ProviderModels.LabelIdentity;
+import com.enterprise.shipping.provider.aggregator.labels.AggregatorLabelApi;
+import com.enterprise.shipping.provider.aggregator.labels.LabelIdentity;
+import com.enterprise.shipping.provider.aggregator.labels.LabelResponseDecoder;
+import com.enterprise.shipping.provider.aggregator.rates.AggregatorRateApi;
+import com.enterprise.shipping.provider.aggregator.rates.dto.RateApiResponse;
+import com.enterprise.shipping.provider.aggregator.shipments.AggregatorShipmentApi;
+import com.enterprise.shipping.provider.aggregator.shipments.CreateSubmission;
+import com.enterprise.shipping.provider.aggregator.shipments.dto.CreateShipmentResponse;
 import com.enterprise.shipping.shared.domain.DimensionUnit;
 import com.enterprise.shipping.shared.domain.ShippingAddress;
 import com.enterprise.shipping.shared.domain.ShippingException;
@@ -13,6 +17,7 @@ import com.enterprise.shipping.shared.domain.ShippingIntent;
 import com.enterprise.shipping.shared.domain.WeightUnit;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundClientRegistry;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundDeadline;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundEndpoint;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundProperties;
 import com.enterprise.shipping.shared.infrastructure.http.ResponseDecoder;
 import com.sun.net.httpserver.HttpServer;
@@ -25,6 +30,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -91,7 +97,7 @@ class AggregatorProviderProtocolTest {
     void rejectsMalformedOrInvalidRateResponses(String invalidPayload) {
         var decoder =
                 ResponseDecoder.json(RateApiResponse.class)
-                        .validate(AggregatorMapper::validateCurrency);
+                        .validate(AggregatorRateApi::validateCurrency);
         var response =
                 ResponseEntity.ok()
                         .contentType(MediaType.APPLICATION_JSON)
@@ -168,9 +174,11 @@ class AggregatorProviderProtocolTest {
         assertThat(parsed.shipmentId()).isEqualTo("123");
     }
 
+    record UpsTrackResponse(String trackingNumber, String status) {}
+
     @Test
-    void malformed200ResponseIsCountedByGuardAndLoggedAsProtocolError(CapturedOutput output)
-            throws Exception {
+    void independentApiSlicesAndSecondProviderCoexistWithoutCentralClientCoupling(
+            CapturedOutput output) throws Exception {
         var status = new AtomicInteger(200);
         var body = new AtomicReference<>("{\"availableRates\":\"corrupted\"}");
         var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -196,13 +204,24 @@ class AggregatorProviderProtocolTest {
                     exchange.sendResponseHeaders(400, -1);
                     exchange.close();
                 });
+        server.createContext(
+                "/ups/track/1Z999",
+                exchange -> {
+                    byte[] bytes =
+                            "{\"trackingNumber\":\"1Z999\",\"status\":\"IN_TRANSIT\"}"
+                                    .getBytes(StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(200, bytes.length);
+                    exchange.getResponseBody().write(bytes);
+                    exchange.close();
+                });
         server.start();
         var metrics = new SimpleMeterRegistry();
         var registry = new OutboundClientRegistry(new OutboundProperties(), metrics);
         try {
+            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
             var properties =
                     new ProviderProperties(
-                            "http://127.0.0.1:" + server.getAddress().getPort(),
+                            baseUrl,
                             "user",
                             "pass",
                             "sandbox",
@@ -214,15 +233,25 @@ class AggregatorProviderProtocolTest {
                             10,
                             300,
                             Set.of("labels.example.com"));
-            var client =
-                    new AggregatorProviderClient(
-                            properties,
-                            Clock.fixed(Instant.parse("2026-10-29T12:00:00Z"), ZoneOffset.UTC),
-                            registry);
+            var context = new AggregatorContext(properties);
+            var sandboxClient =
+                    registry.registerClient(
+                            properties.providerId(),
+                            properties.baseUrl(),
+                            builder -> {
+                            });
+
+            var rateApi =
+                    new AggregatorRateApi(
+                            sandboxClient,
+                            context,
+                            Clock.fixed(Instant.parse("2026-10-29T12:00:00Z"), ZoneOffset.UTC));
+            var shipmentApi = new AggregatorShipmentApi(sandboxClient, context);
+            var labelApi = new AggregatorLabelApi(sandboxClient, context);
 
             assertThatThrownBy(
                             () ->
-                                    client.fetchRates(
+                                    rateApi.fetchRates(
                                             INTENT, OutboundDeadline.after(Duration.ofSeconds(3))))
                     .isInstanceOfSatisfying(
                             ShippingException.class,
@@ -243,7 +272,7 @@ class AggregatorProviderProtocolTest {
 
             assertThatThrownBy(
                             () ->
-                                    client.create(
+                                    shipmentApi.create(
                                             new CreateSubmission(
                                                     "sandbox", "local-account", "quote-1")))
                     .isInstanceOfSatisfying(
@@ -252,11 +281,34 @@ class AggregatorProviderProtocolTest {
 
             assertThatThrownBy(
                             () ->
-                                    client.fetch(
+                                    labelApi.fetch(
                                             new LabelIdentity("sandbox", "local-account", "123")))
                     .isInstanceOfSatisfying(
                             ShippingException.class,
                             e -> assertThat(e.code()).isEqualTo("PROVIDER_UNEXPECTED_RESPONSE"));
+
+            // A second independent provider (e.g. UPS tracking) registers its own client and slice
+            // without touching aggregator slices.
+            var upsClient =
+                    registry.registerClient(
+                            "ups",
+                            baseUrl,
+                            builder -> {
+                            });
+            var upsTrackEndpoint =
+                    OutboundEndpoint.<Void, UpsTrackResponse>get(
+                            "track",
+                            "/ups/track/{trackingNumber}",
+                            UpsTrackResponse.class);
+            upsClient.register(upsTrackEndpoint);
+
+            UpsTrackResponse tracked =
+                    upsClient.invoke(
+                            upsTrackEndpoint,
+                            Map.of("trackingNumber", "1Z999"),
+                            null,
+                            OutboundDeadline.after(Duration.ofSeconds(3)));
+            assertThat(tracked).isEqualTo(new UpsTrackResponse("1Z999", "IN_TRANSIT"));
         } finally {
             registry.close();
             server.stop(0);

@@ -1,22 +1,22 @@
 package com.enterprise.shipping.booking.infrastructure.provider;
 
 import com.enterprise.shipping.booking.port.LabelProviderPort;
-import com.enterprise.shipping.provider.aggregator.AggregatorProviderClient;
-import com.enterprise.shipping.provider.aggregator.model.ProviderModels.LabelIdentity;
+import com.enterprise.shipping.provider.aggregator.labels.AggregatorLabelApi;
+import com.enterprise.shipping.provider.aggregator.labels.LabelIdentity;
 
 /** Label reads never create or resubmit a shipment. */
 public final class AggregatorLabelAdapter implements LabelProviderPort {
 
-    private final AggregatorProviderClient client;
+    private final AggregatorLabelApi labelApi;
 
-    public AggregatorLabelAdapter(AggregatorProviderClient client) {
-        this.client = client;
+    public AggregatorLabelAdapter(AggregatorLabelApi labelApi) {
+        this.labelApi = labelApi;
     }
 
     @Override
     public Label fetch(Identity identity) {
         var result =
-                client.fetch(
+                labelApi.fetch(
                         new LabelIdentity(
                                 identity.providerId(),
                                 identity.accountAlias(),
@@ -28,6 +28,6 @@ public final class AggregatorLabelAdapter implements LabelProviderPort {
 
     @Override
     public boolean allowedUrl(String url) {
-        return client.allowedUrl(url);
+        return labelApi.allowedUrl(url);
     }
 }

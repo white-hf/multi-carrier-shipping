@@ -1,4 +1,4 @@
-package com.enterprise.shipping.provider.aggregator.api.codec;
+package com.enterprise.shipping.provider.aggregator.shipments;
 
 import com.enterprise.shipping.shared.domain.ShippingException;
 import com.fasterxml.jackson.core.JsonParser;

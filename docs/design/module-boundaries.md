@@ -37,8 +37,8 @@ auth/             Guest identity, token validation and HTTP authentication
 quote/            Shipping request snapshots, rate comparison and offers
 booking/          Idempotent shipment creation, booking state and labels
 reconciliation/   Overdue-booking discovery and recovery tasks
-provider/         External API protocols, payload mapping and provider models
-  aggregator/     Declarative shipping-aggregator protocol, DTOs, codecs and client
+provider/         External API protocols, isolated by provider and per-API vertical slices
+  aggregator/     Current aggregator provider (config/, rates/, shipments/, labels/)
 shared/           Reusable types, HTTP guards, persistence helpers and tracing
 runtime/          Deployment composition connecting modules to provider adapters
 ```

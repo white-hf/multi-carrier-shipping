@@ -1,6 +1,6 @@
-package com.enterprise.shipping.provider.aggregator.api.dto;
+package com.enterprise.shipping.provider.aggregator.shipments.dto;
 
-import com.enterprise.shipping.provider.aggregator.api.codec.ShipmentIdDeserializer;
+import com.enterprise.shipping.provider.aggregator.shipments.ShipmentIdDeserializer;
 import com.enterprise.shipping.shared.domain.ShippingException;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;

@@ -1,4 +1,4 @@
-package com.enterprise.shipping.provider.aggregator.api.dto;
+package com.enterprise.shipping.provider.aggregator.rates.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.math.BigDecimal;

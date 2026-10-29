@@ -1,4 +1,4 @@
-package com.enterprise.shipping.provider.aggregator.api.dto;
+package com.enterprise.shipping.provider.aggregator.shipments.dto;
 
 import com.enterprise.shipping.shared.domain.ShippingException;
 import com.fasterxml.jackson.annotation.JsonProperty;

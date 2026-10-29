@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,11 +42,18 @@ public final class OutboundClientRegistry implements AutoCloseable {
     }
 
     public synchronized OutboundGuard registerGuard(String id, Set<String> operations) {
+        if (operations == null || operations.isEmpty()) {
+            throw new IllegalArgumentException("Invalid or duplicate outbound dependency: " + id);
+        }
+        return createGuard(id, operations);
+    }
+
+    private OutboundGuard createGuard(String id, Set<String> operations) {
         if (closed
                 || guards.containsKey(id)
                 || !id.matches("[a-zA-Z0-9_-]{1,64}")
-                || operations.isEmpty()
-                || operations.stream().anyMatch(v -> !v.matches("[a-zA-Z0-9_-]{1,64}"))) {
+                || operations == null
+                || operations.stream().anyMatch(v -> v == null || !v.matches("[a-zA-Z0-9_-]{1,64}"))) {
             throw new IllegalArgumentException("Invalid or duplicate outbound dependency: " + id);
         }
         OutboundPolicy policy = properties.resolve(id);
@@ -74,6 +82,13 @@ public final class OutboundClientRegistry implements AutoCloseable {
         return guard;
     }
 
+    public synchronized OutboundClient registerClient(
+            String id,
+            String baseUrl,
+            Consumer<WebClient.Builder> authentication) {
+        return createClient(id, baseUrl, Set.of(), true, authentication);
+    }
+
     public synchronized OutboundClient registerEndpoints(
             String id,
             String baseUrl,
@@ -82,15 +97,20 @@ public final class OutboundClientRegistry implements AutoCloseable {
         if (endpoints == null || endpoints.isEmpty()) {
             throw new IllegalArgumentException("Outbound endpoints required for: " + id);
         }
-        var registered = new LinkedHashMap<String, OutboundEndpoint<?, ?>>();
-        for (OutboundEndpoint<?, ?> endpoint : endpoints) {
-            if (endpoint == null || registered.putIfAbsent(endpoint.operation(), endpoint) != null) {
-                throw new IllegalArgumentException(
-                        "Invalid or duplicate outbound endpoint for: " + id);
+        OutboundClient client = createClient(id, baseUrl, Set.of(), true, authentication);
+        try {
+            for (OutboundEndpoint<?, ?> endpoint : endpoints) {
+                client.register(endpoint);
             }
+            return client;
+        } catch (RuntimeException failure) {
+            ConnectionProvider pool = pools.remove(id);
+            if (pool != null) {
+                pool.dispose();
+            }
+            guards.remove(id);
+            throw failure;
         }
-        return createClient(
-                id, baseUrl, registered.keySet(), Map.copyOf(registered), authentication);
     }
 
     public synchronized OutboundClient register(
@@ -98,16 +118,19 @@ public final class OutboundClientRegistry implements AutoCloseable {
             String baseUrl,
             Set<String> operations,
             Consumer<WebClient.Builder> authentication) {
-        return createClient(id, baseUrl, operations, Map.of(), authentication);
+        if (operations == null || operations.isEmpty()) {
+            throw new IllegalArgumentException("Invalid or duplicate outbound dependency: " + id);
+        }
+        return createClient(id, baseUrl, operations, false, authentication);
     }
 
     private OutboundClient createClient(
             String id,
             String baseUrl,
             Set<String> operations,
-            Map<String, OutboundEndpoint<?, ?>> registeredEndpoints,
+            boolean requireEndpointRegistration,
             Consumer<WebClient.Builder> authentication) {
-        OutboundGuard guard = registerGuard(id, operations);
+        OutboundGuard guard = createGuard(id, operations);
         OutboundPolicy policy = properties.resolve(id);
         ConnectionProvider pool =
                 CarrierHttpClientFactory.pool("outbound-" + id, policy.concurrency());
@@ -129,7 +152,29 @@ public final class OutboundClientRegistry implements AutoCloseable {
             URI origin = URI.create(baseUrl);
             WebClient client = builder.build();
             pools.put(id, pool);
+            var registeredEndpoints = new ConcurrentHashMap<String, OutboundEndpoint<?, ?>>();
             return new OutboundClient() {
+                @Override
+                public void register(OutboundEndpoint<?, ?> endpoint) {
+                    if (endpoint == null) {
+                        throw new IllegalArgumentException(
+                                "Invalid or duplicate outbound endpoint for: " + id);
+                    }
+                    if (registeredEndpoints.putIfAbsent(endpoint.operation(), endpoint) != null) {
+                        throw new IllegalArgumentException(
+                                "Duplicate outbound endpoint for "
+                                        + id
+                                        + ": "
+                                        + endpoint.operation());
+                    }
+                    try {
+                        guard.registerOperation(endpoint.operation());
+                    } catch (RuntimeException duplicate) {
+                        registeredEndpoints.remove(endpoint.operation(), endpoint);
+                        throw duplicate;
+                    }
+                }
+
                 @Override
                 public <Req, Resp> Resp invoke(
                         OutboundEndpoint<Req, Resp> endpoint,
@@ -138,7 +183,7 @@ public final class OutboundClientRegistry implements AutoCloseable {
                         long deadline) {
                     Objects.requireNonNull(endpoint, "endpoint");
                     Objects.requireNonNull(uriVariables, "uriVariables");
-                    if (!registeredEndpoints.isEmpty()
+                    if ((requireEndpointRegistration || !registeredEndpoints.isEmpty())
                             && registeredEndpoints.get(endpoint.operation()) != endpoint) {
                         throw new IllegalArgumentException(
                                 "Unregistered outbound endpoint: " + endpoint.operation());

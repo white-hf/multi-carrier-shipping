@@ -163,4 +163,29 @@ class ModuleBoundariesTest {
             }
         }
     }
+
+    @Test
+    void providerApiSlicesRemainMutuallyIndependent() throws Exception {
+        List<String> slices = List.of("rates", "shipments", "labels");
+        for (String slice : slices) {
+            Path sliceDir = ROOT.resolve("provider/aggregator").resolve(slice);
+            assertThat(Files.exists(sliceDir)).isTrue();
+            try (var files = Files.walk(sliceDir)) {
+                for (var file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
+                    String source = Files.readString(file);
+                    for (String peer : slices) {
+                        if (peer.equals(slice)) {
+                            continue;
+                        }
+                        assertThat(source)
+                                .as("%s must not import peer provider slice %s", file, peer)
+                                .doesNotContain(
+                                        "com.enterprise.shipping.provider.aggregator."
+                                                + peer
+                                                + ".");
+                    }
+                }
+            }
+        }
+    }
 }
