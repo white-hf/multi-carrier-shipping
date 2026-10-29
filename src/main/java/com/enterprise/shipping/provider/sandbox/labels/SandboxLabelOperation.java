@@ -17,6 +17,8 @@ import java.util.Objects;
  */
 public class SandboxLabelOperation {
 
+    public static final String DEFAULT_SHIPMENTS_PATH = "/rest/shipments";
+
     private final OutboundClient outbound;
     private final ProviderAccountContext context;
     private final Duration readTimeout;
@@ -26,13 +28,21 @@ public class SandboxLabelOperation {
             OutboundClient outbound,
             ProviderAccountContext context,
             Duration readTimeout) {
+        this(outbound, context, DEFAULT_SHIPMENTS_PATH, readTimeout);
+    }
+
+    public SandboxLabelOperation(
+            OutboundClient outbound,
+            ProviderAccountContext context,
+            String shipmentsPath,
+            Duration readTimeout) {
         this.outbound = Objects.requireNonNull(outbound, "outbound");
         this.context = Objects.requireNonNull(context, "context");
         this.readTimeout = Objects.requireNonNull(readTimeout, "readTimeout");
         this.endpoint =
                 OutboundEndpoint.<Void, LabelData>get(
                                 "labels",
-                                "/rest/shipments/{shipmentId}/label",
+                                shipmentsPath + "/{shipmentId}/label",
                                 LabelData.class)
                         .decoder(new LabelResponseDecoder(context::allowedUrl))
                         .statusPolicy(

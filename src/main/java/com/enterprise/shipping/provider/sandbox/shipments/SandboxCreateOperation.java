@@ -18,36 +18,46 @@ import java.util.Objects;
  */
 public class SandboxCreateOperation {
 
-    private static final OutboundEndpoint<CreateShipmentRequest, CreateShipmentResponse> ENDPOINT =
-            OutboundEndpoint.post(
-                            "shipments",
-                            "/rest/shipments",
-                            CreateShipmentRequest.class,
-                            CreateShipmentResponse.class)
-                    .statusPolicy(
-                            StatusPolicy.<CreateShipmentResponse>of(200, 201)
-                                    .onHandledError(400, CreateShipmentResponse::rejection)
-                                    .otherwiseThrow(
-                                            status ->
-                                                    ShippingException.outcomeUnknown(
-                                                            "SHIPMENT_OUTCOME_UNKNOWN"))
-                                    .onDecodeFailure(
-                                            error ->
-                                                    ShippingException.outcomeUnknown(
-                                                            "SHIPMENT_OUTCOME_UNKNOWN")));
+    public static final String DEFAULT_SHIPMENTS_PATH = "/rest/shipments";
 
     private final OutboundClient outbound;
     private final ProviderAccountContext context;
     private final Duration createTimeout;
+    private final OutboundEndpoint<CreateShipmentRequest, CreateShipmentResponse> endpoint;
 
     public SandboxCreateOperation(
             OutboundClient outbound,
             ProviderAccountContext context,
             Duration createTimeout) {
+        this(outbound, context, DEFAULT_SHIPMENTS_PATH, createTimeout);
+    }
+
+    public SandboxCreateOperation(
+            OutboundClient outbound,
+            ProviderAccountContext context,
+            String shipmentsPath,
+            Duration createTimeout) {
         this.outbound = Objects.requireNonNull(outbound, "outbound");
         this.context = Objects.requireNonNull(context, "context");
         this.createTimeout = Objects.requireNonNull(createTimeout, "createTimeout");
-        this.outbound.register(ENDPOINT);
+        this.endpoint =
+                OutboundEndpoint.post(
+                                "shipments",
+                                shipmentsPath,
+                                CreateShipmentRequest.class,
+                                CreateShipmentResponse.class)
+                        .statusPolicy(
+                                StatusPolicy.<CreateShipmentResponse>of(200, 201)
+                                        .onHandledError(400, CreateShipmentResponse::rejection)
+                                        .otherwiseThrow(
+                                                status ->
+                                                        ShippingException.outcomeUnknown(
+                                                                "SHIPMENT_OUTCOME_UNKNOWN"))
+                                        .onDecodeFailure(
+                                                error ->
+                                                        ShippingException.outcomeUnknown(
+                                                                "SHIPMENT_OUTCOME_UNKNOWN")));
+        this.outbound.register(this.endpoint);
     }
 
     public Capabilities capabilities(String providerId, String accountAlias) {
@@ -63,10 +73,10 @@ public class SandboxCreateOperation {
         // 1. Verify provider and account routing context before external dispatch
         context.requireContext(submission.providerId(), submission.accountAlias());
 
-        // 2. Invoke the declarative /rest/shipments endpoint in quote-only mode
+        // 2. Invoke the declarative shipment creation endpoint in quote-only mode
         CreateShipmentResponse response =
                 outbound.invoke(
-                        ENDPOINT,
+                        endpoint,
                         new CreateShipmentRequest(submission.providerQuoteId()),
                         OutboundDeadline.after(createTimeout));
 

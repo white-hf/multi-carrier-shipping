@@ -56,7 +56,8 @@ public class SandboxProviderConfig {
             @Qualifier("sandboxOutboundClient") OutboundClient outbound,
             @Qualifier("sandboxAccountContext") ProviderAccountContext context,
             SandboxProviderProperties p) {
-        return new SandboxCreateOperation(outbound, context, p.createTimeout());
+        return new SandboxCreateOperation(
+                outbound, context, p.shipmentsPath(), p.createTimeout());
     }
 
     @Bean
@@ -64,6 +65,6 @@ public class SandboxProviderConfig {
             @Qualifier("sandboxOutboundClient") OutboundClient outbound,
             @Qualifier("sandboxAccountContext") ProviderAccountContext context,
             SandboxProviderProperties p) {
-        return new SandboxLabelOperation(outbound, context, p.readTimeout());
+        return new SandboxLabelOperation(outbound, context, p.shipmentsPath(), p.readTimeout());
     }
 }
