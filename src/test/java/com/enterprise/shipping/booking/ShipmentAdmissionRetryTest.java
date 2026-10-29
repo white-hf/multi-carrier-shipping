@@ -1,6 +1,9 @@
 package com.enterprise.shipping.booking;
 
 import com.enterprise.shipping.booking.application.ShipmentApplicationService;
+import com.enterprise.shipping.booking.api.ShippingBookingController;
+import com.enterprise.shipping.booking.api.ShippingBookingController.BookingResponse;
+import org.springframework.http.HttpStatus;
 import com.enterprise.shipping.booking.domain.BookingStatus;
 import com.enterprise.shipping.booking.infrastructure.persistence.JdbcShipmentStore;
 import com.enterprise.shipping.booking.port.*;
@@ -24,7 +27,7 @@ import static org.mockito.ArgumentMatchers.*;
 /** Real SQLite constraints/CAS across concurrent services and reopened connections. */
 class ShipmentAdmissionRetryTest {
     @TempDir
-    Path directory;
+     Path directory;
     HikariDataSource source;
     JdbcShipmentStore store;
     final Clock clock = Clock.fixed(Instant.parse("2026-10-25T12:00:00Z"), ZoneOffset.UTC);
@@ -115,6 +118,97 @@ class ShipmentAdmissionRetryTest {
         assertThat(store.overdue(Long.MAX_VALUE, -1, "", 100)).isEmpty();
         assertThat(dispatches).hasValue(0);
         return row;
+    }
+
+    @Test
+    void retryClaimLoserDoesNotReadOrDispatchAgain() {
+        var original = unsent();
+        var storage = spy(store);
+        doReturn(false).when(storage).claimRetry(any(), anyLong(), anyLong());
+        var result =
+                service(storage, submission -> accept(), clock)
+                        .create("user", "same-key", "quote-1");
+        assertThat(result.disposition()).isEqualTo(ShipmentApplicationService.Disposition.PENDING);
+        assertThat(result.booking().status()).isEqualTo("CONTENDED");
+        assertThat(result.booking().bookingId()).isEqualTo(original.id());
+        verify(storage, times(1)).byKey("user", "same-key");
+        verify(storage, times(1)).claimRetry(any(), anyLong(), anyLong());
+        verify(storage, never()).byId(anyString(), anyString());
+        verify(storage, never()).complete(any(), any(), anyLong());
+        assertThat(dispatches).hasValue(0);
+    }
+
+    @Test
+    void bookingContentionResponseProvidesIdentityWithoutAFabricatedReceipt() {
+        var row = unsent();
+        var storage = spy(store);
+        doReturn(false).when(storage).claimRetry(any(), anyLong(), anyLong());
+        var controller =
+                new ShippingBookingController(
+                        service(storage, submission -> accept(), clock), () -> "user");
+        var response =
+                controller.create("same-key", new ShippingBookingController.Create("quote-1"));
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        assertThat(response.getHeaders().getLocation().getPath())
+                .isEqualTo("/api/bookings/" + row.id());
+        assertThat(response.getHeaders().getFirst("Retry-After")).isEqualTo("2");
+        assertThat(response.getBody())
+                .isInstanceOfSatisfying(
+                        BookingResponse.class,
+                        body -> {
+                            assertThat(body.bookingId()).isEqualTo(row.id());
+                            assertThat(body.status()).isEqualTo("CONTENDED");
+                            assertThat(body.shipmentId()).isNull();
+                            assertThat(body.labelUrl()).isNull();
+                        });
+        assertThat(dispatches).hasValue(0);
+    }
+
+    @Test
+    void insertLoserReportsUnsentWinnerWithoutRetrying() {
+        var original = unsent();
+        var storage = spy(store);
+        doReturn(java.util.Optional.empty(), java.util.Optional.of(original))
+                .when(storage)
+                .byKey("user", "same-key");
+        assertThatThrownBy(
+                        () ->
+                                service(storage, submission -> accept(), clock)
+                                        .create("user", "same-key", "quote-1"))
+                .isInstanceOfSatisfying(
+                        ShippingException.class,
+                        error ->
+                                assertThat(error.code())
+                                        .isEqualTo("SHIPMENT_SUBMISSION_NOT_DISPATCHED"));
+        verify(storage, times(2)).byKey("user", "same-key");
+        verify(storage, never()).claimRetry(any(), anyLong(), anyLong());
+        assertThat(dispatches).hasValue(0);
+    }
+
+    @Test
+    void insertLoserReturnsConfirmedWinnerAndChecksFingerprint() {
+        var confirmed =
+                service(store, submission -> accept(), clock).create("user", "same-key", "quote-1");
+        var original = store.byKey("user", "same-key");
+        var storage = spy(store);
+        doReturn(java.util.Optional.empty(), original).when(storage).byKey("user", "same-key");
+        var result =
+                service(storage, submission -> accept(), clock)
+                        .create("user", "same-key", "quote-1");
+        assertThat(result.booking()).isEqualTo(confirmed.booking());
+        assertThat(result.disposition()).isEqualTo(ShipmentApplicationService.Disposition.EXISTING);
+        verify(storage, never()).claimRetry(any(), anyLong(), anyLong());
+        assertThat(dispatches).hasValue(1);
+
+        doReturn(java.util.Optional.empty(), original).when(storage).byKey("user", "same-key");
+        assertThatThrownBy(
+                        () ->
+                                service(storage, submission -> accept(), clock)
+                                        .create("user", "same-key", "different-quote"))
+                .isInstanceOfSatisfying(
+                        ShippingException.class,
+                        error -> assertThat(error.code()).isEqualTo("IDEMPOTENCY_CONFLICT"));
+        assertThat(dispatches).hasValue(1);
     }
 
     @Test

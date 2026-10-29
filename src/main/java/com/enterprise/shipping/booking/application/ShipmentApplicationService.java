@@ -99,7 +99,8 @@ public class ShipmentApplicationService {
             // or conflict.
             var winner = store.byKey(user, key);
             if (winner.isPresent()) {
-                return replay(winner.get(), hash);
+                requireMatching(winner.get(), hash);
+                return submission(winner.get(), ShippingBookingObserver.Operation.REPLAY, 0);
             }
 
             // Same request_id booked by a different key or quote is a terminal conflict.
@@ -173,6 +174,15 @@ public class ShipmentApplicationService {
     }
 
     private Submission replay(ShipmentStore.Record row, String hash) {
+        requireMatching(row, hash);
+
+        if (row.restore().canRetry()) {
+            return retry(row);
+        }
+        return submission(row, ShippingBookingObserver.Operation.REPLAY, 0);
+    }
+
+    private void requireMatching(ShipmentStore.Record row, String hash) {
         if (!hash.equals(row.hash())) {
             observer.record(
                     ShippingBookingObserver.Operation.CONFLICT,
@@ -180,11 +190,6 @@ public class ShipmentApplicationService {
                     0);
             throw ShippingException.conflict("IDEMPOTENCY_CONFLICT");
         }
-
-        if (row.restore().canRetry()) {
-            return retry(row);
-        }
-        return submission(row, ShippingBookingObserver.Operation.REPLAY, 0);
     }
 
     private Submission retry(ShipmentStore.Record row) {
@@ -201,9 +206,16 @@ public class ShipmentApplicationService {
         long deadline = submissionDeadline(now);
         if (!store.claimRetry(row, now, deadline)) {
             log.info("Shipment retry claim lost bookingId={} version={}", row.id(), row.version());
-            // A losing caller returns current state, never loops into another dispatch attempt.
-            var latest = store.byId(row.userId(), row.id()).orElseThrow(ShippingException::missing);
-            return submission(latest, ShippingBookingObserver.Operation.REPLAY, 0);
+            // No reread or second claim. Expiry can also reject this CAS, so do not assert
+            // a persisted PENDING state or imply that a provider call is running.
+            observer.record(
+                    ShippingBookingObserver.Operation.REPLAY,
+                    ShippingBookingObserver.Outcome.UNKNOWN,
+                    0);
+            return new Submission(
+                    new View(row.id(), "CONTENDED", null, null, null, null),
+                    Disposition.PENDING,
+                    null);
         }
         log.info("Shipment retry claimed bookingId={} version={}", row.id(), row.version() + 1);
         return submit(
