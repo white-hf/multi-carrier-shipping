@@ -19,3 +19,5 @@ Tests force two initial empty reads before competing inserts, assert a single pr
 ## Completion diagnostics
 
 The internal completion outcome distinguishes PUBLISHED, EXPIRED (the original version was committed as RATE_FAILED), and STALE (no completion write won its fence). The application logs a warning for committed EXPIRED and an informational stale-result message for STALE. It logs only after the store transaction returns; failed commits must not produce a successful-expiry warning. These internal outcomes do not change API states or metrics.
+
+A failed provider execution also owns only its original version fence. If recording failure loses that fence, it reads the latest request directly and never runs status-query expiry repair against the newer execution, even if that newer snapshot is overdue.
