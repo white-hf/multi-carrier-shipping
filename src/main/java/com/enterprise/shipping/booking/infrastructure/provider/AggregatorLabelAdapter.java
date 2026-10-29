@@ -1,14 +1,15 @@
 package com.enterprise.shipping.booking.infrastructure.provider;
 
-import com.enterprise.shipping.provider.sandbox.SandboxProviderClient;
-import com.enterprise.shipping.provider.sandbox.model.ProviderModels.LabelIdentity;
 import com.enterprise.shipping.booking.port.LabelProviderPort;
+import com.enterprise.shipping.provider.aggregator.AggregatorProviderClient;
+import com.enterprise.shipping.provider.aggregator.model.ProviderModels.LabelIdentity;
 
 /** Label reads never create or resubmit a shipment. */
-public final class SandboxLabelAdapter implements LabelProviderPort {
-    private final SandboxProviderClient client;
+public final class AggregatorLabelAdapter implements LabelProviderPort {
 
-    public SandboxLabelAdapter(SandboxProviderClient client) {
+    private final AggregatorProviderClient client;
+
+    public AggregatorLabelAdapter(AggregatorProviderClient client) {
         this.client = client;
     }
 

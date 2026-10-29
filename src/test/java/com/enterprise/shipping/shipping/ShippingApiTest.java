@@ -2,8 +2,8 @@ package com.enterprise.shipping.shipping;
 
 import com.enterprise.shipping.Application;
 import com.enterprise.shipping.auth.application.GuestSessionTokenService;
-import com.enterprise.shipping.provider.sandbox.SandboxProviderClient;
-import com.enterprise.shipping.provider.sandbox.config.ProviderProperties;
+import com.enterprise.shipping.provider.aggregator.AggregatorProviderClient;
+import com.enterprise.shipping.provider.aggregator.config.ProviderProperties;
 import com.enterprise.shipping.quote.contract.QuoteSelectionPort;
 import com.enterprise.shipping.reconciliation.application.PendingShipmentDiscovery;
 import com.enterprise.shipping.reconciliation.port.RecoveryCapabilityPort;
@@ -290,7 +290,7 @@ class ShippingApiTest {
     @Autowired
     MeterRegistry meterRegistry;
     @Autowired
-    SandboxProviderClient adapter;
+    AggregatorProviderClient adapter;
     @Autowired
     com.enterprise.shipping.shared.infrastructure.http.OutboundClientRegistry outbound;
 

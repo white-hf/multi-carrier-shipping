@@ -20,7 +20,15 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import reactor.netty.http.client.PrematureCloseException;
 
 /** Backend-only diagnostics. Error bodies are filtered, redacted and bounded; headers stay private. */
-final class OutboundDiagnostics {
+public final class OutboundDiagnostics {
+    public enum Classification {
+        SUCCESS,
+        EXPECTED_BRANCH,
+        DEPENDENCY_FAILURE,
+        PROTOCOL_ERROR,
+        BODY_READ_FAILURE
+    }
+
     private static final Logger log = LoggerFactory.getLogger(OutboundDiagnostics.class);
 
     private static final ObjectMapper JSON =
@@ -55,21 +63,48 @@ final class OutboundDiagnostics {
             String requestId,
             byte[] body,
             String bodyState) {
-        if (bodyState == null
-                && status == 404
-                && ("rates".equals(operation) || "labels".equals(operation))) {
+        Classification defaultClassification =
+                status >= 200 && status < 300
+                        ? Classification.SUCCESS
+                        : Classification.DEPENDENCY_FAILURE;
+        response(
+                dependency,
+                operation,
+                status,
+                started,
+                requestId,
+                body,
+                bodyState,
+                defaultClassification);
+    }
+
+    static void response(
+            String dependency,
+            String operation,
+            int status,
+            long started,
+            String requestId,
+            byte[] body,
+            String bodyState,
+            Classification classification) {
+        // Expected HTTP statuses must never mask an incomplete or failed response-body read.
+        Classification effective =
+                bodyState != null ? Classification.BODY_READ_FAILURE : classification;
+        if (effective == Classification.SUCCESS || effective == Classification.EXPECTED_BRANCH) {
             return;
         }
-        if (status < 200 || status >= 300) {
-            log.warn(
-                    "Outbound HTTP response dependency={} operation={} reason=HTTP_STATUS httpStatus={} elapsedMs={} requestId={} response={}",
-                    dependency,
-                    operation,
-                    status,
-                    elapsed(started),
-                    requestId,
-                    bodyState == null ? safeResponse(body) : bodyState);
-        }
+        String reason =
+                effective == Classification.PROTOCOL_ERROR ? "PROTOCOL_ERROR" : "HTTP_STATUS";
+        log.warn(
+                "Outbound HTTP response dependency={} operation={} classification={} reason={} httpStatus={} elapsedMs={} requestId={} response={}",
+                dependency,
+                operation,
+                effective,
+                reason,
+                status,
+                elapsed(started),
+                requestId,
+                bodyState == null ? safeResponse(body) : bodyState);
     }
 
     static void failure(

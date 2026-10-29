@@ -260,23 +260,52 @@ class OutboundDiagnosticsTest {
     }
 
     @Test
-    void doesNotLogWarningForExpectedRateOrLabel404Responses(CapturedOutput output) {
+    void classifiesExpectedBranchesProtocolErrorsAndBodyReadFailuresWithoutOperationNameCoupling(
+            CapturedOutput output) {
         OutboundDiagnostics.response(
                 "sandbox",
-                "rates",
+                "custom-operation",
                 404,
                 System.nanoTime(),
-                "req-404",
+                "req-expected-404",
                 "{}".getBytes(StandardCharsets.UTF_8),
-                null);
+                null,
+                OutboundDiagnostics.Classification.EXPECTED_BRANCH);
+        assertThat(output.getOut()).doesNotContain("req-expected-404");
+
+        // Expected status must never suppress a failed or cancelled body read.
         OutboundDiagnostics.response(
                 "sandbox",
-                "labels",
-                404,
+                "custom-operation",
+                202,
                 System.nanoTime(),
-                "req-404",
-                "{}".getBytes(StandardCharsets.UTF_8),
-                null);
-        assertThat(output.getOut()).doesNotContain("req-404");
+                "req-body-read-failed",
+                null,
+                "[BODY_READ_CANCELLED]",
+                OutboundDiagnostics.Classification.EXPECTED_BRANCH);
+        assertThat(output.getOut())
+                .contains(
+                        "req-body-read-failed",
+                        "classification=BODY_READ_FAILURE",
+                        "httpStatus=202",
+                        "[BODY_READ_CANCELLED]");
+
+        // Malformed 200 payload is logged as PROTOCOL_ERROR.
+        OutboundDiagnostics.response(
+                "sandbox",
+                "custom-operation",
+                200,
+                System.nanoTime(),
+                "req-protocol-error",
+                "{\"message\":\"corrupted payload\"}".getBytes(StandardCharsets.UTF_8),
+                null,
+                OutboundDiagnostics.Classification.PROTOCOL_ERROR);
+        assertThat(output.getOut())
+                .contains(
+                        "req-protocol-error",
+                        "classification=PROTOCOL_ERROR",
+                        "reason=PROTOCOL_ERROR",
+                        "httpStatus=200",
+                        "corrupted payload");
     }
 }

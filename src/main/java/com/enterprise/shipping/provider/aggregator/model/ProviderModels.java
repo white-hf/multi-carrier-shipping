@@ -1,7 +1,8 @@
-package com.enterprise.shipping.provider.sandbox.model;
+package com.enterprise.shipping.provider.aggregator.model;
 
 /** External-provider values; internal quote/request identities are assigned by business modules. */
 public final class ProviderModels {
+
     private ProviderModels() {
     }
 
@@ -34,6 +35,7 @@ public final class ProviderModels {
             String trackingNumber,
             String labelUrl,
             boolean rejected) {
+
         public static CreationOutcome rejection() {
             return new CreationOutcome(null, null, null, true);
         }
@@ -42,6 +44,7 @@ public final class ProviderModels {
     public record LabelIdentity(String providerId, String accountAlias, String shipmentId) {}
 
     public record LabelData(byte[] bytes, String contentType, String url) {
+
         public LabelData {
             bytes = bytes == null ? null : bytes.clone();
         }
