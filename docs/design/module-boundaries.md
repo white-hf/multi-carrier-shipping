@@ -38,7 +38,7 @@ quote/            Shipping request snapshots, rate comparison and offers
 booking/          Idempotent shipment creation, booking state and labels
 reconciliation/   Overdue-booking discovery and recovery tasks
 provider/         External API protocols, payload mapping and provider models
-  sandbox/        Current shipping-provider integration
+  aggregator/     Declarative shipping-aggregator protocol, DTOs, codecs and client
 shared/           Reusable types, HTTP guards, persistence helpers and tracing
 runtime/          Deployment composition connecting modules to provider adapters
 ```
@@ -64,7 +64,7 @@ For example, `booking.domain.ShipmentBooking` owns booking transitions; `Shipmen
 | `booking` | `quote.contract.QuoteSelectionPort` | Resolve an owned, bookable quote |
 | `reconciliation` | `booking.contract.ShipmentRecoveryPort` | Discover and update unresolved bookings |
 
-External integrations follow the same separation: each business module owns a provider port and a thin adapter under `infrastructure/provider`. The adapter translates between business types and `provider.sandbox` models. **Provider code does not import business modules, and business cores do not import provider implementations.** `runtime.SandboxConfiguration` connects them.
+External integrations follow the same separation: each business module owns a provider port and a thin adapter under `infrastructure/provider`. The adapter translates between business types and `provider.aggregator` models. **Provider code does not import business modules, and business cores do not import provider implementations.** `runtime.AggregatorConfiguration` connects them.
 
 Shared outbound infrastructure owns dependency-level transport and admission, with independent circuits for configured logical groups. Business services do not duplicate these mechanisms. `shared` does not depend on business modules or concrete providers.
 

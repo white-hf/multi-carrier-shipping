@@ -1,16 +1,17 @@
 package com.enterprise.shipping.booking.infrastructure.provider;
 
-import com.enterprise.shipping.provider.sandbox.SandboxProviderClient;
-import com.enterprise.shipping.provider.sandbox.model.ProviderModels.CreateSubmission;
-import com.enterprise.shipping.booking.port.ShipmentProviderPort;
 import com.enterprise.shipping.booking.port.ShipmentNotDispatchedException;
+import com.enterprise.shipping.booking.port.ShipmentProviderPort;
+import com.enterprise.shipping.provider.aggregator.AggregatorProviderClient;
+import com.enterprise.shipping.provider.aggregator.model.ProviderModels.CreateSubmission;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundAdmissionRejectedException;
 
 /** Booking-owned bridge; provider transport values do not escape into the application. */
-public final class SandboxShipmentAdapter implements ShipmentProviderPort {
-    private final SandboxProviderClient client;
+public final class AggregatorShipmentAdapter implements ShipmentProviderPort {
 
-    public SandboxShipmentAdapter(SandboxProviderClient client) {
+    private final AggregatorProviderClient client;
+
+    public AggregatorShipmentAdapter(AggregatorProviderClient client) {
         this.client = client;
     }
 
@@ -20,9 +21,9 @@ public final class SandboxShipmentAdapter implements ShipmentProviderPort {
             var result =
                     client.create(
                             new CreateSubmission(
-                                    submission.providerId(),
-                                    submission.accountAlias(),
-                                    submission.providerQuoteId()));
+                                     submission.providerId(),
+                                     submission.accountAlias(),
+                                     submission.providerQuoteId()));
             return result.rejected()
                     ? Outcome.rejection()
                     : Outcome.confirmed(

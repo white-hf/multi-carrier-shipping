@@ -158,4 +158,119 @@ class OutboundClientTest {
             workers.shutdownNow();
         }
     }
+
+    record TrackRequest(String reference) {}
+
+    record TrackEvent(String code, Long timestamp) {
+
+        public TrackEvent {
+            if (code == null || code.isBlank() || timestamp == null || timestamp <= 0) {
+                throw ShippingException.dependencyFailure("PROVIDER_INVALID_RESPONSE");
+            }
+        }
+    }
+
+    @Test
+    void invokesDeclarativeEndpointsWithGenericDecodingStatusPolicyAndPathSafety()
+            throws Exception {
+        var status = new AtomicInteger(200);
+        var payload =
+                new java.util.concurrent.atomic.AtomicReference<>(
+                        "[{\"code\":\"DELIVERED\",\"timestamp\":1700000000}]");
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext(
+                "/shipments/ship-42/events",
+                exchange -> {
+                    byte[] bytes = payload.get().getBytes(StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(status.get(), bytes.length);
+                    exchange.getResponseBody().write(bytes);
+                    exchange.close();
+                });
+        server.start();
+        var endpoint =
+                OutboundEndpoint.<TrackRequest, java.util.List<TrackEvent>>post(
+                                "track",
+                                "/shipments/{shipmentId}/events",
+                                new com.fasterxml.jackson.core.type.TypeReference<
+                                        java.util.List<TrackEvent>>() {})
+                        .statusPolicy(
+                                StatusPolicy.<java.util.List<TrackEvent>>of(200)
+                                        .onExpected(404, java.util.List::of)
+                                        .otherwiseThrow(StatusPolicy::standardReadFailure));
+        var unregistered =
+                OutboundEndpoint.get("unregistered", "/shipments", TrackEvent.class);
+
+        var registry =
+                new OutboundClientRegistry(new OutboundProperties(), new SimpleMeterRegistry());
+        try {
+            assertThatThrownBy(
+                            () ->
+                                    registry.registerEndpoints(
+                                            "dup",
+                                            "http://127.0.0.1:" + server.getAddress().getPort(),
+                                            java.util.List.of(endpoint, endpoint),
+                                            builder -> {
+                                            }))
+                    .isInstanceOf(IllegalArgumentException.class);
+
+            var client =
+                    registry.registerEndpoints(
+                            "track-provider",
+                            "http://127.0.0.1:" + server.getAddress().getPort(),
+                            java.util.List.of(endpoint),
+                            builder -> {
+                            });
+
+            var events =
+                    client.invoke(
+                            endpoint,
+                            java.util.Map.of("shipmentId", "ship-42"),
+                            new TrackRequest("ref-1"),
+                            OutboundDeadline.after(Duration.ofSeconds(3)));
+            assertThat(events).containsExactly(new TrackEvent("DELIVERED", 1700000000L));
+
+            status.set(404);
+            assertThat(
+                            client.invoke(
+                                    endpoint,
+                                    java.util.Map.of("shipmentId", "ship-42"),
+                                    new TrackRequest("ref-1"),
+                                    OutboundDeadline.after(Duration.ofSeconds(3))))
+                    .isEmpty();
+
+            // Strict scalar coercion rejects float or string where Long is required.
+            status.set(200);
+            payload.set("[{\"code\":\"DELIVERED\",\"timestamp\":\"1700000000\"}]");
+            assertThatThrownBy(
+                            () ->
+                                    client.invoke(
+                                            endpoint,
+                                            java.util.Map.of("shipmentId", "ship-42"),
+                                            new TrackRequest("ref-1"),
+                                            OutboundDeadline.after(Duration.ofSeconds(3))))
+                    .isInstanceOfSatisfying(
+                            ShippingException.class,
+                            e -> assertThat(e.code()).isEqualTo("PROVIDER_INVALID_RESPONSE"));
+
+            // Unsafe path variables and unregistered endpoints are rejected before dispatch.
+            assertThatThrownBy(
+                            () ->
+                                    client.invoke(
+                                            endpoint,
+                                            java.util.Map.of("shipmentId", "../admin"),
+                                            new TrackRequest("ref-1"),
+                                            OutboundDeadline.after(Duration.ofSeconds(3))))
+                    .isInstanceOf(ShippingException.class);
+            assertThatThrownBy(
+                            () ->
+                                    client.invoke(
+                                            unregistered,
+                                            null,
+                                            OutboundDeadline.after(Duration.ofSeconds(3))))
+                    .isInstanceOf(IllegalArgumentException.class);
+        } finally {
+            registry.close();
+            server.stop(0);
+        }
+    }
 }

@@ -2,8 +2,10 @@ package com.enterprise.shipping.shared.infrastructure.http;
 
 import com.enterprise.shipping.shared.domain.ShippingException;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
@@ -11,10 +13,11 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.netty.resources.ConnectionProvider;
-import reactor.core.publisher.Mono;
 import org.springframework.web.reactive.function.client.ClientResponse;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.util.UriComponentsBuilder;
+import reactor.core.publisher.Mono;
+import reactor.netty.resources.ConnectionProvider;
 
 /**
  * Lifecycle owner of one transport pool per registered dependency. Templates share values,
@@ -70,10 +73,38 @@ public final class OutboundClientRegistry implements AutoCloseable {
         return guard;
     }
 
+    public synchronized OutboundClient registerEndpoints(
+            String id,
+            String baseUrl,
+            Collection<? extends OutboundEndpoint<?, ?>> endpoints,
+            Consumer<WebClient.Builder> authentication) {
+        if (endpoints == null || endpoints.isEmpty()) {
+            throw new IllegalArgumentException("Outbound endpoints required for: " + id);
+        }
+        var registered = new LinkedHashMap<String, OutboundEndpoint<?, ?>>();
+        for (OutboundEndpoint<?, ?> endpoint : endpoints) {
+            if (endpoint == null || registered.putIfAbsent(endpoint.operation(), endpoint) != null) {
+                throw new IllegalArgumentException(
+                        "Invalid or duplicate outbound endpoint for: " + id);
+            }
+        }
+        return createClient(
+                id, baseUrl, registered.keySet(), Map.copyOf(registered), authentication);
+    }
+
     public synchronized OutboundClient register(
             String id,
             String baseUrl,
             Set<String> operations,
+            Consumer<WebClient.Builder> authentication) {
+        return createClient(id, baseUrl, operations, Map.of(), authentication);
+    }
+
+    private OutboundClient createClient(
+            String id,
+            String baseUrl,
+            Set<String> operations,
+            Map<String, OutboundEndpoint<?, ?>> registeredEndpoints,
             Consumer<WebClient.Builder> authentication) {
         OutboundGuard guard = registerGuard(id, operations);
         OutboundPolicy policy = properties.resolve(id);
@@ -97,6 +128,74 @@ public final class OutboundClientRegistry implements AutoCloseable {
             WebClient client = builder.build();
             pools.put(id, pool);
             return new OutboundClient() {
+                @Override
+                public <Req, Resp> Resp invoke(
+                        OutboundEndpoint<Req, Resp> endpoint,
+                        Map<String, ?> uriVariables,
+                        Req request,
+                        long deadline) {
+                    Objects.requireNonNull(endpoint, "endpoint");
+                    Objects.requireNonNull(uriVariables, "uriVariables");
+                    if (!registeredEndpoints.isEmpty()
+                            && registeredEndpoints.get(endpoint.operation()) != endpoint) {
+                        throw new IllegalArgumentException(
+                                "Unregistered outbound endpoint: " + endpoint.operation());
+                    }
+                    String requestId = MDC.get("requestId");
+                    return guard.execute(
+                            endpoint.group(),
+                            endpoint.operation(),
+                            deadline,
+                            effective -> {
+                                if (effective - System.nanoTime() <= 0) {
+                                    throw ShippingException.dependencyTimeout("PROVIDER_TIMEOUT");
+                                }
+                                String path = expandPath(endpoint.pathTemplate(), uriVariables);
+                                long started = System.nanoTime();
+                                var spec = client.method(endpoint.method()).uri(path);
+                                var headersSpec =
+                                        request == null
+                                                ? spec
+                                                : spec.contentType(MediaType.APPLICATION_JSON)
+                                                        .bodyValue(request);
+                                ResponseEntity<byte[]> response =
+                                        OutboundDeadline.await(
+                                                headersSpec.exchangeToMono(
+                                                        raw ->
+                                                                receive(
+                                                                        raw,
+                                                                        id,
+                                                                        endpoint.operation(),
+                                                                        started,
+                                                                        requestId,
+                                                                        endpoint.statusPolicy()
+                                                                                .classify(
+                                                                                        raw.statusCode()
+                                                                                                .value()))),
+                                                effective);
+                                return endpoint.statusPolicy()
+                                        .resolve(
+                                                response,
+                                                endpoint.decoder(),
+                                                () ->
+                                                        OutboundDiagnostics.response(
+                                                                id,
+                                                                endpoint.operation(),
+                                                                response == null
+                                                                        ? 0
+                                                                        : response.getStatusCode()
+                                                                                .value(),
+                                                                started,
+                                                                requestId,
+                                                                response == null
+                                                                        ? null
+                                                                        : response.getBody(),
+                                                                null,
+                                                                OutboundDiagnostics.Classification
+                                                                        .PROTOCOL_ERROR));
+                            });
+                }
+
                 @Override
                 public <T> T execute(
                         String group,
@@ -126,7 +225,10 @@ public final class OutboundClientRegistry implements AutoCloseable {
                                                                                             id,
                                                                                             operation,
                                                                                             started,
-                                                                                            requestId)),
+                                                                                            requestId,
+                                                                                            defaultClassification(
+                                                                                                    response.statusCode()
+                                                                                                            .value()))),
                                                             effective);
                                                 }
 
@@ -149,7 +251,10 @@ public final class OutboundClientRegistry implements AutoCloseable {
                                                                                             id,
                                                                                             operation,
                                                                                             started,
-                                                                                            requestId)),
+                                                                                            requestId,
+                                                                                            defaultClassification(
+                                                                                                    response.statusCode()
+                                                                                                            .value()))),
                                                             effective);
                                                 }
                                             }));
@@ -162,12 +267,19 @@ public final class OutboundClientRegistry implements AutoCloseable {
         }
     }
 
+    private static OutboundDiagnostics.Classification defaultClassification(int status) {
+        return status >= 200 && status < 300
+                ? OutboundDiagnostics.Classification.SUCCESS
+                : OutboundDiagnostics.Classification.DEPENDENCY_FAILURE;
+    }
+
     private static Mono<ResponseEntity<byte[]>> receive(
             ClientResponse response,
             String dependency,
             String operation,
             long started,
-            String requestId) {
+            String requestId,
+            OutboundDiagnostics.Classification classification) {
         int status = response.statusCode().value();
         var recorded = new java.util.concurrent.atomic.AtomicBoolean();
         return response.toEntity(byte[].class)
@@ -181,7 +293,8 @@ public final class OutboundClientRegistry implements AutoCloseable {
                                         started,
                                         requestId,
                                         received.getBody(),
-                                        null);
+                                        null,
+                                        classification);
                             }
                         })
                 .doOnError(
@@ -196,7 +309,8 @@ public final class OutboundClientRegistry implements AutoCloseable {
                                         null,
                                         "[BODY_READ_FAILED:"
                                                 + OutboundDiagnostics.reason(error)
-                                                + "]");
+                                                + "]",
+                                        OutboundDiagnostics.Classification.BODY_READ_FAILURE);
                             }
                         })
                 .doOnCancel(
@@ -210,13 +324,58 @@ public final class OutboundClientRegistry implements AutoCloseable {
                                         started,
                                         requestId,
                                         null,
-                                        "[BODY_READ_CANCELLED]");
+                                        "[BODY_READ_CANCELLED]",
+                                        OutboundDiagnostics.Classification.BODY_READ_FAILURE);
                             }
                         });
     }
 
+    private static String expandPath(String pathTemplate, Map<String, ?> uriVariables) {
+        OutboundEndpoint.validatePathTemplate(pathTemplate);
+        if (uriVariables.isEmpty()) {
+            if (pathTemplate.contains("{") || pathTemplate.contains("}")) {
+                throw new IllegalArgumentException(
+                        "Missing URI variables for outbound template: " + pathTemplate);
+            }
+            requireRelativePath(pathTemplate);
+            return pathTemplate;
+        }
+        for (Map.Entry<String, ?> entry : uriVariables.entrySet()) {
+            Object raw = entry.getValue();
+            if (raw == null) {
+                throw new IllegalArgumentException(
+                        "Null URI variable for: " + entry.getKey());
+            }
+            String value = raw.toString();
+            if (value.isBlank()
+                    || value.contains("/")
+                    || value.contains("\\")
+                    || value.contains("..")
+                    || value.contains("?")
+                    || value.contains("#")) {
+                throw new IllegalArgumentException(
+                        "Unsafe URI variable value for: " + entry.getKey());
+            }
+        }
+        String expanded =
+                UriComponentsBuilder.fromPath(pathTemplate)
+                        .buildAndExpand(uriVariables)
+                        .encode()
+                        .toUriString();
+        if (expanded.contains("{") || expanded.contains("}")) {
+            throw new IllegalArgumentException(
+                    "Unresolved URI template variable in: " + pathTemplate);
+        }
+        requireRelativePath(expanded);
+        return expanded;
+    }
+
     private static void requireRelativePath(String path) {
-        if (path == null || !path.startsWith("/") || path.startsWith("//") || path.contains("\\")) {
+        if (path == null
+                || !path.startsWith("/")
+                || path.startsWith("//")
+                || path.contains("\\")
+                || path.contains("..")) {
             throw new IllegalArgumentException("Outbound paths must stay on the configured origin");
         }
     }

@@ -1,16 +1,17 @@
 package com.enterprise.shipping.quote.infrastructure.provider;
 
-import com.enterprise.shipping.provider.sandbox.SandboxProviderClient;
-import com.enterprise.shipping.quote.port.RateProviderPort;
+import com.enterprise.shipping.provider.aggregator.AggregatorProviderClient;
 import com.enterprise.shipping.quote.domain.ShippingQuote;
+import com.enterprise.shipping.quote.port.RateProviderPort;
 import com.enterprise.shipping.shared.domain.ShippingIntent;
 import java.util.List;
 
 /** Translates external offers; the provider never owns internal quote identities. */
-public final class SandboxRateAdapter implements RateProviderPort {
-    private final SandboxProviderClient client;
+public final class AggregatorRateAdapter implements RateProviderPort {
 
-    public SandboxRateAdapter(SandboxProviderClient client) {
+    private final AggregatorProviderClient client;
+
+    public AggregatorRateAdapter(AggregatorProviderClient client) {
         this.client = client;
     }
 
