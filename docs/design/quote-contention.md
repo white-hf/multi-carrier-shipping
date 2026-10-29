@@ -5,7 +5,7 @@ A request may attempt one insert or one retry claim. A losing caller never acqui
 - Initial insert conflict: read the winner once, check the canonical fingerprint, and return its read-only projection with its real request ID. A READY winner may require reading offers. Do not refresh or expire its execution.
 - Retry claim conflict: return HTTP 202 with `state: "CONTENDED"`, the known `requestId`, an empty quotes list, `Location: /api/quotes/{requestId}`, and `Retry-After: 2`.
 - CONTENDED is a response-only observation, not a persisted request state. It means this call did not obtain execution rights, not that another provider call is guaranteed to be running. Expiry or another transition may also reject a claim.
-- Completion conflict: retain the repository's read-only current snapshot; do not run timeout repair from the losing completion path.
+- Completion expiry: in the completion transaction, attempt to fail only the original overdue claim using its version fence. Success returns RATE_FAILED without rereading. If the fence loses, return the repository's read-only current snapshot; never expire the newer snapshot or dispatch again. The service performs no generic timeout repair after completion.
 - Ordinary status GET retains its existing overdue-execution handling. Provider deadlines, version fences, atomic quote replacement and stored states are unchanged.
 
 ## Frontend integration

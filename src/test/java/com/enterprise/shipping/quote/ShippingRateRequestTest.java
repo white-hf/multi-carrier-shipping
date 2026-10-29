@@ -811,7 +811,7 @@ class ShippingRateRequestTest {
     }
 
     @Test
-    void expiredCompletionCannotPublishOrChangeItsRequestState() {
+    void expiredCompletionFailsOnlyItsOwnVersionWithoutPublishingQuotes() {
         var row = active("expired-completion", clock.millis());
         var completion =
                 store.complete(
@@ -819,9 +819,57 @@ class ShippingRateRequestTest {
                         List.of(identifiedOffer("late", row.requestId(), "late-token")),
                         clock.millis());
         assertThat(completion.applied()).isFalse();
-        assertThat(completion.request()).isEqualTo(row);
+        assertThat(completion.request()).isEqualTo(row.failed());
+        assertThat(store.request("user", row.requestId()).orElseThrow()).isEqualTo(row.failed());
         assertThat(completion.quotes()).isEmpty();
         assertThat(count("shipment_quotes")).isZero();
+    }
+
+    @Test
+    void pausedExecutionReturnsFailedWithoutAStatusGet() {
+        var storage = spy(store);
+        rates =
+                (input, deadline) -> {
+                    calls.incrementAndGet();
+                    clock.advance(Duration.ofSeconds(20));
+                    return offers("too-late", 2735);
+                };
+        var result = service(storage).create("user", "paused-completion", intent);
+        assertThat(result.result().state()).isEqualTo("RATE_FAILED");
+        assertThat(result.disposition()).isEqualTo(QuoteApplicationService.Disposition.EXISTING);
+        assertThat(result.result().quotes()).isEmpty();
+        verify(storage, times(1)).fail(any(), anyLong());
+        verify(storage, never()).request(anyString(), anyString());
+        verify(storage, never()).quotes(anyString(), anyString());
+        assertThat(store.byKey("user", "paused-completion").orElseThrow().state())
+                .isEqualTo(RateRequest.State.RATE_FAILED);
+        assertThat(count("shipment_quotes")).isZero();
+        assertThat(calls).hasValue(1);
+    }
+
+    @Test
+    void expiredCompletionCannotFailANewerClaim() {
+        var row = active("expiry-takeover", clock.millis());
+        var newer = row.claimed(clock.millis(), clock.millis() + 10000, false);
+        var storage = spy(store);
+        doAnswer(
+                        call -> {
+                            assertThat(store.claim(row, newer, clock.millis())).isTrue();
+                            return call.callRealMethod();
+                        })
+                .when(storage)
+                .fail(any(), anyLong());
+        var completion =
+                storage.complete(
+                        row,
+                        List.of(identifiedOffer("late", row.requestId(), "late-token")),
+                        clock.millis());
+        assertThat(completion.applied()).isFalse();
+        assertThat(completion.request()).isEqualTo(newer);
+        assertThat(store.request("user", row.requestId()).orElseThrow()).isEqualTo(newer);
+        assertThat(count("shipment_quotes")).isZero();
+        verify(storage, times(1)).fail(eq(row), anyLong());
+        verify(storage, times(1)).request("user", row.requestId());
     }
 
     @Test
