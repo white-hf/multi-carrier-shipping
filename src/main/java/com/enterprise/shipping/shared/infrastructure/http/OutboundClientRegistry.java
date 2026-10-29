@@ -53,9 +53,7 @@ public final class OutboundClientRegistry implements AutoCloseable {
                         metrics,
                         error ->
                                 error instanceof ShippingException failure
-                                        && (failure.category().isCallerFault()
-                                                || failure.code()
-                                                        .equals("PROVIDER_REQUEST_REJECTED")));
+                                        && failure.category().isCallerFault());
         guards.put(id, guard);
         // Only effective policy is logged: URLs, headers and credentials are deliberately excluded.
         log.info(

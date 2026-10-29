@@ -17,7 +17,6 @@ public interface ShipmentProviderPort {
             CONFIRMED,
             REJECTED,
             NOT_DISPATCHED,
-            AUTHENTICATION_FAILED,
             UNKNOWN
         }
 
@@ -42,10 +41,6 @@ public interface ShipmentProviderPort {
 
         public static Outcome notDispatched() {
             return new Outcome(Status.NOT_DISPATCHED, null, null, null);
-        }
-
-        public static Outcome authenticationFailed() {
-            return new Outcome(Status.AUTHENTICATION_FAILED, null, null, null);
         }
 
         public static Outcome unknown() {

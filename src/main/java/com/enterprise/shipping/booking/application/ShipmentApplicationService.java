@@ -136,7 +136,6 @@ public class ShipmentApplicationService {
                                     outcome.labelUrl()));
             case REJECTED -> booking.reject(RejectionReason.CARRIER_REJECTED);
             case NOT_DISPATCHED -> booking.markNotDispatched();
-            case AUTHENTICATION_FAILED -> booking.markAuthenticationFailed();
             case UNKNOWN -> booking.markOutcomeUnknown();
         }
         var completion = store.complete(claim, booking, clock.millis());
@@ -234,10 +233,6 @@ public class ShipmentApplicationService {
                 operation, observedOutcome(row.status()), replay ? 0 : System.nanoTime() - started);
         var result = view(row);
         if (row.restore().canRetry()) {
-            if ("PROVIDER_AUTHENTICATION_FAILED".equals(row.errorCode())) {
-                throw ShippingException.integrationUnavailable("PROVIDER_AUTHENTICATION_FAILED")
-                        .forBooking(row.id());
-            }
             throw ShippingException.localCapacity("SHIPMENT_SUBMISSION_NOT_DISPATCHED")
                     .forBooking(row.id());
         }

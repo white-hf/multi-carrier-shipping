@@ -272,27 +272,27 @@ class ShippingApiTest {
     }
 
     @LocalServerPort
-     int port;
+    int port;
     @Autowired
-     MockMvc mvc;
+    MockMvc mvc;
     @Autowired
-     ObjectMapper mapper;
+    ObjectMapper mapper;
     @Autowired
-     DataSource source;
+    DataSource source;
     @Autowired
-     QuoteSelectionPort selections;
+    QuoteSelectionPort selections;
     @Autowired
-     PendingShipmentDiscovery discovery;
+    PendingShipmentDiscovery discovery;
     @Autowired
-     ProviderProperties providerProperties;
+    ProviderProperties providerProperties;
     @Autowired
-     RecoveryCapabilityPort recoveryCapabilities;
+    RecoveryCapabilityPort recoveryCapabilities;
     @Autowired
-     MeterRegistry meterRegistry;
+    MeterRegistry meterRegistry;
     @Autowired
-     SandboxProviderClient adapter;
+    SandboxProviderClient adapter;
     @Autowired
-     com.enterprise.shipping.shared.infrastructure.http.OutboundClientRegistry outbound;
+    com.enterprise.shipping.shared.infrastructure.http.OutboundClientRegistry outbound;
 
     static final String ADDRESS =
             """
@@ -721,7 +721,7 @@ class ShippingApiTest {
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.CsvSource({
         "404,201,NO_RATES",
-        "400,502,PROVIDER_REQUEST_REJECTED",
+        "400,400,PROVIDER_REQUEST_REJECTED",
         "401,503,PROVIDER_AUTHENTICATION_FAILED",
         "403,502,PROVIDER_UNEXPECTED_RESPONSE",
         "429,502,PROVIDER_RATE_LIMITED",
@@ -758,7 +758,7 @@ class ShippingApiTest {
                                     .header("Idempotency-Key", UUID.randomUUID().toString())
                                     .contentType(MediaType.APPLICATION_JSON)
                                     .content(INPUT))
-                    .andExpect(status().isBadGateway())
+                    .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.code").value("PROVIDER_REQUEST_REJECTED"));
         }
         STATUS.set(200);
@@ -766,45 +766,9 @@ class ShippingApiTest {
         assertThat(rates().path("state").asText()).isEqualTo("READY");
     }
 
-    @Test
-    void authenticationRejectionIsKnownUncreatedAndMayRetryAfterConfigurationRecovery()
-            throws Exception {
-        String quoteId = rates().path("quotes").get(0).path("quoteId").asText();
-        String key = UUID.randomUUID().toString();
-        CREATE_STATUS.set(401);
-        CREATE_RESPONSE.set("");
-        var failure =
-                mvc.perform(
-                                post("/api/bookings")
-                                        .header("Idempotency-Key", key)
-                                        .contentType(MediaType.APPLICATION_JSON)
-                                        .content("{\"quoteId\":\"" + quoteId + "\"}"))
-                        .andExpect(status().isServiceUnavailable())
-                        .andExpect(jsonPath("$.code").value("PROVIDER_AUTHENTICATION_FAILED"))
-                        .andReturn();
-        String id =
-                mapper.readTree(failure.getResponse().getContentAsString())
-                        .path("operation")
-                        .path("id")
-                        .asText();
-        mvc.perform(get("/api/bookings/" + id))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("RETRYABLE"))
-                .andExpect(jsonPath("$.errorCode").value("PROVIDER_AUTHENTICATION_FAILED"));
-        CREATE_STATUS.set(201);
-        CREATE_RESPONSE.set("{\"shipId\":123,\"trackingNumbers\":[\"TRACK123\"]}");
-        mvc.perform(
-                        post("/api/bookings")
-                                .header("Idempotency-Key", key)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content("{\"quoteId\":\"" + quoteId + "\"}"))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.bookingId").value(id));
-        assertThat(CREATE_CALLS.get()).isEqualTo(2);
-    }
-
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(ints = {400, 403, 409, 422, 429, 500, 202, 204})
+    @org.junit.jupiter.params.provider.ValueSource(
+            ints = {400, 401, 403, 409, 422, 429, 500, 202, 204})
     void createDoesNotGuessSafeRetriesFromUndocumentedStatuses(int providerStatus)
             throws Exception {
         String quoteId = rates().path("quotes").get(0).path("quoteId").asText();

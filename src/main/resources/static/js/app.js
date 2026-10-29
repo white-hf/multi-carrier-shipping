@@ -795,6 +795,9 @@
 
   function errorText(err) {
     if (err instanceof HttpError) {
+      if (err.code === 'PROVIDER_REQUEST_REJECTED') {
+        return 'The shipping details were rejected by carrier validation. Please check the origin, destination, and package measurements.';
+      }
       if (err.code === 'QUOTE_EXPIRED' || err.code === 'QUOTE_NOT_BOOKABLE') {
         return 'Quote is no longer available. Please obtain new shipping rates.';
       }

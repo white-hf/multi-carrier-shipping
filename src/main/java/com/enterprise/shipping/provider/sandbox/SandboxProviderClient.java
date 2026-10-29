@@ -164,10 +164,6 @@ public class SandboxProviderClient {
                     if (status == 400) {
                         return CreationOutcome.rejection();
                     }
-                    if (status == 401) {
-                        throw ShippingException.integrationUnavailable(
-                                "PROVIDER_AUTHENTICATION_FAILED");
-                    }
                     if (status != 200 && status != 201) {
                         throw ShippingException.outcomeUnknown("SHIPMENT_OUTCOME_UNKNOWN");
                     }
@@ -283,7 +279,7 @@ public class SandboxProviderClient {
 
     private static ShippingException readFailure(int status) {
         return switch (status) {
-            case 400 -> ShippingException.dependencyFailure("PROVIDER_REQUEST_REJECTED");
+            case 400 -> ShippingException.invalidInput("PROVIDER_REQUEST_REJECTED");
             case 401 -> ShippingException.integrationUnavailable("PROVIDER_AUTHENTICATION_FAILED");
             case 429 -> ShippingException.dependencyFailure("PROVIDER_RATE_LIMITED");
             default ->
