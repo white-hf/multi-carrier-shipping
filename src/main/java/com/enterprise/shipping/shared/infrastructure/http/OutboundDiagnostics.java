@@ -1,6 +1,7 @@
 package com.enterprise.shipping.shared.infrastructure.http;
 
 import com.enterprise.shipping.shared.domain.ShippingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -22,7 +23,8 @@ import reactor.netty.http.client.PrematureCloseException;
 final class OutboundDiagnostics {
     private static final Logger log = LoggerFactory.getLogger(OutboundDiagnostics.class);
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON =
+            new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private static final int MAX_ERROR_BYTES = 16 * 1024;
     private static final int MAX_LOG_CHARACTERS = 2048;
     private static final Set<String> ERROR_FIELDS =
@@ -53,6 +55,11 @@ final class OutboundDiagnostics {
             String requestId,
             byte[] body,
             String bodyState) {
+        if (bodyState == null
+                && status == 404
+                && ("rates".equals(operation) || "labels".equals(operation))) {
+            return;
+        }
         if (status < 200 || status >= 300) {
             log.warn(
                     "Outbound HTTP response dependency={} operation={} reason=HTTP_STATUS httpStatus={} elapsedMs={} requestId={} response={}",

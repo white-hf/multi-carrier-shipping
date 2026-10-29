@@ -86,6 +86,9 @@ public class SandboxProviderClient {
                     if (status == 404) {
                         return List.of();
                     }
+                    if (status == 400) {
+                        throw ShippingException.invalidInput("PROVIDER_REQUEST_REJECTED");
+                    }
                     if (status != 200) {
                         throw readFailure(status);
                     }
@@ -279,7 +282,6 @@ public class SandboxProviderClient {
 
     private static ShippingException readFailure(int status) {
         return switch (status) {
-            case 400 -> ShippingException.invalidInput("PROVIDER_REQUEST_REJECTED");
             case 401 -> ShippingException.integrationUnavailable("PROVIDER_AUTHENTICATION_FAILED");
             case 429 -> ShippingException.dependencyFailure("PROVIDER_RATE_LIMITED");
             default ->

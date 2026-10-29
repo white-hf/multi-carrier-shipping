@@ -199,6 +199,11 @@ class OutboundDiagnosticsTest {
                 .doesNotContain("private-value", "user@example.com");
         assertThat(
                         OutboundDiagnostics.safeResponse(
+                                "400 Bad Request: weight must be positive"
+                                        .getBytes(StandardCharsets.UTF_8)))
+                .isEqualTo("400 Bad Request: weight must be positive");
+        assertThat(
+                        OutboundDiagnostics.safeResponse(
                                 "<html>private-value</html>".getBytes(StandardCharsets.UTF_8)))
                 .isEqualTo("[OMITTED_NON_JSON_BODY]");
         assertThat(OutboundDiagnostics.safeResponse(null)).isEqualTo("[EMPTY_BODY]");
@@ -252,5 +257,26 @@ class OutboundDiagnosticsTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void doesNotLogWarningForExpectedRateOrLabel404Responses(CapturedOutput output) {
+        OutboundDiagnostics.response(
+                "sandbox",
+                "rates",
+                404,
+                System.nanoTime(),
+                "req-404",
+                "{}".getBytes(StandardCharsets.UTF_8),
+                null);
+        OutboundDiagnostics.response(
+                "sandbox",
+                "labels",
+                404,
+                System.nanoTime(),
+                "req-404",
+                "{}".getBytes(StandardCharsets.UTF_8),
+                null);
+        assertThat(output.getOut()).doesNotContain("req-404");
     }
 }
