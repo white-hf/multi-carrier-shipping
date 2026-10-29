@@ -97,20 +97,21 @@ public final class OutboundClientRegistry implements AutoCloseable {
         if (endpoints == null || endpoints.isEmpty()) {
             throw new IllegalArgumentException("Outbound endpoints required for: " + id);
         }
-        OutboundClient client = createClient(id, baseUrl, Set.of(), true, authentication);
-        try {
-            for (OutboundEndpoint<?, ?> endpoint : endpoints) {
-                client.register(endpoint);
+        // Validate null entries and duplicate operation names before creating the guard and its
+        // gauges so failed registrations never leave orphaned meters in the registry.
+        var validated = new LinkedHashMap<String, OutboundEndpoint<?, ?>>();
+        for (OutboundEndpoint<?, ?> endpoint : endpoints) {
+            if (endpoint == null
+                    || validated.putIfAbsent(endpoint.operation(), endpoint) != null) {
+                throw new IllegalArgumentException(
+                        "Invalid or duplicate outbound endpoint for: " + id);
             }
-            return client;
-        } catch (RuntimeException failure) {
-            ConnectionProvider pool = pools.remove(id);
-            if (pool != null) {
-                pool.dispose();
-            }
-            guards.remove(id);
-            throw failure;
         }
+        OutboundClient client = createClient(id, baseUrl, Set.of(), true, authentication);
+        for (OutboundEndpoint<?, ?> endpoint : validated.values()) {
+            client.register(endpoint);
+        }
+        return client;
     }
 
     public synchronized OutboundClient register(

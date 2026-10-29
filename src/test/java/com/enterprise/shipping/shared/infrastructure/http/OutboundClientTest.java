@@ -206,18 +206,19 @@ class OutboundClientTest {
                 OutboundEndpoint.get("unregistered", "/shipments", TrackEvent.class);
         assertThat(ResponseDecoder.class.getDeclaredFields()).isEmpty();
 
-        var registry =
-                new OutboundClientRegistry(new OutboundProperties(), new SimpleMeterRegistry());
+        var metrics = new SimpleMeterRegistry();
+        var registry = new OutboundClientRegistry(new OutboundProperties(), metrics);
         try {
             assertThatThrownBy(
                             () ->
                                     registry.registerEndpoints(
-                                            "dup",
+                                            "track-provider",
                                             "http://127.0.0.1:" + server.getAddress().getPort(),
                                             java.util.List.of(endpoint, endpoint),
                                             builder -> {
                                             }))
                     .isInstanceOf(IllegalArgumentException.class);
+            assertThat(metrics.find("shipping.outbound.inflight").gauges()).isEmpty();
 
             var client =
                     registry.registerEndpoints(
@@ -226,6 +227,12 @@ class OutboundClientTest {
                             java.util.List.of(endpoint),
                             builder -> {
                             });
+            assertThat(
+                            metrics.get("shipping.outbound.limit")
+                                    .tag("dependency", "track-provider")
+                                    .gauge()
+                                    .value())
+                    .isPositive();
 
             var events =
                     client.invoke(
