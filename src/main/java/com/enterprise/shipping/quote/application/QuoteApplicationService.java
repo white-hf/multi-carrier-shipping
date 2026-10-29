@@ -245,7 +245,11 @@ public class QuoteApplicationService implements QuoteSelectionPort {
                 cause.getClass().getSimpleName());
         try {
             if (!store.fail(claim, clock.millis())) {
-                var latest = current(claim.userId(), claim.requestId());
+                // An old provider failure owns only its original fence. Inspect a newer
+                // execution without applying status-query expiry repair to it.
+                var latest =
+                        store.request(claim.userId(), claim.requestId())
+                                .orElseThrow(ShippingException::missing);
                 if (latest.version() > claim.version()
                         || latest.state() == RateRequest.State.READY
                         || latest.state() == RateRequest.State.NO_RATES) {

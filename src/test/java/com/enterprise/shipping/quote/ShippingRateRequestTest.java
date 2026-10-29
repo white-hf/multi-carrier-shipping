@@ -59,7 +59,7 @@ import static org.mockito.ArgumentMatchers.*;
 class ShippingRateRequestTest {
 
     @TempDir
-     Path directory;
+    Path directory;
 
     HikariDataSource source;
     JdbcQuoteStore store;
@@ -544,6 +544,34 @@ class ShippingRateRequestTest {
         assertThat(calls).hasValue(1);
         assertThat(store.request("user", first.result().requestId()).orElseThrow().state())
                 .isEqualTo(RateRequest.State.READY);
+    }
+
+    @Test
+    void staleProviderFailureDoesNotExpireAnOverdueNewExecution() {
+        var storage = spy(store);
+        var takeover = new AtomicReference<RateRequest>();
+        rates =
+                (input, deadline) -> {
+                    calls.incrementAndGet();
+                    var original = store.byKey("user", "stale-error-expiry").orElseThrow();
+                    clock.advance(Duration.ofSeconds(12));
+                    var newer = original.claimed(clock.millis(), clock.millis() + 1000, false);
+                    assertThat(store.claim(original, newer, clock.millis())).isTrue();
+                    takeover.set(newer);
+                    clock.advance(Duration.ofSeconds(2));
+                    throw ShippingException.dependencyTimeout("PROVIDER_TIMEOUT");
+                };
+        var result = service(storage).create("user", "stale-error-expiry", intent);
+        assertThat(result.disposition()).isEqualTo(QuoteApplicationService.Disposition.PENDING);
+        assertThat(result.result().state()).isEqualTo("RATING");
+        assertThat(result.result().requestId()).isEqualTo(takeover.get().requestId());
+        assertThat(store.request("user", takeover.get().requestId()).orElseThrow())
+                .isEqualTo(takeover.get());
+        verify(storage, times(1)).fail(argThat(row -> row.version() == 0), anyLong());
+        verify(storage, never()).fail(argThat(row -> row.version() > 0), anyLong());
+        verify(storage, times(1)).request("user", takeover.get().requestId());
+        verify(storage, never()).quotes(anyString(), anyString());
+        assertThat(calls).hasValue(1);
     }
 
     @Test
