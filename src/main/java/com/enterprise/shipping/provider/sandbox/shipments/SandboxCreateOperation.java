@@ -1,6 +1,7 @@
 package com.enterprise.shipping.provider.sandbox.shipments;
 
 import com.enterprise.shipping.provider.core.ProviderAccountContext;
+import com.enterprise.shipping.provider.sandbox.SandboxProviderProperties;
 import com.enterprise.shipping.provider.sandbox.shipments.dto.CreateShipmentRequest;
 import com.enterprise.shipping.provider.sandbox.shipments.dto.CreateShipmentResponse;
 import com.enterprise.shipping.shared.domain.ShippingException;
@@ -11,17 +12,29 @@ import com.enterprise.shipping.shared.infrastructure.http.StatusPolicy;
 import com.enterprise.shipping.shared.infrastructure.monitoring.MonitorCarrierApi;
 import java.time.Duration;
 import java.util.Objects;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Component;
 
 /**
  * Self-contained shipment-creation API operation for the sandbox provider.
  * Owns its /rest/shipments endpoint, status policy, and recovery capability metadata independently.
  */
+@Component
 public class SandboxCreateOperation {
 
     private final OutboundClient outbound;
     private final ProviderAccountContext context;
     private final Duration createTimeout;
     private final OutboundEndpoint<CreateShipmentRequest, CreateShipmentResponse> endpoint;
+
+    @Autowired
+    public SandboxCreateOperation(
+            @Qualifier("sandboxOutboundClient") OutboundClient outbound,
+            @Qualifier("sandboxAccountContext") ProviderAccountContext context,
+            SandboxProviderProperties properties) {
+        this(outbound, context, properties.shipmentsPath(), properties.createTimeout());
+    }
 
     public SandboxCreateOperation(
             OutboundClient outbound,

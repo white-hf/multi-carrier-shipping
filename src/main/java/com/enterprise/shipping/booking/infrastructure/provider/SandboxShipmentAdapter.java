@@ -5,8 +5,10 @@ import com.enterprise.shipping.booking.port.ShipmentProviderPort;
 import com.enterprise.shipping.provider.sandbox.shipments.CreateSubmission;
 import com.enterprise.shipping.provider.sandbox.shipments.SandboxCreateOperation;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundAdmissionRejectedException;
+import org.springframework.stereotype.Component;
 
 /** Booking-owned bridge; provider transport values do not escape into the application. */
+@Component
 public final class SandboxShipmentAdapter implements ShipmentProviderPort {
 
     private final SandboxCreateOperation createOperation;

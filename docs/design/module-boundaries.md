@@ -41,7 +41,6 @@ provider/         External API protocols, isolated by provider and per-API verti
   core/           Vendor-neutral ProviderAccountContext shared across all providers
   sandbox/        Sandbox provider (SandboxProviderConfig, rates/, shipments/, labels/)
 shared/           Reusable types, HTTP guards, persistence helpers and tracing
-runtime/          Deployment composition connecting modules to provider adapters
 ```
 
 Business modules use the following packages where needed; small modules do not need every layer:
@@ -65,7 +64,7 @@ For example, `booking.domain.ShipmentBooking` owns booking transitions; `Shipmen
 | `booking` | `quote.contract.QuoteSelectionPort` | Resolve an owned, bookable quote |
 | `reconciliation` | `booking.contract.ShipmentRecoveryPort` | Discover and update unresolved bookings |
 
-External integrations follow the same separation: each business module owns a provider port and a thin adapter under `infrastructure/provider`. The adapter translates between business types and `provider.sandbox` operation models. **Provider code does not import business modules, and business cores do not import provider implementations.** `runtime.ProviderAdapterConfiguration` connects them.
+External integrations follow the same separation: each business module owns a provider port and a thin adapter under `infrastructure/provider`. The adapter translates between business types and `provider.sandbox` operation models. **Provider code does not import business modules, and business cores do not import provider implementations.** Each API operation and consumer adapter self-registers in its own package without a central cross-API configuration file.
 
 Shared outbound infrastructure owns dependency-level transport and admission, with independent circuits for configured logical groups. Business services do not duplicate these mechanisms. `shared` does not depend on business modules or concrete providers.
 
