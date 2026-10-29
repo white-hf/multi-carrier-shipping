@@ -1236,18 +1236,72 @@
     }
   }
 
-  function displayRates(data, req) {
-    if (data.state === 'RATING' || data.state === 'CONTENDED') {
-      notice('Rates are still being retrieved. Click Get Rates again to check or retry safely.', 'info');
-      return;
+  function isCurrentRateOperation(operation, rev) {
+    return rev === state.revision && rateOperation === operation;
+  }
+
+  function disableExpiredSelection() {
+    state.selected = null;
+    if ($('review-btn')) $('review-btn').disabled = true;
+    if ($('selected-rate-summary')) {
+      $('selected-rate-summary').textContent = 'Select a shipping option above to continue';
     }
-    if (data.state === 'RATE_FAILED' || data.state === 'QUOTES_EXPIRED') {
-      notice(data.state === 'RATE_FAILED'
-          ? 'Rates could not be retrieved. Click Get Rates to retry the saved request.'
-          : 'These rates have expired. Click Get Rates to refresh them.', 'info');
-      return;
+    if (state.quotes.length) {
+      renderQuotes();
     }
-    if (!Array.isArray(data.quotes)) throw Error('Invalid /api/quotes response: quotes[] missing');
+  }
+
+  function acceptRateResponse(data, operation, req) {
+    if (!data || typeof data !== 'object') {
+      throw new Error('Invalid /api/quotes response');
+    }
+    if (data.requestId) {
+      if (operation.requestId && data.requestId !== operation.requestId) {
+        return 'IGNORED';
+      }
+      operation.requestId = data.requestId;
+      saveDraft();
+    }
+
+    const requestState = String(data.state || '').toUpperCase();
+    if (requestState === 'RATING' || requestState === 'CONTENDED') {
+      // Once this operation has accepted a final quote result, ignore late in-progress snapshots.
+      if (operation.completed && state.step >= 2 && state.requestId && state.requestId === operation.requestId) {
+        return 'IGNORED';
+      }
+      return 'PENDING';
+    }
+
+    if (requestState === 'RATE_FAILED') {
+      operation.completed = false;
+      saveDraft();
+      if (!state.key && state.requestId === operation.requestId) {
+        disableExpiredSelection();
+      }
+      notice('Rates could not be retrieved. Click Get Rates to retry the saved request.', 'info');
+      return 'FAILED';
+    }
+
+    if (requestState === 'QUOTES_EXPIRED') {
+      operation.completed = false;
+      saveDraft();
+      if (!state.key) {
+        disableExpiredSelection();
+      }
+      notice('These rates have expired. Click Get Rates to refresh them.', 'info');
+      return 'EXPIRED';
+    }
+
+    if (requestState !== 'READY' && requestState !== 'NO_RATES') {
+      throw new Error(`Unsupported quote state: ${requestState || 'UNKNOWN'}`);
+    }
+    if (!Array.isArray(data.quotes)) {
+      throw new Error('Invalid /api/quotes response: quotes[] missing');
+    }
+
+    operation.completed = true;
+    saveDraft();
+
     const discoveredCarriers = [...new Set(data.quotes.map(q => carrier(q)).filter(Boolean))];
     if (discoveredCarriers.length) {
       const merged = [...state.supportedCarriers];
@@ -1258,27 +1312,34 @@
       }
       state.supportedCarriers = merged;
     }
+
     state.request = req;
     state.requestId = data.requestId;
-    state.quotes = data.quotes;
+    state.quotes = requestState === 'NO_RATES' ? [] : data.quotes;
     state.selected = null;
     routes();
     renderQuotes();
     go(2);
-    if (!state.quotes.length) {
+    if (requestState === 'NO_RATES' || !state.quotes.length) {
       notice('No shipping rates available. Please edit shipment details.', 'info');
     }
+    return 'COMPLETED';
   }
 
   // Step 1 form events
   $('shipping-form').addEventListener('input', () => {
     updateTabSummaries();
-    saveDraft();
     state.revision++;
+    if (rateBusy) {
+      rateBusy = false;
+      stopLoadingBanner();
+      busy('get-rates-btn', false);
+    }
     if (state.quotes.length && !state.key) {
       state.quotes = [];
       state.selected = null;
     }
+    saveDraft();
   });
 
   $('shipping-form').addEventListener('submit', async e => {
@@ -1302,31 +1363,36 @@
         const key = crypto.randomUUID
             ? crypto.randomUUID()
             : `rate-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-        rateOperation = { key, signature, requestId: null };
+        rateOperation = { key, signature, requestId: null, completed: false };
       }
       const operation = rateOperation;
       saveDraft();
       let response = await api.quotes(req, operation.key);
-      if (rev !== state.revision || rateOperation !== operation) return;
-      if (response.data.requestId) {
-        operation.requestId = response.data.requestId;
-      }
-      saveDraft();
+      if (!isCurrentRateOperation(operation, rev)) return;
+      let outcome = acceptRateResponse(response.data, operation, req);
+
       // CONTENDED is a response-only claim loss; immediately inspect the stored request state.
-      if (!mock && response.data.state === 'CONTENDED' && operation.requestId) {
+      if (!mock && outcome === 'PENDING' && response.data.state === 'CONTENDED' && operation.requestId) {
         response = await api.quoteStatus(operation.requestId);
-        if (rev !== state.revision || rateOperation !== operation) return;
+        if (!isCurrentRateOperation(operation, rev)) return;
+        outcome = acceptRateResponse(response.data, operation, req);
       }
+
       // Status reads never trigger a provider request. Retries remain user initiated.
-      for (let i = 0; !mock && (response.data.state === 'RATING' || response.data.state === 'CONTENDED') && operation.requestId && i < 5; i++) {
-        await delay(2000);
-        if (rev !== state.revision || rateOperation !== operation) return;
+      for (let i = 0; !mock && outcome === 'PENDING' && operation.requestId && i < 5; i++) {
+        await delay(window.__RATE_POLL_DELAY_MS__ ?? 2000);
+        if (!isCurrentRateOperation(operation, rev)) return;
         response = await api.quoteStatus(operation.requestId);
+        if (!isCurrentRateOperation(operation, rev)) return;
+        outcome = acceptRateResponse(response.data, operation, req);
       }
-      if (rev !== state.revision || rateOperation !== operation) return;
-      displayRates(response.data, req);
+
+      if (!isCurrentRateOperation(operation, rev)) return;
+      if (outcome === 'PENDING') {
+        notice('Rates are still being retrieved. Click Get Rates again to check or retry safely.', 'info');
+      }
     } catch (err) {
-      if (rev === state.revision) {
+      if (rev === state.revision && !(rateOperation?.completed && state.step >= 2)) {
         if (err instanceof HttpError) {
           showFieldErrors(err.fieldErrors);
           if (rateOperation && err.payload?.operation?.id) {
@@ -1340,9 +1406,11 @@
         notice(errorText(err));
       }
     } finally {
-      rateBusy = false;
-      stopLoadingBanner();
-      busy('get-rates-btn', false);
+      if (rev === state.revision) {
+        rateBusy = false;
+        stopLoadingBanner();
+        busy('get-rates-btn', false);
+      }
     }
   });
 
@@ -1352,6 +1420,11 @@
   $('review-btn').addEventListener('click', () => {
     const q = state.selected;
     if (!q) return;
+    if (q.expiresAt && Date.now() >= new Date(q.expiresAt).getTime() - 15000) {
+      disableExpiredSelection();
+      notice('These rates have expired. Click Get Rates to refresh them.', 'info');
+      return;
+    }
     const s = state.request.sender;
     const r = state.request.recipient;
     const p = state.request.parcel;
