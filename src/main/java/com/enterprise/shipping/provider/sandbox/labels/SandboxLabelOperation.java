@@ -17,19 +17,10 @@ import java.util.Objects;
  */
 public class SandboxLabelOperation {
 
-    public static final String DEFAULT_SHIPMENTS_PATH = "/rest/shipments";
-
     private final OutboundClient outbound;
     private final ProviderAccountContext context;
     private final Duration readTimeout;
     private final OutboundEndpoint<Void, LabelData> endpoint;
-
-    public SandboxLabelOperation(
-            OutboundClient outbound,
-            ProviderAccountContext context,
-            Duration readTimeout) {
-        this(outbound, context, DEFAULT_SHIPMENTS_PATH, readTimeout);
-    }
 
     public SandboxLabelOperation(
             OutboundClient outbound,

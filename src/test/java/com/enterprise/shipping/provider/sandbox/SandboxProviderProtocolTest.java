@@ -190,7 +190,7 @@ class SandboxProviderProtocolTest {
                     exchange.close();
                 });
         server.createContext(
-                "/rest/shipments",
+                "/custom/shipments",
                 exchange -> {
                     byte[] bytes = "{\"shipId\":0}".getBytes(StandardCharsets.UTF_8);
                     exchange.sendResponseHeaders(201, bytes.length);
@@ -198,7 +198,7 @@ class SandboxProviderProtocolTest {
                     exchange.close();
                 });
         server.createContext(
-                "/rest/shipments/123/label",
+                "/custom/shipments/123/label",
                 exchange -> {
                     exchange.sendResponseHeaders(400, -1);
                     exchange.close();
@@ -236,9 +236,11 @@ class SandboxProviderProtocolTest {
                             300,
                             Clock.fixed(Instant.parse("2026-10-29T12:00:00Z"), ZoneOffset.UTC));
             var createOperation =
-                    new SandboxCreateOperation(sandboxClient, context, Duration.ofSeconds(10));
+                    new SandboxCreateOperation(
+                            sandboxClient, context, "/custom/shipments", Duration.ofSeconds(10));
             var labelOperation =
-                    new SandboxLabelOperation(sandboxClient, context, Duration.ofSeconds(10));
+                    new SandboxLabelOperation(
+                            sandboxClient, context, "/custom/shipments", Duration.ofSeconds(10));
 
             assertThatThrownBy(
                             () ->

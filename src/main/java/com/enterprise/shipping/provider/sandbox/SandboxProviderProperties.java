@@ -20,13 +20,15 @@ public record SandboxProviderProperties(
         @NotBlank String password,
         @NotBlank String providerId,
         @NotBlank String accountAlias,
-        String shipmentsPath,
+        @NotBlank String shipmentsPath,
         @NotNull Duration rateTimeout,
         @NotNull Duration createTimeout,
         @NotNull Duration readTimeout,
         @Min(5) @Max(30) int collectionSeconds,
         @Min(10) @Max(840) int quoteLifetimeSeconds,
         Set<String> labelHosts) {
+
+    public static final String DEFAULT_SHIPMENTS_PATH = "/rest/shipments";
 
     @Override
     public String toString() {
@@ -50,7 +52,7 @@ public record SandboxProviderProperties(
         }
         shipmentsPath =
                 shipmentsPath == null || shipmentsPath.isBlank()
-                        ? "/rest/shipments"
+                        ? DEFAULT_SHIPMENTS_PATH
                         : shipmentsPath;
         if (!shipmentsPath.startsWith("/")
                 || shipmentsPath.contains("..")

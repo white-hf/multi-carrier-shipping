@@ -18,19 +18,10 @@ import java.util.Objects;
  */
 public class SandboxCreateOperation {
 
-    public static final String DEFAULT_SHIPMENTS_PATH = "/rest/shipments";
-
     private final OutboundClient outbound;
     private final ProviderAccountContext context;
     private final Duration createTimeout;
     private final OutboundEndpoint<CreateShipmentRequest, CreateShipmentResponse> endpoint;
-
-    public SandboxCreateOperation(
-            OutboundClient outbound,
-            ProviderAccountContext context,
-            Duration createTimeout) {
-        this(outbound, context, DEFAULT_SHIPMENTS_PATH, createTimeout);
-    }
 
     public SandboxCreateOperation(
             OutboundClient outbound,
