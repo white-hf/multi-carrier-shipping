@@ -104,7 +104,7 @@ All `/api/quotes` and `/api/bookings/**` requests require a valid token and matc
 
 Optional address fields: `companyName`, `addressLine2`, `email`, `residential` (false default). All 13 Canadian province/territory codes are supported. Optional `shippingDate` is `yyyy-MM-dd`; when omitted, the backend initializes it in the configured business timezone. Dimensions and weight must be positive. Alternative units: CM and KG.
 
-Initial completion returns `201` (with `Location: /api/quotes/{requestId}`); same-key replay or retry after `RATE_FAILED` / `QUOTES_EXPIRED` returns `200`; an already in-flight execution returns `202` with `Retry-After: 2`. `GET /api/quotes/{requestId}` reads current status (`RATING`, `READY`, `NO_RATES`, `RATE_FAILED`, `QUOTES_EXPIRED`) without calling the provider. Reusing a key with different shipment details returns `409 IDEMPOTENCY_CONFLICT`. When a rate operation already exists, error payloads include `"operation": {"id":"internal-request-id","statusUrl":"/api/quotes/internal-request-id"}`.
+Initial completion returns `201` (with `Location: /api/quotes/{requestId}`); same-key replay or retry after `RATE_FAILED` / `QUOTES_EXPIRED` returns `200`; an already in-flight execution or a retry claim that loses contention returns `202` with `Retry-After: 2` (`state: "RATING"` or response-only `state: "CONTENDED"` with the known `requestId` and `quotes: []`). When `CONTENDED` is returned, the client inspects current state via `GET /api/quotes/{requestId}` (`RATING`, `READY`, `NO_RATES`, `RATE_FAILED`, `QUOTES_EXPIRED`) without calling the provider or clearing already-rendered quotes. Reusing a key with different shipment details returns `409 IDEMPOTENCY_CONFLICT`. When a rate operation already exists, error payloads include `"operation": {"id":"internal-request-id","statusUrl":"/api/quotes/internal-request-id"}`.
 
 Shipping-date eligibility uses the configured business timezone. Once the stored shipping date is in the past, matching-key POST replays and booking selection return `409 REQUEST_DATE_EXPIRED`. GET remains available for history: a previously READY request is projected as `QUOTES_EXPIRED` with no usable quotes, even if its provider quote TTL has not elapsed. A new shipping date requires a new request/key.
 
@@ -134,7 +134,7 @@ Values above are illustrative. Empty successful results have `state: NO_RATES` a
 {"quoteId":"internal-quote-id"}
 ```
 
-Keep the same key and quote ID after any uncertain response or browser retry. The backend sends quote-only creation to the provider. Initial success is `201`, completed replay is `200`, and pending/uncertain outcome is `202` with `Retry-After` and `Location` headers. Status is available through `GET /api/bookings/{bookingId}`.
+Keep the same key and quote ID after any uncertain response or browser retry. The backend sends quote-only creation to the provider. Initial success is `201`, completed replay is `200`, and pending/uncertain outcome or a lost retry claim (`status: "CONTENDED"`, response-only) is `202` with `Retry-After` and `Location` headers. When `CONTENDED` is returned, the client polls `GET /api/bookings/{bookingId}` to observe the authoritative persisted state (`PENDING`, `RETRYABLE`, `CONFIRMED`, `REJECTED`, `PENDING_CONFIRMATION`, `MANUAL_REVIEW`) without overwriting any already-confirmed result.
 
 ```json
 {

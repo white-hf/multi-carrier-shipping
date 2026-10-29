@@ -1112,11 +1112,22 @@
     }
   }
 
+  function canAcceptBookingUpdate(nextStatus) {
+    const current = (state.booking?.status || '').toUpperCase();
+    const next = (nextStatus || '').toUpperCase();
+    if (current === 'CONFIRMED' || current === 'REJECTED') {
+      return false;
+    }
+    if (current === 'MANUAL_REVIEW') {
+      return next === 'CONFIRMED';
+    }
+    return true;
+  }
+
   function handleBooking(data) {
-    state.booking = data;
-    if (data.bookingId) state.bookingId = data.bookingId;
-    saveActive();
     const status = (data.status || '').toUpperCase();
+    if (!canAcceptBookingUpdate(status)) return;
+    if (data.bookingId) state.bookingId = data.bookingId;
     if (status === 'RETRYABLE') {
       showRetryable(data);
       return;
@@ -1133,6 +1144,9 @@
       showManualReview(data);
       return;
     }
+    // CONTENDED is a response-only claim-loss signal, not a persisted DB state.
+    state.booking = { ...data, status: status === 'CONTENDED' ? 'PENDING_CONFIRMATION' : (data.status || 'PENDING_CONFIRMATION') };
+    saveActive();
     showPending(`Pending confirmation (${status || 'UNKNOWN'}). ${state.bookingId ? 'Booking: ' + state.bookingId : 'Response lost; original key retained.'}`);
     if (state.bookingId) poll();
   }
@@ -1142,27 +1156,41 @@
     if (!state.bookingId || state.watching) return;
     state.watching = true;
     const token = ++pollToken;
-    for (let n = 0; n < 5 && token === pollToken; n++) {
-      try {
-        const reply = await api.status(state.bookingId);
-        handleStatus(reply.data);
-        if (['CONFIRMED', 'REJECTED', 'MANUAL_REVIEW', 'RETRYABLE'].includes((reply.data.status || '').toUpperCase())) break;
-      } catch (e) {
-        notice('Status check unavailable: ' + errorText(e));
+    const bookingId = state.bookingId;
+    const key = state.key;
+    try {
+      for (let n = 0; n < 5 && token === pollToken && state.bookingId === bookingId && state.key === key; n++) {
+        try {
+          const reply = await api.status(bookingId);
+          if (token !== pollToken || state.bookingId !== bookingId || state.key !== key) break;
+          handleStatus(reply.data);
+          if (['CONFIRMED', 'REJECTED', 'MANUAL_REVIEW', 'RETRYABLE'].includes((reply.data.status || '').toUpperCase())) break;
+        } catch (e) {
+          if (token !== pollToken || state.bookingId !== bookingId || state.key !== key) break;
+          if (!['CONFIRMED', 'REJECTED'].includes((state.booking?.status || '').toUpperCase())) {
+            notice('Status check unavailable: ' + errorText(e));
+          }
+        }
+        if (n < 4 && token === pollToken) await delay(Math.min(1200 * 2 ** n, 8000));
       }
-      if (n < 4) await delay(Math.min(1200 * 2 ** n, 8000));
+    } finally {
+      state.watching = false;
     }
-    state.watching = false;
   }
 
   function handleStatus(data) {
-    state.booking = data;
-    saveActive();
-    if ((data.status || '').toUpperCase() === 'RETRYABLE') showRetryable(data);
-    else if ((data.status || '').toUpperCase() === 'CONFIRMED') showConfirmed(data);
-    else if ((data.status || '').toUpperCase() === 'REJECTED') showRejected(data);
-    else if ((data.status || '').toUpperCase() === 'MANUAL_REVIEW') showManualReview(data);
-    else showPending(`Booking ${state.bookingId}: ${data.status || 'PENDING_CONFIRMATION'}. Do not create another shipment.`);
+    const status = (data.status || '').toUpperCase();
+    if (!canAcceptBookingUpdate(status)) return;
+    if (data.bookingId) state.bookingId = data.bookingId;
+    if (status === 'RETRYABLE') showRetryable(data);
+    else if (status === 'CONFIRMED') showConfirmed(data);
+    else if (status === 'REJECTED') showRejected(data);
+    else if (status === 'MANUAL_REVIEW') showManualReview(data);
+    else {
+      state.booking = { ...data, status: status === 'CONTENDED' ? 'PENDING_CONFIRMATION' : (data.status || 'PENDING_CONFIRMATION') };
+      saveActive();
+      showPending(`Booking ${state.bookingId}: ${data.status || 'PENDING_CONFIRMATION'}. Do not create another shipment.`);
+    }
   }
 
   // Local drafts improve navigation only. The backend owns the durable customer request;
@@ -1209,7 +1237,7 @@
   }
 
   function displayRates(data, req) {
-    if (data.state === 'RATING') {
+    if (data.state === 'RATING' || data.state === 'CONTENDED') {
       notice('Rates are still being retrieved. Click Get Rates again to check or retry safely.', 'info');
       return;
     }
@@ -1279,15 +1307,23 @@
       const operation = rateOperation;
       saveDraft();
       let response = await api.quotes(req, operation.key);
-      operation.requestId = response.data.requestId;
+      if (rev !== state.revision || rateOperation !== operation) return;
+      if (response.data.requestId) {
+        operation.requestId = response.data.requestId;
+      }
       saveDraft();
+      // CONTENDED is a response-only claim loss; immediately inspect the stored request state.
+      if (!mock && response.data.state === 'CONTENDED' && operation.requestId) {
+        response = await api.quoteStatus(operation.requestId);
+        if (rev !== state.revision || rateOperation !== operation) return;
+      }
       // Status reads never trigger a provider request. Retries remain user initiated.
-      for (let i = 0; !mock && response.data.state === 'RATING' && i < 5; i++) {
+      for (let i = 0; !mock && (response.data.state === 'RATING' || response.data.state === 'CONTENDED') && operation.requestId && i < 5; i++) {
         await delay(2000);
-        if (rev !== state.revision) return;
+        if (rev !== state.revision || rateOperation !== operation) return;
         response = await api.quoteStatus(operation.requestId);
       }
-      if (rev !== state.revision) return;
+      if (rev !== state.revision || rateOperation !== operation) return;
       displayRates(response.data, req);
     } catch (err) {
       if (rev === state.revision) {
@@ -1369,15 +1405,19 @@
       return;
     }
 
-    state.key = crypto.randomUUID ? crypto.randomUUID() : `demo-${Date.now()}-${Math.random()}`;
+    const submissionKey = crypto.randomUUID ? crypto.randomUUID() : `demo-${Date.now()}-${Math.random()}`;
+    state.key = submissionKey;
     saveActive();
     state.creating = true;
     busy('create-btn', true, 'Creating shipment…');
     startBookingLoadingBanner(carrier(state.selected), service(state.selected));
     try {
-      const resp = await api.booking(quoteId(state.selected), state.key);
+      const resp = await api.booking(quoteId(state.selected), submissionKey);
+      if (state.key !== submissionKey) return;
       handleBooking(resp.data);
     } catch (err) {
+      if (state.key !== submissionKey) return;
+      if ( ['CONFIRMED', 'REJECTED'].includes((state.booking?.status || '').toUpperCase())) return;
       if (handleNotDispatched(err)) return;
       if (handleUnavailableQuote(err, false)) return;
       if (err instanceof HttpError && err.status === 422) {
@@ -1409,14 +1449,23 @@
   async function recoverByReplay() {
     if (!state.key || !state.selected || state.replaying || state.watching) return;
     pollToken++;
+    const submissionKey = state.key;
     state.replaying = true;
     busy('check-status-btn', true, 'Checking…');
     try {
-      const r = await api.booking(quoteId(state.selected), state.key);
+      const r = await api.booking(quoteId(state.selected), submissionKey);
+      if (state.key !== submissionKey) return;
+      state.replaying = false;
+      busy('check-status-btn', false);
       handleBooking(r.data);
     } catch (e) {
+      if (state.key !== submissionKey) return;
+      state.replaying = false;
+      busy('check-status-btn', false);
+      if (['CONFIRMED', 'REJECTED'].includes((state.booking?.status || '').toUpperCase())) return;
       if (handleNotDispatched(e)) return;
       if (handleUnavailableQuote(e, true)) return;
+      if (!canAcceptBookingUpdate('PENDING_CONFIRMATION')) return;
       state.booking = { bookingId: state.bookingId, status: 'PENDING_CONFIRMATION' };
       saveActive();
       showPending('Could not confirm creation: ' + errorText(e) + '. Retry with the SAME key only.');
