@@ -94,8 +94,8 @@ bounded 4096-entry table that rejects new keys while full and reclaims expired e
 
 The frontend requires explicit sign-in, never refreshes anonymously, and never automatically
 replays a write on 401. Switching accounts clears drafts/operation caches; the same account can
-re-authenticate after expiry and recover its active operation. Local demo preview makes no backend
-calls. See [Account access deployment](../runbooks/account-access.md) for credentials and proxy setup.
+re-authenticate after expiry and recover its active operation. All operations use the backend; local
+demo mode and sample-data execution are removed. See [Account access deployment](../runbooks/account-access.md) for credentials and proxy setup.
 
 ## Rates
 

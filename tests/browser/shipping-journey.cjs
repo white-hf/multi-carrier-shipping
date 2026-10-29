@@ -37,7 +37,8 @@ async function signIn(page) {
     await page.waitForSelector('#login-error:not([hidden])');
     assert.ok((await page.textContent('#login-error')).includes('Invalid username or password'));
     await signIn(page);
-    assert.strictEqual(await page.isChecked('#mock-toggle'), false, 'Should default to backend mode');
+    assert.strictEqual(await page.locator('#mock-toggle').count(), 0);
+    assert.strictEqual(await page.locator('#login-preview').count(), 0);
     assert.strictEqual(await page.textContent('#mode-indicator'), 'Backend API');
     assert.strictEqual(await page.isVisible('#step-1'), true);
     assert.strictEqual(await page.isVisible('#step-2'), false);
@@ -186,11 +187,6 @@ async function signIn(page) {
     await page.waitForSelector('#unknown-view:not([hidden])');
     assert.strictEqual(await page.textContent('#outcome-title'), 'Pending confirmation');
     assert.strictEqual((await ctl('stats')).createCalls, 1);
-
-    // Mode switch is blocked while a submission is active
-    await page.click('#mock-toggle');
-    assert.strictEqual(await page.isChecked('#mock-toggle'), false);
-    assert.ok((await page.textContent('#notice')).includes('Finish or resolve the active shipment'));
 
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForSelector('#unknown-view:not([hidden])');
@@ -658,17 +654,18 @@ async function signIn(page) {
     const cookies = await context.cookies();
     assert.ok(!cookies.some(cookie => cookie.name === 'shipping_guest_token'));
 
-    // Demo preview never pretends to provide a real shipping label.
+    // Legacy preview query parameters and stored mode flags cannot bypass sign-in.
+    await page.evaluate(() => {
+      localStorage.setItem('shipping.mockMode.v1', 'true');
+      localStorage.setItem('shipping.rateDraft.v1', JSON.stringify({
+        savedAt: Date.now(), mock: true, userId: 'guest-user', fields: { 'from.attention': 'OLD DEMO' }
+      }));
+    });
     await page.goto(appUrl + '?mock=1', { waitUntil: 'networkidle' });
-    await page.click('#get-rates-btn');
-    await page.waitForSelector('#step-2:not([hidden]) .rate-card');
-    await page.click('.rate-card:first-child');
-    await page.click('#review-btn');
-    await page.click('#create-btn');
-    await page.waitForSelector('#success-view:not([hidden])');
-    assert.ok((await page.textContent('#label-status-text')).includes('no real shipment or label'));
-    assert.strictEqual(await page.isDisabled('#label-download-btn'), true);
-    assert.strictEqual(await page.getAttribute('#label-email-link', 'aria-disabled'), 'true');
+    await page.waitForSelector('#login-modal[open]');
+    assert.strictEqual(await page.textContent('#mode-indicator'), 'Backend API');
+    assert.strictEqual(await page.locator('#login-preview').count(), 0);
+    assert.strictEqual(await page.evaluate(() => localStorage.getItem('shipping.rateDraft.v1')), null);
     assert.strictEqual((await ctl('stats')).createCalls, 2);
   } finally {
     await browser.close();

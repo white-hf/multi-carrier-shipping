@@ -9,7 +9,6 @@
   let rateOperation = null;
   let rateBusy = false;
   const activeStorage = 'shipping.activeBooking.v1';
-  const mockStorage = 'shipping.mockMode.v1';
   const clientIdStorage = 'shipping.clientId.v1';
   const sessionKey = 'shipping.accountSession.v1';
   const ownerStorage = 'shipping.workspaceOwner.v1';
@@ -47,10 +46,6 @@
       'Loomis Express'
     ]
   };
-
-  let mock = location.protocol === 'file:'
-      || new URLSearchParams(location.search).get('mock') === '1'
-      || localStorage.getItem(mockStorage) === 'true';
 
   let loadingInterval = null;
 
@@ -192,27 +187,6 @@
         ? `<span class="spinner" aria-hidden="true"></span><span>${esc(label)}</span>`
         : btn.dataset.original;
   }
-
-  function mode(on) {
-    mock = on;
-    $('mock-toggle').checked = on;
-    $('mode-indicator').textContent = on ? 'Demo preview' : 'Backend API';
-    $('environment-tag').textContent = on ? '● DEMO PREVIEW' : '● BACKEND API';
-    localStorage.setItem(mockStorage, String(on));
-    renderAccount();
-  }
-
-  mode(mock);
-  $('mock-toggle').addEventListener('change', e => {
-    if (state.key) {
-      e.target.checked = mock;
-      notice('Finish or resolve the active shipment before switching modes.');
-      return;
-    }
-    mode(e.target.checked);
-    rateOperation = null;
-    saveDraft();
-  });
 
   // Unit system toggle (Imperial IN/LB vs Metric CM/KG)
   function setUnitSystem(system) {
@@ -495,8 +469,8 @@
     const dialog = $('login-modal');
     $('user-avatar').textContent = session
         ? `${session.displayName || session.username} · Sign out` : 'Sign in';
-    if (!mock && !session && !dialog.open) dialog.showModal();
-    if ((mock || session) && dialog.open) dialog.close();
+    if (!session && !dialog.open) dialog.showModal();
+    if (session && dialog.open) dialog.close();
   }
 
   async function ensureSession() {
@@ -526,11 +500,6 @@
   }
 
   $('login-modal').addEventListener('cancel', event => event.preventDefault());
-  $('login-preview').addEventListener('click', () => {
-    clearWorkspace();
-    localStorage.setItem(mockStorage, 'true');
-    location.reload();
-  });
   $('login-form').addEventListener('submit', async event => {
     event.preventDefault();
     busy('login-submit', true, 'Signing in…');
@@ -550,11 +519,10 @@
             ? `Too many sign-in attempts. Try again in ${wait || 'a few'} seconds.`
             : res.status === 401 ? 'Invalid username or password.' : 'Sign-in failed. Please try again.');
       }
-      if (sessionStorage.getItem(ownerStorage) !== data.userId || mock) clearWorkspace();
+      if (sessionStorage.getItem(ownerStorage) !== data.userId) clearWorkspace();
       sessionStorage.setItem(ownerStorage, data.userId);
       sessionStorage.removeItem('shipping.guestSession.v1');
       sessionStorage.setItem(sessionKey, JSON.stringify({ ...data, fingerprint }));
-      localStorage.setItem(mockStorage, 'false');
       location.reload();
     } catch (error) {
       $('login-error').textContent = error.message;
@@ -578,7 +546,6 @@
       sessionStorage.removeItem(sessionKey);
       sessionStorage.removeItem(ownerStorage);
       clearWorkspace();
-      localStorage.setItem(mockStorage, 'false');
       location.reload();
     } catch (error) {
       notice(error.message);
@@ -619,74 +586,14 @@
   }
 
   const delay = ms => new Promise(r => setTimeout(r, ms));
-  const seed = [
-    ['Canpar', 'Ground', 27.35, 2],
-    ['Canada Post', 'Expedited Parcel', 34.02, 3],
-    ['Canada Post', 'Regular Parcel', 34.27, 5],
-    ['Loomis', 'Loomis Ground', 35.93, 2],
-    ['GLS', 'Ground', 39.66, 2]
-  ];
-
-  const demo = {
-    async quotes() {
-      await delay(450);
-      return {
-        status: 201,
-        data: {
-          requestId: 'demo-request-' + Date.now(),
-          state: 'READY',
-          shippingDate: '2026-10-23',
-          quotes: seed.map((r, i) => ({
-            quoteId: 'demo-quote-' + i,
-            carrierName: r[0],
-            serviceName: r[1],
-            total: { amount: r[2].toFixed(2), currency: 'CAD' },
-            transitDays: r[3],
-            base: null,
-            surcharges: null,
-            taxes: null,
-            expiresAt: new Date(Date.now() + 14 * 60000).toISOString()
-          }))
-        }
-      };
-    },
-    async booking(quote, key) {
-      await delay(650);
-      return {
-        status: 201,
-        data: {
-          bookingId: 'demo-booking-' + key,
-          status: 'CONFIRMED',
-          shipmentId: 'DEMO-104582',
-          trackingNumbers: ['DEMO-TRACK-001'],
-          labelStatus: 'PENDING',
-          statusUrl: '/api/bookings/demo-booking-' + key
-        }
-      };
-    },
-    async status(id) {
-      await delay(250);
-      return {
-        status: 200,
-        data: {
-          bookingId: id,
-          status: 'CONFIRMED',
-          shipmentId: 'DEMO-104582',
-          trackingNumbers: ['DEMO-TRACK-001'],
-          labelStatus: 'PENDING'
-        }
-      };
-    }
-  };
-
   const api = {
-    quotes: (data, key) => mock
-        ? demo.quotes()
-        : http('/api/quotes', { method: 'POST', body: data, headers: { 'Idempotency-Key': key } }),
-    booking: (quote, key) => mock
-        ? demo.booking(quote, key)
-        : http('/api/bookings', { method: 'POST', body: { quoteId: quote }, headers: { 'Idempotency-Key': key } }),
-    status: id => mock ? demo.status(id) : http(`/api/bookings/${encodeURIComponent(id)}`)
+    quotes: (data, key) => http('/api/quotes', {
+      method: 'POST', body: data, headers: { 'Idempotency-Key': key }
+    }),
+    booking: (quote, key) => http('/api/bookings', {
+      method: 'POST', body: { quoteId: quote }, headers: { 'Idempotency-Key': key }
+    }),
+    status: id => http(`/api/bookings/${encodeURIComponent(id)}`)
   };
 
   const quoteId = q => q.quoteId;
@@ -862,7 +769,6 @@
       labelAttempted: state.labelAttempted,
       status: state.booking?.status,
       errorCode: state.booking?.errorCode,
-      mock,
       userId: cachedSession()?.userId || sessionStorage.getItem(ownerStorage)
     }));
   }
@@ -978,13 +884,11 @@
         : (state.savedService || 'Selected shipping service');
 
     updateLabelActions();
-    $('label-status-text').textContent = mock
-        ? 'Demo preview: no real shipment or label was created.'
-        : state.labelTarget
-            ? 'Shipment confirmed. Label available.'
-            : 'Shipment confirmed. Retrieve the label to view, download or print it.';
+    $('label-status-text').textContent = state.labelTarget
+        ? 'Shipment confirmed. Label available.'
+        : 'Shipment confirmed. Retrieve the label to view, download or print it.';
 
-    if (!mock && !state.labelTarget && !state.labelAttempted) {
+    if (!state.labelTarget && !state.labelAttempted) {
       state.labelAttempted = true;
       saveActive();
       fetchLabel();
@@ -1008,7 +912,7 @@
   }
 
   function updateLabelActions() {
-    const ready = !!state.labelTarget && !state.labelBusy && !mock;
+    const ready = !!state.labelTarget && !state.labelBusy;
     for (const id of ['label-download-btn', 'label-print-btn', 'label-share-btn']) {
       if ($(id)) $(id).disabled = !ready;
     }
@@ -1023,25 +927,23 @@
       link.tabIndex = ready ? 0 : -1;
     }
     if ($('refresh-label-btn')) {
-      $('refresh-label-btn').hidden = mock;
+      $('refresh-label-btn').hidden = false;
       $('refresh-label-btn').disabled = state.labelBusy;
       if (!state.labelBusy) {
         $('refresh-label-btn').textContent = state.labelTarget ? 'Reload label' : 'Retry label';
       }
     }
     if ($('label-action-help')) {
-      $('label-action-help').textContent = mock
-          ? 'Demo mode has no real label. Start a new shipment in Backend API mode to retrieve one.'
-          : !ready
-              ? 'Retrieve the label to enable these actions. Creation will not be repeated.'
-              : state.labelFile
-                  ? 'Email opens your mail app; attach the downloaded PDF yourself. Sharing depends on browser support.'
-                  : 'Provider-hosted label: use its viewer to save or print. Download the PDF before attaching or sharing it.';
+      $('label-action-help').textContent = !ready
+          ? 'Retrieve the label to enable these actions. Creation will not be repeated.'
+          : state.labelFile
+              ? 'Email opens your mail app; attach the downloaded PDF yourself. Sharing depends on browser support.'
+              : 'Provider-hosted label: use its viewer to save or print. Download the PDF before attaching or sharing it.';
     }
   }
 
   function openLabelViewer(printing = false) {
-    if (!state.labelTarget || state.labelBusy || mock) return;
+    if (!state.labelTarget || state.labelBusy) return;
     window.open(state.labelTarget, '_blank', 'noopener,noreferrer');
     notice(printing
         ? 'Use the print button in the PDF viewer, or Ctrl/Cmd+P. If no tab opens, allow pop-ups for this site.'
@@ -1049,7 +951,7 @@
   }
 
   function downloadLabel() {
-    if (!state.labelTarget || state.labelBusy || mock) return;
+    if (!state.labelTarget || state.labelBusy) return;
     if (!state.labelFile) {
       openLabelViewer();
       return;
@@ -1063,7 +965,7 @@
   }
 
   async function shareLabel() {
-    if (!state.labelTarget || state.labelBusy || mock) return;
+    if (!state.labelTarget || state.labelBusy) return;
     const bookingId = state.bookingId;
     const file = state.labelFile;
     try {
@@ -1084,7 +986,7 @@
   }
 
   async function fetchLabel() {
-    if (!state.bookingId || mock || state.labelBusy) return;
+    if (!state.bookingId || state.labelBusy) return;
     const bookingId = state.bookingId;
     state.labelBusy = true;
     busy('refresh-label-btn', true, 'Checking label…');
@@ -1255,7 +1157,6 @@
       localStorage.setItem(draftStorage, JSON.stringify({
         savedAt: Date.now(),
         userId: cachedSession()?.userId || sessionStorage.getItem(ownerStorage),
-        mock,
         unitSystem: state.unitSystem,
         fields,
         operation: rateOperation
@@ -1268,7 +1169,8 @@
   function restoreDraft() {
     try {
       const draft = JSON.parse(localStorage.getItem(draftStorage) || 'null');
-      if (!draft || draft.mock !== mock || (!mock && draft.userId !== cachedSession()?.userId)
+      // Discard legacy sample data instead of replaying it against the real backend.
+      if (!draft || draft.mock === true || draft.userId !== cachedSession()?.userId
           || Date.now() - draft.savedAt > 86400000) {
         localStorage.removeItem(draftStorage);
         return;
@@ -1279,7 +1181,7 @@
         if (field.type === 'checkbox') field.checked = !!value;
         else field.value = value;
       }
-      if (draft.mock === mock) rateOperation = draft.operation;
+      rateOperation = draft.operation;
       setUnitSystem(draft.unitSystem);
     } catch {
       localStorage.removeItem(draftStorage);
@@ -1493,7 +1395,7 @@
       return;
     }
 
-    const submissionKey = crypto.randomUUID ? crypto.randomUUID() : `demo-${Date.now()}-${Math.random()}`;
+    const submissionKey = crypto.randomUUID ? crypto.randomUUID() : `shipment-${Date.now()}-${Math.random()}`;
     state.key = submissionKey;
     saveActive();
     state.creating = true;
@@ -1648,12 +1550,12 @@
       });
   }
 
-  // Restore only the workspace of a signed-in account, or the local sample demo.
+  // Restore only real operations owned by the signed-in account.
   renderAccount();
   try {
     const previous = JSON.parse(sessionStorage.getItem(activeStorage) || 'null');
-    if ((mock || (cachedSession() && previous?.userId === cachedSession().userId))
-        && previous?.key && previous?.quoteId) {
+    if (cachedSession() && previous?.userId === cachedSession().userId
+        && previous.mock !== true && previous?.key && previous?.quoteId) {
       state.labelAttempted = !!previous.labelAttempted;
       state.key = previous.key;
       state.bookingId = previous.bookingId || null;
@@ -1663,7 +1565,6 @@
         serviceName: previous.serviceName
       };
       state.savedService = `${previous.carrierName || ''} · ${previous.serviceName || ''}`;
-      if (mock !== previous.mock) { clearActive(); go(1); return; }
       if (previous.status === 'RETRYABLE') {
         showRetryable({ bookingId: state.bookingId });
         refreshRestoredStatus();

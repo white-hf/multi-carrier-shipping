@@ -41,7 +41,7 @@ Verify the settings without calling the provider:
 
 The script loads the local configuration, builds the application and starts it.
 
-Open <http://127.0.0.1:8080/> after startup. Ensure **Demo mode is off** and the indicator says **Backend API**, then sign in using the application account configured above. Local demo preview remains available without login and makes no provider calls.
+Open <http://127.0.0.1:8080/> after startup. Sign in using the application account configured above. The workspace uses the backend API; there is no local demo mode.
 
 ## Try the workflow
 

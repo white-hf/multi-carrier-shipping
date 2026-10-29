@@ -1,8 +1,8 @@
 # Account access and public demo deployment
 
 The backend requires configured accounts. `/api/auth/guest` no longer issues tokens and
-`shipping.auth.require-token=false` no longer bypasses authentication. Local preview remains
-available in the UI; it uses sample data and does not call the provider.
+`shipping.auth.require-token=false` no longer bypasses authentication. All UI operations require
+sign-in and use the backend. Local preview and its sample-data paths are removed.
 
 ## Configure a single operator
 

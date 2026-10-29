@@ -161,22 +161,6 @@ button {
   gap: 24px;
 }
 
-.mode-switch {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: #334155;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.mode-switch input {
-  width: 17px;
-  height: 17px;
-  accent-color: var(--blue);
-}
-
 .user-avatar {
   width: 36px;
   height: 36px;
@@ -1523,4 +1507,3 @@ button {
 .login-card h2, .login-card p { margin: 0; }
 .login-card .field { display: grid; gap: 8px; }
 .login-error { color: #b42318; }
-.login-preview-note { font-size: 12px; color: #66788b; }
