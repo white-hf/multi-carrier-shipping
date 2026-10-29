@@ -1,6 +1,7 @@
 package com.enterprise.shipping.provider.sandbox.labels;
 
 import com.enterprise.shipping.provider.core.ProviderAccountContext;
+import com.enterprise.shipping.provider.sandbox.SandboxProviderProperties;
 import com.enterprise.shipping.shared.domain.ShippingException;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundClient;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundDeadline;
@@ -10,17 +11,29 @@ import com.enterprise.shipping.shared.infrastructure.monitoring.MonitorCarrierAp
 import java.time.Duration;
 import java.util.Map;
 import java.util.Objects;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Component;
 
 /**
  * Self-contained label-retrieval API operation for the sandbox provider.
  * Owns its /rest/shipments/{shipmentId}/label endpoint, custom decoder, and URL allowlist checks.
  */
+@Component
 public class SandboxLabelOperation {
 
     private final OutboundClient outbound;
     private final ProviderAccountContext context;
     private final Duration readTimeout;
     private final OutboundEndpoint<Void, LabelData> endpoint;
+
+    @Autowired
+    public SandboxLabelOperation(
+            @Qualifier("sandboxOutboundClient") OutboundClient outbound,
+            @Qualifier("sandboxAccountContext") ProviderAccountContext context,
+            SandboxProviderProperties properties) {
+        this(outbound, context, properties.shipmentsPath(), properties.readTimeout());
+    }
 
     public SandboxLabelOperation(
             OutboundClient outbound,

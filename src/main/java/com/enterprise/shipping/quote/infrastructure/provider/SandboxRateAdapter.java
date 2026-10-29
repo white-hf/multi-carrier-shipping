@@ -5,8 +5,10 @@ import com.enterprise.shipping.quote.domain.ShippingQuote;
 import com.enterprise.shipping.quote.port.RateProviderPort;
 import com.enterprise.shipping.shared.domain.ShippingIntent;
 import java.util.List;
+import org.springframework.stereotype.Component;
 
 /** Translates external offers; the provider never owns internal quote identities. */
+@Component
 public final class SandboxRateAdapter implements RateProviderPort {
 
     private final SandboxRateOperation rateOperation;

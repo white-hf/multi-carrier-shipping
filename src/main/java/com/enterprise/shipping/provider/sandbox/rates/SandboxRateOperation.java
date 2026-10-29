@@ -1,6 +1,7 @@
 package com.enterprise.shipping.provider.sandbox.rates;
 
 import com.enterprise.shipping.provider.core.ProviderAccountContext;
+import com.enterprise.shipping.provider.sandbox.SandboxProviderProperties;
 import com.enterprise.shipping.provider.sandbox.rates.dto.AddressPayload;
 import com.enterprise.shipping.provider.sandbox.rates.dto.LineItemPayload;
 import com.enterprise.shipping.provider.sandbox.rates.dto.RateApiRequest;
@@ -22,11 +23,15 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Component;
 
 /**
  * Self-contained rate-quoting API operation for the sandbox provider.
  * Owns its /rest/rates endpoint contract, unit conversion, and response mapping independently.
  */
+@Component
 public class SandboxRateOperation {
 
     private static final BigDecimal POUNDS_TO_KILOGRAMS = new BigDecimal("0.45359237");
@@ -54,6 +59,20 @@ public class SandboxRateOperation {
     private final int collectionSeconds;
     private final int quoteLifetimeSeconds;
     private final Clock clock;
+
+    @Autowired
+    public SandboxRateOperation(
+            @Qualifier("sandboxOutboundClient") OutboundClient outbound,
+            @Qualifier("sandboxAccountContext") ProviderAccountContext context,
+            SandboxProviderProperties properties,
+            Clock clock) {
+        this(
+                outbound,
+                context,
+                properties.collectionSeconds(),
+                properties.quoteLifetimeSeconds(),
+                clock);
+    }
 
     public SandboxRateOperation(
             OutboundClient outbound,

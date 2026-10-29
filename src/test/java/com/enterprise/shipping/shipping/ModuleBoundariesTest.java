@@ -177,7 +177,12 @@ class ModuleBoundariesTest {
         }
 
         List<String> slices = List.of("rates", "shipments", "labels");
+        String providerConfig =
+                Files.readString(ROOT.resolve("provider/sandbox/SandboxProviderConfig.java"));
         for (String slice : slices) {
+            assertThat(providerConfig)
+                    .as("SandboxProviderConfig must not centralize or import API slice %s", slice)
+                    .doesNotContain("com.enterprise.shipping.provider.sandbox." + slice + ".");
             Path sliceDir = ROOT.resolve("provider/sandbox").resolve(slice);
             assertThat(Files.exists(sliceDir)).isTrue();
             try (var files = Files.walk(sliceDir)) {
