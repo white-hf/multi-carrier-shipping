@@ -1,5 +1,7 @@
 # Quote Execution Contention
 
+**Historical pre-I10 implementation note.** [I10](../iterations/iteration-10-stateless-quotes.md) removes all persisted quote execution claims, versions, contention states, takeover and quote-status recovery. The rules below explain prior code only and must not be reintroduced in the stateless quote flow.
+
 A request may attempt one insert or one retry claim. A losing caller never acquires another claim in the same invocation.
 
 - Initial insert conflict: read the winner once, check the canonical fingerprint, and return its read-only projection with its real request ID. A READY winner may require reading offers. Do not refresh or expire its execution.

@@ -12,7 +12,6 @@ public final class ShippingLinks {
     public static String status(Resource resource, String id) {
         String collection =
                 switch (resource) {
-                    case QUOTE_REQUEST -> "/api/quotes/";
                     case BOOKING -> "/api/bookings/";
                 };
         return collection + UriUtils.encodePathSegment(id, StandardCharsets.UTF_8);

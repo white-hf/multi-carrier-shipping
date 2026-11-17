@@ -1,6 +1,6 @@
 # Product delivery documents
 
-Current stage: **I1/I2/I3 accepted for the agreed demo scope after independent review follow-up**. The PRD records confirmed decisions and external sandbox verification items; the prototype is an interaction reference. The three-iteration roadmap is agreed in principle. Backend design describes the target as a new system, independently of existing implementation details.
+Current change (2026-11-16): **[I10 — Stateless quotes and provider-quote booking deduplication](iterations/iteration-10-stateless-quotes.md), implementation authorized on a fresh database baseline; historical migration out of scope.** [PRD v1.5](prd/shipping-workflow.md), [API](design/application-api.md), [backend design](design/backend-design.md) and [data dictionary](design/data-dictionary.md) describe the new behavior. Existing I1–I9 summaries and performance reports are historical, not I10 acceptance. Release and real-provider verification remain separate actions; no existing database is automatically cleared.
 
 ## Directory structure
 
@@ -17,9 +17,11 @@ docs/
 │   ├── module-boundaries.md
 │   ├── backend-design.md
 │   ├── application-api.md
+│   ├── data-dictionary.md
 │   └── code-style-guide.md
 ├── iterations/
-│   └── delivery-plan.md
+│   ├── delivery-plan.md
+│   └── iteration-10-stateless-quotes.md
 ├── summaries/       Implementation evidence and iteration retrospectives
 └── runbooks/        Setup, demonstration and operational instructions
 ```
@@ -79,7 +81,11 @@ The supplied PRD/prototype headings and display branding were normalized to the 
 
 ## Current implementation handoff
 
-- [Application API](design/application-api.md) — concrete frontend request/response and error examples.
+- [I10 implementation summary](summaries/iteration-10-stateless-quotes.md) — stateless rates, provider-quote booking uniqueness, read-only recovery, explicit retry and current verification boundaries.
+
+- [Data dictionary](design/data-dictionary.md) — all persisted fields, SQL constraints/indexes, module ownership and state semantics for the current SQLite baseline.
+
+- [Application API](design/application-api.md) — I10 request/response and error examples; local implementation does not imply deployment.
 - [Manual startup and acceptance](runbooks/manual-acceptance.md) — startup scripts and the browser acceptance journey.
 - [Workflow setup](runbooks/workflow-setup.md) — local configuration, profiles and startup; no credentials are included.
 - [Frontend integration](summaries/frontend-integration.md) — supplied assets and integration corrections.

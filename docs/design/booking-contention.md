@@ -1,5 +1,13 @@
 # Booking Execution Contention
 
+## I10 behavior
+
+The committed-insert/retry-CAS winner invariant remains. Initial identity changes to authenticated user + provider + provider quote (plus stable backend account scope if verified necessary). A losing insert reads/returns that identity's booking, never dispatches or overwrites its snapshot. Ordinary create always replays existing state, including RETRYABLE, with no implicit retry. Explicit `POST /api/bookings/{id}/retry` alone may claim RETRYABLE by state/version and dispatch using saved facts; losers return current state without sending. GET status/identity lookup are strictly read-only. See the [I10 plan](../iterations/iteration-10-stateless-quotes.md) and [target API](application-api.md).
+
+## Historical pre-I10 contention behavior
+
+The key/fingerprint/request rules and response-only CONTENDED projection below describe prior code, not I10. They remain here as historical review context.
+
 Only the caller that commits an initial insert or retry CAS may invoke the chargeable provider create operation. A caller losing either claim never attempts another claim in the same invocation.
 
 ## Initial insert conflict

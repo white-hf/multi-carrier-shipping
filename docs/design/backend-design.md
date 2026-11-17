@@ -1,9 +1,68 @@
 # Shipping workflow — backend technical design
 
-**Version:** 0.7  
-**Status:** Demo design baseline through I4; implementation evidence is recorded in iteration summaries  
-**Date:** 2026-10-23  
-**Inputs:** [PRD v1.3](../prd/shipping-workflow.md), [requirements review](../prd/requirements-review.md), [delivery plan](../iterations/delivery-plan.md).
+**Version:** 0.8
+
+**Status:** I10 implemented; verification evidence recorded separately; release pending
+
+**Date:** 2026-11-16
+
+**Inputs:** [PRD v1.5](../prd/shipping-workflow.md), [I10 implementation/migration plan](../iterations/iteration-10-stateless-quotes.md).
+
+Current physical fields, keys, indexes and stored state values are documented in the [data dictionary](data-dictionary.md), checked against the implemented consolidated baseline.
+
+## Current target — stateless quotes, durable bookings
+
+This section and the linked I10 plan **supersede the historical design below** wherever quote persistence, quote ownership proof, random keys, request-level uniqueness or retry/recovery behavior conflict. The user subsequently authorized implementation on a new baseline and removed historical-data migration. Historical sections explain prior design, not active requirements or current implementation evidence.
+
+### Scope review and selected trade-off
+
+Requirement: quotes are transient display/selection data; only explicit booking submission needs durable business state. The simplest viable design uses existing provider calls, booking storage, uniqueness, CAS and manual-review discovery. Remove the quote store and execution lifecycle rather than replace them with generic tasks, submission identities or signed quote credentials.
+
+This deliberately loses backend-owned quote/input association, user-to-provider-quote ownership proof, quote history and persisted rate execution recovery. The provider performs final quote validation. Distinct quotes may create separate shipments for identical input; this cross-quote risk is accepted. Booking/label ownership remains authenticated and enforced.
+
+### Target ownership and flow
+
+```mermaid
+flowchart TB
+    UI[Authenticated browser] --> Q[quote: validate / invoke / normalize]
+    Q --> RP[Existing rate provider port and adapter]
+    RP --> P[Configured provider]
+    UI --> B[booking: create / read / explicit retry / label]
+    B --> DB[(shipment_bookings: identity / snapshots / outcome)]
+    B --> SP[Existing shipment and label ports]
+    SP --> P
+    R[Existing reconciliation discovery] -->|Booking recovery contract| B
+    R --> T[(booking_reconciliation_tasks)]
+```
+
+- `quote` owns no business tables, execution claims or persisted status. `POST /api/quotes` is synchronous/bounded and writes no business rows on any path; `GET /api/quotes/{requestId}` is removed.
+- `booking` no longer calls `QuoteSelectionPort` / `quotes.resolve()`. It validates the submitted provider identity, persists its own shipping/display snapshot, and uses only saved facts after claim.
+- Provider/account routing and credentials remain backend-owned. Existing shared HTTP deadlines/admission/circuits/response limits remain the resource-protection owner.
+- Reconciliation retains its existing manual-review purpose and typed booking contract. No new leases, queues, receipt inbox or recovery framework is introduced.
+
+### Claim-before-call and identity
+
+Default key: `UNIQUE(user_id, provider_id, provider_quote_id)`. Confirm provider ID scope and reuse before release; if account-scoped, include a stable backend account identifier in uniqueness and lookup/routing. Preserve provider quote case/content and verified length rules exactly. A local alias rotation must not create a new deduplication identity accidentally.
+
+Create flow: validate provider/identity → read owned existing booking → return it if found → validate new snapshot/basic admission → insert PENDING and commit → only insert winner calls provider → CAS result. A uniqueness loser reads the winner; database/commit failure forbids dispatch. Existing identity replay never overwrites snapshots or acquires retry permission. Different quotes are independent; remove user/request and random-key uniqueness plus old-only request hashes.
+
+Store sender/recipient/parcel/units/date, submitted display service/amount/currency/expiry, provider/account identity, state/version/deadline, receipt and labels in booking. Separate user-submitted facts from nullable provider-confirmed actual facts; do not fabricate actual values. Persist only the fields required for business/recovery, not raw HTTP bodies.
+
+### Read-only recovery and explicit retry
+
+`GET /api/bookings/{id}` and `GET /api/bookings/lookup?providerId=...&providerQuoteId=...` are read-only owned lookups. They never claim work, mark state, register tasks or invoke create. No-row lookup retains the quote identity and permits only a user-initiated initial retry; an in-flight request may still commit later.
+
+Ordinary create returns an existing booking in every state without resending. Only `POST /api/bookings/{id}/retry` can claim a proven-unsent RETRYABLE record using saved submission facts, owner/state/version CAS and renewed deadline. One claim winner dispatches. PENDING, uncertain, manual-review and terminal states never resend. Expired quotes do not erase bookings or prevent status reads. Unknown outcomes and failed result persistence keep conservative existing recovery/manual handling.
+
+### Browser and migration
+
+Select offers by provider/quote pair; input revision and request sequence reject stale responses. Persist versioned, account-scoped active operations before send; use bookingId status GET or provider identity lookup after reload, never automatic creation. Retain query access to prior unresolved operations when a user starts another shipment. Preserve logout cleanup, polling bounds and label behavior. Legacy bookingId remains usable; old internal quoteId is not a provider ID and unrecoverable legacy entries need an explicit support message.
+
+Use the revised V001 new baseline with no quote/request tables or old booking keys/hashes. A typed JSON BookingSelection snapshot contains all required inputs/display facts; provider receipt facts and reserved nullable actual-price/service columns remain separate. Existing incompatible applied checksums fail rather than clearing a database. No historical copying/upgrades are implemented under the latest user decision. Coordinate backend/frontend versions; the [I10 plan](../iterations/iteration-10-stateless-quotes.md) records current provider gates and A01–A12 acceptance.
+
+## Historical pre-I10 design and implementation context
+
+**Everything below describes the earlier design/baseline.** The four-table model, quote-selection contract, quote-status recovery and random-key APIs no longer describe current code. I10 uses the new baseline explicitly authorized by the user, without historical migration.
 
 ## 1. Scope and principal decisions
 

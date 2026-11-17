@@ -1,8 +1,11 @@
 # Multi-Carrier Shipping — Rate Comparison & Shipment Creation
 
-**Product Requirements Document | Version 1.4 | Product Decisions Updated; Integration Validation Pending**  
+**Product Requirements Document | Version 1.5 | Stateless Quotes; Implementation Verification in Progress**
+
 **Context:** Independent shipping web application — product iteration  
 **Product:** Web application
+
+**Decision update (2026-11-16):** Quotes are transient; only explicit booking submission creates a durable business record. The [I10 optimization plan](../iterations/iteration-10-stateless-quotes.md) supersedes earlier quote-persistence and random-key requirements. This document describes the target, not current implementation acceptance.
 
 ## 1. Product Overview
 
@@ -10,7 +13,7 @@ Build a simple web application that enables a shipping operator to enter sender,
 
 **Core journey:** Shipping Details → Compare Rates → Review & Confirm → Shipment Confirmation.
 
-**Goals:** clear entry and validation; transparent comparison of cost and transit time; guided shipment creation; user-friendly handling of failures and uncertain outcomes. No sign-in is required for the demo; a fixed backend-configured demo user owns the workflow.
+**Goals:** clear entry and validation; transparent comparison of cost and transit time; guided shipment creation; user-friendly handling of failures and uncertain outcomes. Preserve existing account login; the backend resolves the authenticated user for booking isolation.
 
 ## 2. Scope and Priorities
 
@@ -26,7 +29,7 @@ Build a simple web application that enables a shipping operator to enter sender,
 | F06 | Create shipment | Explicitly confirm selected service |
 | F07 | Confirmation and label access | Display returned ShipID; obtain the label separately when it is not immediately available |
 | F08 | Error handling | Field errors, no rates, failures and progress indicators |
-| F12 | Duplicate safety | Prevent repeated side effects and return the existing operation on retries |
+| F12 | Duplicate safety | One booking per user/provider/provider quote identity; existing submissions return the original booking without dispatch |
 | F13 | Uncertain outcomes | Show Pending Confirmation; never resend creation automatically |
 
 ### Recommended (P1)
@@ -64,24 +67,35 @@ One package supports length, width, height, and weight. Package type defaults to
 
 ### FR-02 Rate Retrieval (P0)
 
-“Get Shipping Rates” starts an idempotent quotation request (`Idempotency-Key`). Show a loading state while rates are being retrieved. Quotes must be derived from the shipping details and must not be fabricated in the working product. Show an empty state if none is available, and errors when retrieval fails. Allow the user to revise shipment information.
+“Get Shipping Rates” validates input, calls the provider, normalizes its offers and returns them without writing business tables. It requires no `Idempotency-Key`. Retain loading, empty/error states, input validation, external timeouts, concurrency limits and necessary resource protection.
 
-- **Idempotent request & retryable execution:** Repeating the same rate request with the same key and identical shipment details reuses the persisted shipment request rather than creating duplicate records. Failed, timed-out or expired rate executions can be retried under the same key and request identity; edited shipment details start a new request with a fresh key.
-- **Durable business record vs. browser draft trade-off:** The backend persists `shipment_requests` independently of third-party providers for customer attribution, support traceability and provider-outage resilience (accepting PII storage, retention and schema maintenance responsibilities). A 24-hour browser draft (`localStorage`) improves navigation and reload recovery (restore inputs and active rate key), but is convenience state subject to clearing, expiry and shared-device exposure, never a substitute for the backend record.
+Return `providerId`, `providerQuoteId`, carrier/service, amount/currency and available expiry information. No persisted request, offer list, execution state, execution claim/version/takeover, failed-task recovery or quote-status endpoint remains. Failed or expired queries are new rate calls, not resumed tasks. Historical quote-list restoration is not guaranteed; reload may require re-querying. Browser drafts are convenience state only.
 
-**Acceptance:** multiple quotes can be shown with accurate association to the input shipment; failed or expired rate lookups can be retried under the same request identity without duplicating the shipment request.
+**Acceptance:** all quote success and exception paths write no business tables; input edits clear selection, and late responses cannot replace results for newer inputs.
 
 ### FR-03 Rate Comparison and Selection (P0; sort/detail P1)
 
 Each shipping option displays carrier name, service, total price including taxes, currency, and estimated transit days when available. P1 displays optional base charge, surcharges, taxes, guarantees and features. Default sorting is lowest total price first. At most one option can be selected. The selection includes the exact carrier/service quotation, not only the carrier name.
 
-**Acceptance:** user can compare and select a quote; selected card is visually distinct; Continue uses the selected quote. Editing shipment details invalidates the selected quotation and requires new rates. An expired quotation must be refreshed; any changed price requires explicit user confirmation before creation.
+**Acceptance:** select by the pair `(providerId, providerQuoteId)`. Editing shipment details invalidates the unsubmitted selection and requires new rates. Expiry information is a hint/admission aid, not a provider price guarantee; final validity is decided by the provider. A changed displayed price requires confirmation. Expiry must not erase an already-submitted unresolved operation.
 
 ### FR-04 Shipment Creation (P0)
 
-Before final submission, show shipment route, package information, selected service and total amount. The user clicks “Create Shipment.” Display a pending state and prevent accidental repeated submission. Shipment creation uses the original shipment information associated with that exact selected quotation.
+Before final submission, show shipment route, package information, selected service and amount. The user explicitly confirms `providerId`, `providerQuoteId` and required shipping/display snapshots; no internal quote ID or `Idempotency-Key` is accepted. Save the local active operation before sending. Backend account/credentials and user scope are never browser-selected.
 
-**Acceptance:** successful creation presents an actual confirmation; failures never display false success. An uncertain outcome first appears as Pending Confirmation and never automatically triggers a duplicate operation. If safe provider recovery is unavailable, show Manual Review Required with the booking reference and guidance to contact support; stop polling and hide retry/recreation controls for that operation. Refresh preserves this state. Any replay retains the same operation identity rather than starting another shipment.
+The backend validates identity/provider, returns an existing booking if present, otherwise validates new parameters and commits a unique PENDING booking before contacting the provider. Only the insert winner dispatches; a storage failure prevents dispatch. Concurrent conflicts return the original booking. Submitted inputs/prices are user snapshots, not provider-confirmed facts; actual provider information is stored separately when returned.
+
+**Business boundary:** no user-to-provider-quote ownership proof or signed quote credential is added. Provider performs final quote validation. Distinct quotes may each create a booking even for identical shipping inputs; cross-quote duplicates are accepted. Verify ID scope/reuse before release and add backend account scope to uniqueness if required.
+
+**Acceptance:** success requires a valid provider receipt; rejection/malformed results never appear successful. Same-identity create always returns existing state without retrying, including RETRYABLE. Unknown outcomes remain Pending Confirmation or Manual Review; never resend automatically.
+
+### FR-04a Status Recovery and Safe Retry (P0)
+
+- With bookingId, query booking status; without it, read-only lookup by providerId/providerQuoteId under the current user. Reads never create, retry or mutate status.
+- No row means retain the quote identity and offer a user-initiated initial submission retry; it does not prove an earlier in-flight request cannot commit later.
+- Only a separate explicit “Retry sending” action can resend a proven-unsent RETRYABLE booking, using saved submission facts and a single state/version claim winner. PENDING, unknown, manual-review and terminal states cannot resend.
+- Refresh performs reads only. Preserve polling bounds, manual-review display and label behavior. A user may start another shipment while retaining query access to earlier unresolved local operations.
+- Upgrade browser storage with account isolation and logout cleanup. Legacy bookingId remains usable; old internal quoteId is never a providerQuoteId. Records without a recovery identity require an explicit limitation/support message, not automatic creation.
 
 ### FR-05 Shipment Confirmation (P0)
 
@@ -102,9 +116,9 @@ On success show a success indicator, ShipID and an “Open Shipping Label” lin
 | Shipment created, label not yet available | Keep creation confirmed; retrieve the label separately without creating another shipment |
 | Shipment edited, quote expired or price changed | Invalidate or refresh the quote; require explicit confirmation of a changed price |
 
-### FR-07 Demo Access Configuration (P0)
+### FR-07 Account and Provider Access Configuration (P0)
 
-No application registration or login UI is required. Use a fixed backend-configured demo user for ownership and duplicate protection; the frontend may display this identity. In a future authenticated deployment, resolve the user ID from the logged-in principal instead. External integration access is configured on the backend, independently of application-user identity. Access settings remain local and excluded from version control; no secret values or private access details belong in tracked documents or the browser. A demonstrator must be able to supply the required settings and start the integration with a short, clear setup process. Missing settings should produce an actionable configuration error.
+Retain the existing account login, session/fingerprint validation, account isolation, same-origin protections and quotas. Resolve userId from login, not a body/header identity assertion. Provider account and credentials are chosen on the backend independently of application login. Switching accounts must not display another user's local operations; logout clears local account state. No registration/user-management expansion is required. Secrets remain local and excluded from Git and browser data; missing configuration produces actionable non-secret errors.
 
 ## 5. UI/UX Requirements
 
@@ -139,13 +153,16 @@ No application registration or login UI is required. Use a fixed backend-configu
 | BR02 | Package measurements must be greater than zero |
 | BR03 | Initial demo supports one Canadian domestic package across all provinces and territories |
 | BR04 | Prices use returned currency and total charge, including taxes |
-| BR05 | Selection is specific to a carrier + service + quotation |
-| BR06 | Shipment creation reuses the details underlying the selected quote |
-| BR07 | Confirmed duplicate submissions must not create another shipment |
+| BR05 | Selection identity is providerId + providerQuoteId, with carrier/service display |
+| BR06 | Booking saves submitted shipping/display snapshots; it does not prove their association with the provider quote |
+| BR07 | Same user/provider/quote yields one booking; different quotes may independently create shipments |
 | BR08 | An uncertain creation outcome is distinct from confirmed failure |
 | BR09 | Label access is offered only when a valid URL exists; a pending label does not invalidate confirmed shipment creation |
 | BR10 | Changed shipment details or an expired quote require new rates; changed prices require explicit confirmation |
 | BR11 | External integration credentials belong to local backend configuration, not application login |
+| BR12 | Quote retrieval writes no business records and has no durable task/status recovery |
+| BR13 | Status recovery is read-only; only explicit RETRYABLE retry can resend a saved booking |
+| BR14 | Expiry does not remove booking identity, uncertainty, history or duplicate protection |
 
 ## 7. Product Acceptance Journey
 
@@ -160,18 +177,21 @@ No application registration or login UI is required. Use a fixed backend-configu
 ## 8. Product Assumptions / Open Questions
 
 - UI choice: HTML + Bootstrap 5 + Vanilla JavaScript, served by the backend; no separate frontend design document.
-- Identity: fixed backend-configured demo user without login; production ownership comes from authenticated user identity.
+- Identity: existing authenticated account; booking ownership comes from backend login context, not provider quote ownership proof.
 - Shipping scope: all Canadian provinces and territories, one package, Imperial defaults.
 - Duplicate safety and uncertain-outcome handling are confirmed P0 requirements.
-- No application login is needed; external access configuration stays local to the backend.
+- External access configuration stays local to the backend; no new registration system is in scope.
 - Quote preselection remains an open product preference; explicit selection is the current recommendation.
 - Required contact/address fields are preliminary and may be revised from observed API validation.
 - The rules for invalidating/refreshing quotations are confirmed; provider expiry signals, shipping-date restrictions and ambiguous-creation lookup capabilities still require verification.
 - The supplied integration reference identifies a separate label lookup API; its behavior remains to be validated. Shipment confirmation and label availability must remain distinct.
+- Provider quote ID uniqueness scope, case/length rules, reuse period and required creation fields are release gates. If IDs are only account-unique, include a stable backend account identifier in the booking uniqueness/lookup contract. No contract verification is claimed by this document update.
 - **The included HTML prototype is mock-only and does not make API calls or create shipments.**
 
 ## 9. Deliverables and Document Boundaries
 
-Product deliverables: three-step user experience, functional quotation comparison, shipment creation, confirmation and failure states. Backend technical architecture, database schema, API request mappings, idempotency implementation and test architecture will be discussed first and then specified in a **separate Technical Design Document**. The frontend should use the simplest practical implementation to exercise the complete journey; a separate frontend technical design document is not required.
+Product deliverables: three-step user experience, functional quotation comparison, shipment creation, confirmation and failure states. Target backend boundaries, booking deduplication, API mappings and historical-data migration are specified in the [backend design](../design/backend-design.md), [API contract](../design/application-api.md) and [I10 plan](../iterations/iteration-10-stateless-quotes.md). The frontend should use the simplest practical implementation to exercise the complete journey; a separate frontend technical design document is not required.
+
+On 2026-11-16 the user authorized implementation and removed historical-data/old-table migration from scope. Use a new two-business-table baseline with booking-owned snapshots; do not automatically clear or upgrade an existing database. Incompatible applied checksums fail startup. Browser legacy-storage upgrade remains required, but no historical database import is promised. Coordinate backend/frontend versions and keep release separate from implementation.
 
 Design framing: describe the backend as a new, self-contained system without assuming existing modules are implemented. During development, existing code may be reused after it is checked against the target requirements; reuse does not waive acceptance.

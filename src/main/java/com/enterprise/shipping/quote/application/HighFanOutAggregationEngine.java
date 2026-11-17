@@ -95,8 +95,6 @@ public class HighFanOutAggregationEngine
                 .map(
                         q ->
                                 new com.enterprise.shipping.quote.domain.ShippingQuote(
-                                        null,
-                                        null,
                                         "direct-carrier-fanout",
                                         "carrier-account",
                                         null,

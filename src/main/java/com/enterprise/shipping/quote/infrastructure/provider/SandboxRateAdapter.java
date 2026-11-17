@@ -23,8 +23,6 @@ public final class SandboxRateAdapter implements RateProviderPort {
                 .map(
                         q ->
                                 new ShippingQuote(
-                                        null,
-                                        null,
                                         q.providerId(),
                                         q.accountAlias(),
                                         q.providerQuoteId(),
