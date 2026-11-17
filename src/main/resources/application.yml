@@ -30,9 +30,22 @@ shipping:
   default-user-id: ${SHIPPING_DEFAULT_USER_ID:guest-user}
   database-path: ${SHIPPING_DATABASE_PATH:./data/shipping.db}
   auth:
-    token-secret: ${SHIPPING_AUTH_TOKEN_SECRET:local-shipping-hmac-secret-key-2026}
+    token-secret: ${SHIPPING_AUTH_TOKEN_SECRET:}
     token-ttl: ${SHIPPING_AUTH_TOKEN_TTL:2h}
-    require-token: ${SHIPPING_AUTH_REQUIRE_TOKEN:true}
+    users:
+      - username: ${SHIPPING_AUTH_USERNAME:}
+        password: ${SHIPPING_AUTH_PASSWORD:}
+        password-hash: ${SHIPPING_AUTH_PASSWORD_HASH:}
+        user-id: ${SHIPPING_AUTH_USER_ID:user-admin}
+        display-name: ${SHIPPING_AUTH_DISPLAY_NAME:Shipping Operator}
+    max-failed-attempts: ${SHIPPING_AUTH_MAX_FAILED_ATTEMPTS:5}
+    failure-window: 5m
+    lockout-duration: ${SHIPPING_AUTH_LOCKOUT_DURATION:15m}
+    login-per-second: 5
+    max-entries: 4096
+    quotes-per-minute: ${SHIPPING_AUTH_QUOTES_PER_MINUTE:10}
+    bookings-per-minute: ${SHIPPING_AUTH_BOOKINGS_PER_MINUTE:5}
+    labels-per-minute: ${SHIPPING_AUTH_LABELS_PER_MINUTE:20}
   # Defaults -> named template -> dependency overrides. States/resources are never shared across dependencies.
   outbound:
     defaults:

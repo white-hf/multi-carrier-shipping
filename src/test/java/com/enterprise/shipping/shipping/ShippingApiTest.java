@@ -1,7 +1,7 @@
 package com.enterprise.shipping.shipping;
 
 import com.enterprise.shipping.Application;
-import com.enterprise.shipping.auth.application.GuestSessionTokenService;
+import com.enterprise.shipping.auth.application.SessionTokenService;
 import com.enterprise.shipping.provider.sandbox.SandboxProviderProperties;
 import com.enterprise.shipping.provider.sandbox.rates.SandboxRateOperation;
 import com.enterprise.shipping.quote.contract.QuoteSelectionPort;
@@ -76,7 +76,7 @@ class ShippingApiTest {
     @TestConfiguration(proxyBeanMethods = false)
     static class TestAuthDefaults {
         @Bean
-        MockMvcBuilderCustomizer defaultMockMvcGuestAuth(GuestSessionTokenService tokens) {
+        MockMvcBuilderCustomizer defaultMockMvcAccountAuth(SessionTokenService tokens) {
             return builder -> {
                 var issued = tokens.issueTokenForUser("guest-user", DEFAULT_TEST_FINGERPRINT);
                 builder.defaultRequest(
@@ -264,6 +264,21 @@ class ShippingApiTest {
         r.add(
                 "shipping.provider.base-url",
                 () -> "http://127.0.0.1:" + PROVIDER.getAddress().getPort());
+        r.add("shipping.auth.token-secret", () -> "test-only-signing-secret-at-least-32-characters");
+        r.add("shipping.auth.users[0].username", () -> "alpha");
+        r.add("shipping.auth.users[0].password", () -> "test-alpha-password");
+        r.add("shipping.auth.users[0].user-id", () -> "guest-user");
+        r.add("shipping.auth.users[0].display-name", () -> "Alpha Operator");
+        r.add("shipping.auth.users[1].username", () -> "beta");
+        r.add("shipping.auth.users[1].password", () -> "test-beta-password");
+        r.add("shipping.auth.users[1].user-id", () -> "user-beta");
+        r.add("shipping.auth.users[1].display-name", () -> "Beta Operator");
+        // Workflow tests exercise many requests; finite production limits are tested separately.
+        r.add("shipping.auth.require-token", () -> "false"); // Legacy bypass no longer takes effect.
+        r.add("shipping.auth.quotes-per-minute", () -> "10000");
+        r.add("shipping.auth.bookings-per-minute", () -> "10000");
+        r.add("shipping.auth.labels-per-minute", () -> "10000");
+        r.add("shipping.auth.login-per-second", () -> "10000");
         r.add("shipping.provider.username", () -> "stub-user");
         r.add("shipping.provider.password", () -> "stub-password");
         r.add("shipping.provider.label-hosts", () -> "labels.example.com");
@@ -1441,7 +1456,63 @@ class ShippingApiTest {
     }
 
     @Test
-    void enforcesGuestTokenAndClientFingerprintAndIsolatesGuestSessions() throws Exception {
+    void rejectsBadCredentialsDisablesGuestAndClearsSecureCookiesOnLogout() throws Exception {
+        for (String username : List.of("alpha", "unknown")) {
+            mvc.perform(
+                            post("/api/auth/login")
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(
+                                            "{\"username\":\""
+                                                    + username
+                                                    + "\",\"password\":\"incorrect-password\",\"fingerprint\":\"fingerprint-test-123\"}"))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.code").value("INVALID_CREDENTIALS"));
+        }
+        mvc.perform(
+                        post("/api/auth/guest")
+                                .header("Authorization", "")
+                                .header("X-Client-Fingerprint", ""))
+                .andExpect(status().isUnauthorized());
+        var login =
+                mvc.perform(
+                                post("/api/auth/login")
+                                        .secure(true)
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content(
+                                                "{\"username\":\"alpha\",\"password\":\"test-alpha-password\",\"fingerprint\":\"fingerprint-test-123\"}"))
+                        .andExpect(status().isOk())
+                        .andReturn()
+                        .getResponse();
+        assertThat(login.getHeaders("Set-Cookie"))
+                .allSatisfy(
+                        cookie ->
+                                assertThat(cookie)
+                                        .contains(
+                                                "Secure",
+                                                "HttpOnly",
+                                                "SameSite=Strict",
+                                                "Path=/api"));
+        var logout =
+                mvc.perform(post("/api/auth/logout").secure(true))
+                        .andExpect(status().isNoContent())
+                        .andReturn()
+                        .getResponse();
+        assertThat(logout.getHeaders("Set-Cookie"))
+                .hasSize(2)
+                .allSatisfy(
+                        cookie ->
+                                assertThat(cookie)
+                                        .contains(
+                                                "Max-Age=0",
+                                                "HttpOnly",
+                                                "SameSite=Strict",
+                                                "Secure"));
+        assertThat(RATE_CALLS).hasValue(0);
+        assertThat(CREATE_CALLS).hasValue(0);
+    }
+
+    @Test
+    void enforcesAccountLoginAndClientFingerprintAndIsolatesAccounts() throws Exception {
         mvc.perform(
                         post("/api/quotes")
                                 .header("Authorization", "")
@@ -1455,16 +1526,16 @@ class ShippingApiTest {
         String fpAlpha = "fp-browser-alpha-00000001";
         var alphaAuthBody =
                 mvc.perform(
-                                post("/api/auth/guest")
+                                post("/api/auth/login")
                                         .header("Authorization", "")
                                         .header("X-Client-Fingerprint", fpAlpha)
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content(
-                                                "{\"clientId\":\"client-alpha-12345678\",\"fingerprint\":\""
+                                                "{\"username\":\"alpha\",\"password\":\"test-alpha-password\",\"fingerprint\":\""
                                                         + fpAlpha
                                                         + "\"}"))
                         .andExpect(status().isOk())
-                        .andExpect(jsonPath("$.mode").value("GUEST"))
+                        .andExpect(jsonPath("$.mode").value("AUTHENTICATED"))
                         .andExpect(jsonPath("$.ttlSeconds").value(7200))
                         .andExpect(jsonPath("$.supportedCarriers").isArray())
                         .andExpect(header().exists("Set-Cookie"))
@@ -1475,16 +1546,16 @@ class ShippingApiTest {
         JsonNode alphaAuth = mapper.readTree(alphaAuthBody);
         String alphaToken = alphaAuth.path("token").asText();
         String alphaUserId = alphaAuth.path("userId").asText();
-        assertThat(alphaUserId).startsWith("guest-");
+        assertThat(alphaUserId).isEqualTo("guest-user");
 
         var alphaRepeatBody =
                 mvc.perform(
-                                post("/api/auth/guest")
+                                post("/api/auth/login")
                                         .header("Authorization", "")
                                         .header("X-Client-Fingerprint", fpAlpha)
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content(
-                                                "{\"clientId\":\"client-alpha-12345678\",\"fingerprint\":\""
+                                                "{\"username\":\"alpha\",\"password\":\"test-alpha-password\",\"fingerprint\":\""
                                                         + fpAlpha
                                                         + "\"}"))
                         .andExpect(status().isOk())
@@ -1507,6 +1578,7 @@ class ShippingApiTest {
                         .getContentAsString();
         String alphaQuoteId =
                 mapper.readTree(alphaQuotesResp).path("quotes").get(0).path("quoteId").asText();
+        String alphaRequestId = mapper.readTree(alphaQuotesResp).path("requestId").asText();
 
         mvc.perform(
                         post("/api/bookings")
@@ -1522,12 +1594,12 @@ class ShippingApiTest {
         String fpBeta = "fp-browser-beta-00000002";
         var betaAuthBody =
                 mvc.perform(
-                                post("/api/auth/guest")
+                                post("/api/auth/login")
                                         .header("Authorization", "")
                                         .header("X-Client-Fingerprint", fpBeta)
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content(
-                                                "{\"clientId\":\"client-beta-87654321\",\"fingerprint\":\""
+                                                "{\"username\":\"beta\",\"password\":\"test-beta-password\",\"fingerprint\":\""
                                                         + fpBeta
                                                         + "\"}"))
                         .andExpect(status().isOk())
@@ -1550,17 +1622,45 @@ class ShippingApiTest {
                 .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));
         assertThat(CREATE_CALLS).hasValue(0);
 
+        mvc.perform(
+                        get("/api/quotes/" + alphaRequestId)
+                                .header("Authorization", "Bearer " + betaToken)
+                                .header("X-Client-Fingerprint", fpBeta))
+                .andExpect(status().isNotFound());
+        var booking =
+                mvc.perform(
+                                post("/api/bookings")
+                                        .header("Authorization", "Bearer " + alphaToken)
+                                        .header("X-Client-Fingerprint", fpAlpha)
+                                        .header("Idempotency-Key", "alpha-owned-booking")
+                                        .contentType(MediaType.APPLICATION_JSON)
+                                        .content("{\"quoteId\":\"" + alphaQuoteId + "\"}"))
+                        .andExpect(status().isCreated())
+                        .andReturn()
+                        .getResponse()
+                        .getContentAsString();
+        String alphaBookingId = mapper.readTree(booking).path("bookingId").asText();
+        for (String suffix : List.of("", "/label")) {
+            mvc.perform(
+                            get("/api/bookings/" + alphaBookingId + suffix)
+                                    .header("Authorization", "Bearer " + betaToken)
+                                    .header("X-Client-Fingerprint", fpBeta))
+                    .andExpect(status().isNotFound());
+        }
+        assertThat(CREATE_CALLS).hasValue(1);
+        assertThat(LABEL_CALLS).hasValue(0);
+
         Clock baseClock = Clock.fixed(Instant.parse("2026-10-23T12:00:00Z"), ZoneOffset.UTC);
         var verifierAtIssue =
-                new GuestSessionTokenService("unit-test-secret", Duration.ofHours(2), baseClock);
-        var issued2h = verifierAtIssue.issueGuestToken("client-ttl-check-01", fpAlpha);
+                new SessionTokenService("unit-test-secret", Duration.ofHours(2), baseClock);
+        var issued2h = verifierAtIssue.issueTokenForUser("guest-user", fpAlpha);
         var verifierBeforeExpiry =
-                new GuestSessionTokenService(
+                new SessionTokenService(
                         "unit-test-secret",
                         Duration.ofHours(2),
                         Clock.offset(baseClock, Duration.ofMinutes(119)));
         var verifierAfterExpiry =
-                new GuestSessionTokenService(
+                new SessionTokenService(
                         "unit-test-secret",
                         Duration.ofHours(2),
                         Clock.offset(baseClock, Duration.ofMinutes(121)));

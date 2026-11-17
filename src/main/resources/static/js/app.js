@@ -9,9 +9,9 @@
   let rateOperation = null;
   let rateBusy = false;
   const activeStorage = 'shipping.activeBooking.v1';
-  const mockStorage = 'shipping.mockMode.v1';
   const clientIdStorage = 'shipping.clientId.v1';
-  const guestSessionStorage = 'shipping.guestSession.v1';
+  const sessionKey = 'shipping.accountSession.v1';
+  const ownerStorage = 'shipping.workspaceOwner.v1';
 
   const state = {
     step: 1,
@@ -33,8 +33,8 @@
     labelTarget: null,
     labelFile: null,
     labelBusy: false,
-    guestToken: null,
-    guestUserId: null,
+    sessionToken: null,
+    sessionUserId: null,
     fingerprint: null,
     supportedCarriers: [
       'Canada Post',
@@ -46,10 +46,6 @@
       'Loomis Express'
     ]
   };
-
-  let mock = location.protocol === 'file:'
-      || new URLSearchParams(location.search).get('mock') === '1'
-      || localStorage.getItem(mockStorage) === 'true';
 
   let loadingInterval = null;
 
@@ -191,26 +187,6 @@
         ? `<span class="spinner" aria-hidden="true"></span><span>${esc(label)}</span>`
         : btn.dataset.original;
   }
-
-  function mode(on) {
-    mock = on;
-    $('mock-toggle').checked = on;
-    $('mode-indicator').textContent = on ? 'Demo preview' : 'Backend API';
-    $('environment-tag').textContent = on ? '● DEMO PREVIEW' : '● BACKEND API';
-    localStorage.setItem(mockStorage, String(on));
-  }
-
-  mode(mock);
-  $('mock-toggle').addEventListener('change', e => {
-    if (state.key) {
-      e.target.checked = mock;
-      notice('Finish or resolve the active shipment before switching modes.');
-      return;
-    }
-    mode(e.target.checked);
-    rateOperation = null;
-    saveDraft();
-  });
 
   // Unit system toggle (Imperial IN/LB vs Metric CM/KG)
   function setUnitSystem(system) {
@@ -478,75 +454,106 @@
     return state.fingerprint;
   }
 
-  let sessionPromise = null;
-  async function ensureGuestSession(forceRefresh = false) {
-    if (mock) return null;
-    const fp = await computeClientFingerprint();
-
-    if (!forceRefresh) {
-      try {
-        const cached = JSON.parse(sessionStorage.getItem(guestSessionStorage) || 'null');
-        if (cached?.token && cached?.fingerprint === fp && cached?.expiresAt) {
-          const remainingMs = new Date(cached.expiresAt).getTime() - Date.now();
-          if (remainingMs > 60000) {
-            state.guestToken = cached.token;
-            state.guestUserId = cached.userId;
-            if (Array.isArray(cached.supportedCarriers) && cached.supportedCarriers.length) {
-              state.supportedCarriers = cached.supportedCarriers;
-            }
-            const avatar = $('user-avatar');
-            if (avatar && cached.userId) avatar.title = `Guest session: ${cached.userId}`;
-            return cached;
-          }
-        }
-      } catch {
-        // Ignore malformed cache and request a fresh guest token
-      }
-    }
-
-    if (sessionPromise) return sessionPromise;
-
-    sessionPromise = (async () => {
-      const clientId = resolveClientId();
-      const res = await fetch('/api/auth/guest', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Client-Fingerprint': fp
-        },
-        body: JSON.stringify({ clientId, fingerprint: fp })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.token) {
-        throw new HttpError(res.status, data);
-      }
-      if (Array.isArray(data.supportedCarriers) && data.supportedCarriers.length) {
-        state.supportedCarriers = data.supportedCarriers;
-      }
-      const session = {
-        token: data.token,
-        userId: data.userId,
-        expiresAt: data.expiresAt,
-        fingerprint: fp,
-        supportedCarriers: state.supportedCarriers
-      };
-      sessionStorage.setItem(guestSessionStorage, JSON.stringify(session));
-      state.guestToken = session.token;
-      state.guestUserId = session.userId;
-      const avatar = $('user-avatar');
-      if (avatar && session.userId) avatar.title = `Guest session: ${session.userId}`;
-      return session;
-    })();
-
+  function cachedSession() {
     try {
-      return await sessionPromise;
-    } finally {
-      sessionPromise = null;
+      const session = JSON.parse(sessionStorage.getItem(sessionKey) || 'null');
+      return session?.mode === 'AUTHENTICATED' && session.token
+          && new Date(session.expiresAt).getTime() > Date.now() ? session : null;
+    } catch {
+      return null;
     }
   }
 
-  async function http(path, { method = 'GET', body = null, headers = {}, retriedAuth = false } = {}) {
-    const session = await ensureGuestSession(false);
+  function renderAccount() {
+    const session = cachedSession();
+    const dialog = $('login-modal');
+    $('user-avatar').textContent = session
+        ? `${session.displayName || session.username} · Sign out` : 'Sign in';
+    if (!session && !dialog.open) dialog.showModal();
+    if (session && dialog.open) dialog.close();
+  }
+
+  async function ensureSession() {
+    const session = cachedSession();
+    const fingerprint = await computeClientFingerprint();
+    if (!session || session.fingerprint !== fingerprint) {
+      sessionStorage.removeItem(sessionKey);
+      renderAccount();
+      throw new HttpError(401, { code: 'UNAUTHORIZED', message: 'Please sign in to continue.' });
+    }
+    state.sessionToken = session.token;
+    state.sessionUserId = session.userId;
+    state.supportedCarriers = session.supportedCarriers || state.supportedCarriers;
+    return session;
+  }
+
+  function clearWorkspace() {
+    localStorage.removeItem(draftStorage);
+    localStorage.removeItem(activeStorage);
+    sessionStorage.removeItem(activeStorage);
+  }
+
+  function expireSession() {
+    sessionStorage.removeItem(sessionKey);
+    // Reload discards callbacks from the old document. Keep same-account operation recovery.
+    location.reload();
+  }
+
+  $('login-modal').addEventListener('cancel', event => event.preventDefault());
+  $('login-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    busy('login-submit', true, 'Signing in…');
+    $('login-error').hidden = true;
+    try {
+      const fingerprint = await computeClientFingerprint();
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: $('login-username').value,
+          password: $('login-password').value, fingerprint })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.token) {
+        const wait = res.headers.get('Retry-After');
+        throw new Error(res.status === 429
+            ? `Too many sign-in attempts. Try again in ${wait || 'a few'} seconds.`
+            : res.status === 401 ? 'Invalid username or password.' : 'Sign-in failed. Please try again.');
+      }
+      if (sessionStorage.getItem(ownerStorage) !== data.userId) clearWorkspace();
+      sessionStorage.setItem(ownerStorage, data.userId);
+      sessionStorage.removeItem('shipping.guestSession.v1');
+      sessionStorage.setItem(sessionKey, JSON.stringify({ ...data, fingerprint }));
+      location.reload();
+    } catch (error) {
+      $('login-error').textContent = error.message;
+      $('login-error').hidden = false;
+    } finally {
+      $('login-password').value = '';
+      busy('login-submit', false);
+    }
+  });
+  $('user-avatar').addEventListener('click', async () => {
+    const session = cachedSession();
+    if (!session) {
+      $('login-modal').showModal();
+      return;
+    }
+    if ((state.key || state.creating || rateBusy) && !confirm(
+        'An operation is active. Signing out clears its local recovery information. Sign out anyway?')) return;
+    try {
+      const res = await fetch('/api/auth/logout', { method: 'POST' });
+      if (!res.ok) throw new Error('Sign-out failed. Please try again.');
+      sessionStorage.removeItem(sessionKey);
+      sessionStorage.removeItem(ownerStorage);
+      clearWorkspace();
+      location.reload();
+    } catch (error) {
+      notice(error.message);
+    }
+  });
+
+  async function http(path, { method = 'GET', body = null, headers = {} } = {}) {
+    const session = await ensureSession();
     const fp = await computeClientFingerprint();
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 125000);
@@ -562,10 +569,9 @@
         body: body ? JSON.stringify(body) : undefined,
         signal: ctrl.signal
       });
-      if (res.status === 401 && !retriedAuth) {
-        sessionStorage.removeItem(guestSessionStorage);
-        await ensureGuestSession(true);
-        return http(path, { method, body, headers, retriedAuth: true });
+      if (res.status === 401) {
+        expireSession();
+        throw new HttpError(401, { code: 'UNAUTHORIZED', message: 'Session expired. Please sign in.' });
       }
       let data = {};
       if (res.status !== 204) {
@@ -580,74 +586,14 @@
   }
 
   const delay = ms => new Promise(r => setTimeout(r, ms));
-  const seed = [
-    ['Canpar', 'Ground', 27.35, 2],
-    ['Canada Post', 'Expedited Parcel', 34.02, 3],
-    ['Canada Post', 'Regular Parcel', 34.27, 5],
-    ['Loomis', 'Loomis Ground', 35.93, 2],
-    ['GLS', 'Ground', 39.66, 2]
-  ];
-
-  const demo = {
-    async quotes() {
-      await delay(450);
-      return {
-        status: 201,
-        data: {
-          requestId: 'demo-request-' + Date.now(),
-          state: 'READY',
-          shippingDate: '2026-10-23',
-          quotes: seed.map((r, i) => ({
-            quoteId: 'demo-quote-' + i,
-            carrierName: r[0],
-            serviceName: r[1],
-            total: { amount: r[2].toFixed(2), currency: 'CAD' },
-            transitDays: r[3],
-            base: null,
-            surcharges: null,
-            taxes: null,
-            expiresAt: new Date(Date.now() + 14 * 60000).toISOString()
-          }))
-        }
-      };
-    },
-    async booking(quote, key) {
-      await delay(650);
-      return {
-        status: 201,
-        data: {
-          bookingId: 'demo-booking-' + key,
-          status: 'CONFIRMED',
-          shipmentId: 'DEMO-104582',
-          trackingNumbers: ['DEMO-TRACK-001'],
-          labelStatus: 'PENDING',
-          statusUrl: '/api/bookings/demo-booking-' + key
-        }
-      };
-    },
-    async status(id) {
-      await delay(250);
-      return {
-        status: 200,
-        data: {
-          bookingId: id,
-          status: 'CONFIRMED',
-          shipmentId: 'DEMO-104582',
-          trackingNumbers: ['DEMO-TRACK-001'],
-          labelStatus: 'PENDING'
-        }
-      };
-    }
-  };
-
   const api = {
-    quotes: (data, key) => mock
-        ? demo.quotes()
-        : http('/api/quotes', { method: 'POST', body: data, headers: { 'Idempotency-Key': key } }),
-    booking: (quote, key) => mock
-        ? demo.booking(quote, key)
-        : http('/api/bookings', { method: 'POST', body: { quoteId: quote }, headers: { 'Idempotency-Key': key } }),
-    status: id => mock ? demo.status(id) : http(`/api/bookings/${encodeURIComponent(id)}`)
+    quotes: (data, key) => http('/api/quotes', {
+      method: 'POST', body: data, headers: { 'Idempotency-Key': key }
+    }),
+    booking: (quote, key) => http('/api/bookings', {
+      method: 'POST', body: { quoteId: quote }, headers: { 'Idempotency-Key': key }
+    }),
+    status: id => http(`/api/bookings/${encodeURIComponent(id)}`)
   };
 
   const quoteId = q => q.quoteId;
@@ -823,7 +769,7 @@
       labelAttempted: state.labelAttempted,
       status: state.booking?.status,
       errorCode: state.booking?.errorCode,
-      mock
+      userId: cachedSession()?.userId || sessionStorage.getItem(ownerStorage)
     }));
   }
 
@@ -938,13 +884,11 @@
         : (state.savedService || 'Selected shipping service');
 
     updateLabelActions();
-    $('label-status-text').textContent = mock
-        ? 'Demo preview: no real shipment or label was created.'
-        : state.labelTarget
-            ? 'Shipment confirmed. Label available.'
-            : 'Shipment confirmed. Retrieve the label to view, download or print it.';
+    $('label-status-text').textContent = state.labelTarget
+        ? 'Shipment confirmed. Label available.'
+        : 'Shipment confirmed. Retrieve the label to view, download or print it.';
 
-    if (!mock && !state.labelTarget && !state.labelAttempted) {
+    if (!state.labelTarget && !state.labelAttempted) {
       state.labelAttempted = true;
       saveActive();
       fetchLabel();
@@ -968,7 +912,7 @@
   }
 
   function updateLabelActions() {
-    const ready = !!state.labelTarget && !state.labelBusy && !mock;
+    const ready = !!state.labelTarget && !state.labelBusy;
     for (const id of ['label-download-btn', 'label-print-btn', 'label-share-btn']) {
       if ($(id)) $(id).disabled = !ready;
     }
@@ -983,25 +927,23 @@
       link.tabIndex = ready ? 0 : -1;
     }
     if ($('refresh-label-btn')) {
-      $('refresh-label-btn').hidden = mock;
+      $('refresh-label-btn').hidden = false;
       $('refresh-label-btn').disabled = state.labelBusy;
       if (!state.labelBusy) {
         $('refresh-label-btn').textContent = state.labelTarget ? 'Reload label' : 'Retry label';
       }
     }
     if ($('label-action-help')) {
-      $('label-action-help').textContent = mock
-          ? 'Demo mode has no real label. Start a new shipment in Backend API mode to retrieve one.'
-          : !ready
-              ? 'Retrieve the label to enable these actions. Creation will not be repeated.'
-              : state.labelFile
-                  ? 'Email opens your mail app; attach the downloaded PDF yourself. Sharing depends on browser support.'
-                  : 'Provider-hosted label: use its viewer to save or print. Download the PDF before attaching or sharing it.';
+      $('label-action-help').textContent = !ready
+          ? 'Retrieve the label to enable these actions. Creation will not be repeated.'
+          : state.labelFile
+              ? 'Email opens your mail app; attach the downloaded PDF yourself. Sharing depends on browser support.'
+              : 'Provider-hosted label: use its viewer to save or print. Download the PDF before attaching or sharing it.';
     }
   }
 
   function openLabelViewer(printing = false) {
-    if (!state.labelTarget || state.labelBusy || mock) return;
+    if (!state.labelTarget || state.labelBusy) return;
     window.open(state.labelTarget, '_blank', 'noopener,noreferrer');
     notice(printing
         ? 'Use the print button in the PDF viewer, or Ctrl/Cmd+P. If no tab opens, allow pop-ups for this site.'
@@ -1009,7 +951,7 @@
   }
 
   function downloadLabel() {
-    if (!state.labelTarget || state.labelBusy || mock) return;
+    if (!state.labelTarget || state.labelBusy) return;
     if (!state.labelFile) {
       openLabelViewer();
       return;
@@ -1023,7 +965,7 @@
   }
 
   async function shareLabel() {
-    if (!state.labelTarget || state.labelBusy || mock) return;
+    if (!state.labelTarget || state.labelBusy) return;
     const bookingId = state.bookingId;
     const file = state.labelFile;
     try {
@@ -1044,13 +986,13 @@
   }
 
   async function fetchLabel() {
-    if (!state.bookingId || mock || state.labelBusy) return;
+    if (!state.bookingId || state.labelBusy) return;
     const bookingId = state.bookingId;
     state.labelBusy = true;
     busy('refresh-label-btn', true, 'Checking label…');
     updateLabelActions();
     try {
-      const session = await ensureGuestSession(false);
+      const session = await ensureSession();
       const fp = await computeClientFingerprint();
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 45000);
@@ -1068,6 +1010,7 @@
         clearTimeout(timeout);
       }
       if (state.bookingId !== bookingId) return;
+      if (res.status === 401) { expireSession(); return; }
       if (res.status === 202) {
         $('label-status-text').textContent = 'Shipment confirmed. Label not ready; use Retry label later.';
         return;
@@ -1213,7 +1156,7 @@
     try {
       localStorage.setItem(draftStorage, JSON.stringify({
         savedAt: Date.now(),
-        mock,
+        userId: cachedSession()?.userId || sessionStorage.getItem(ownerStorage),
         unitSystem: state.unitSystem,
         fields,
         operation: rateOperation
@@ -1226,7 +1169,9 @@
   function restoreDraft() {
     try {
       const draft = JSON.parse(localStorage.getItem(draftStorage) || 'null');
-      if (!draft || Date.now() - draft.savedAt > 86400000) {
+      // Discard legacy sample data instead of replaying it against the real backend.
+      if (!draft || draft.mock === true || draft.userId !== cachedSession()?.userId
+          || Date.now() - draft.savedAt > 86400000) {
         localStorage.removeItem(draftStorage);
         return;
       }
@@ -1236,7 +1181,7 @@
         if (field.type === 'checkbox') field.checked = !!value;
         else field.value = value;
       }
-      if (draft.mock === mock) rateOperation = draft.operation;
+      rateOperation = draft.operation;
       setUnitSystem(draft.unitSystem);
     } catch {
       localStorage.removeItem(draftStorage);
@@ -1450,7 +1395,7 @@
       return;
     }
 
-    const submissionKey = crypto.randomUUID ? crypto.randomUUID() : `demo-${Date.now()}-${Math.random()}`;
+    const submissionKey = crypto.randomUUID ? crypto.randomUUID() : `shipment-${Date.now()}-${Math.random()}`;
     state.key = submissionKey;
     saveActive();
     state.creating = true;
@@ -1605,13 +1550,12 @@
       });
   }
 
-  // Restore active submission on page reload and eagerly initialize the 2-hour Guest Token
-  if (!mock) {
-    ensureGuestSession(false).catch(() => {});
-  }
+  // Restore only real operations owned by the signed-in account.
+  renderAccount();
   try {
     const previous = JSON.parse(sessionStorage.getItem(activeStorage) || 'null');
-    if (previous?.key && previous?.quoteId) {
+    if (cachedSession() && previous?.userId === cachedSession().userId
+        && previous.mock !== true && previous?.key && previous?.quoteId) {
       state.labelAttempted = !!previous.labelAttempted;
       state.key = previous.key;
       state.bookingId = previous.bookingId || null;
@@ -1621,7 +1565,6 @@
         serviceName: previous.serviceName
       };
       state.savedService = `${previous.carrierName || ''} · ${previous.serviceName || ''}`;
-      if (mock !== previous.mock) mode(previous.mock);
       if (previous.status === 'RETRYABLE') {
         showRetryable({ bookingId: state.bookingId });
         refreshRestoredStatus();

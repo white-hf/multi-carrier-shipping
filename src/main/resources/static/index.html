@@ -7,11 +7,6 @@
   <title>Shipping Demo | Shipping Workspace</title>
   <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
   <link rel="stylesheet" href="/css/app.css" id="app-css">
-  <script>
-    if (location.protocol === 'file:') {
-      document.getElementById('app-css').href = 'css/app.css';
-    }
-  </script>
 </head>
 <body>
   <div class="app-shell">
@@ -24,7 +19,7 @@
       <a class="nav-item active" href="#"><span class="nav-icon">▣</span> New shipment</a>
       <div class="sidebar-bottom">
         <span class="status-dot"></span>
-        <span id="mode-indicator">Demo preview</span>
+        <span id="mode-indicator">Backend API</span>
       </div>
     </aside>
 
@@ -32,11 +27,7 @@
       <header class="topbar">
         <div class="breadcrumb">Workspace <span>/</span> <b>New shipment</b></div>
         <div class="top-actions">
-          <label class="mode-switch">
-            <input type="checkbox" id="mock-toggle" checked>
-            <span>Demo mode</span>
-          </label>
-          <span class="user-avatar" id="user-avatar" title="Guest session">GS</span>
+          <button class="account-button" id="user-avatar" type="button">Sign in</button>
         </div>
       </header>
 
@@ -47,7 +38,7 @@
             <h1 id="page-title">Create a shipment</h1>
             <p id="page-subtitle">Compare live carrier rates and generate a verified shipping label.</p>
           </div>
-          <span class="environment-tag" id="environment-tag">● SANDBOX PREVIEW</span>
+          <span class="environment-tag" id="environment-tag">● BACKEND API</span>
         </div>
 
         <div class="stepper" aria-label="Progress">
@@ -529,13 +520,21 @@
     </div>
   </div>
 
+  <dialog id="login-modal" class="login-modal" aria-labelledby="login-title">
+    <form id="login-form" class="login-card">
+      <div class="eyebrow">SHIPPING WORKSPACE</div>
+      <h2 id="login-title">Sign in</h2>
+      <p>Sign in to request carrier rates and create shipments.</p>
+      <label class="field">Username
+        <input id="login-username" name="username" autocomplete="username" required maxlength="64">
+      </label>
+      <label class="field">Password
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
+      </label>
+      <p id="login-error" class="login-error" role="alert" hidden></p>
+      <button id="login-submit" class="button primary" type="submit">Sign in</button>
+    </form>
+  </dialog>
   <script src="/js/app.js" id="app-js" defer></script>
-  <script>
-    if (location.protocol === 'file:') {
-      const s = document.createElement('script');
-      s.src = 'js/app.js';
-      document.body.appendChild(s);
-    }
-  </script>
 </body>
 </html>

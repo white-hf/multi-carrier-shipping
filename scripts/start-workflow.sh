@@ -17,12 +17,15 @@ if [[ -f "$configuration_file" ]]; then
   source "$configuration_file"
   set +a
 fi
-for setting in SHIPPING_PROVIDER_BASE_URL SHIPPING_PROVIDER_USERNAME SHIPPING_PROVIDER_PASSWORD; do
+for setting in SHIPPING_PROVIDER_BASE_URL SHIPPING_PROVIDER_USERNAME SHIPPING_PROVIDER_PASSWORD SHIPPING_AUTH_TOKEN_SECRET SHIPPING_AUTH_USERNAME; do
   if [[ -z "${!setting:-}" ]]; then
     echo "Missing $setting. Configure .env using .env.example, or export it in your shell." >&2
     exit 1
   fi
 done
+if [[ -z "${SHIPPING_AUTH_PASSWORD:-}" && -z "${SHIPPING_AUTH_PASSWORD_HASH:-}" ]]; then
+  echo "Configure SHIPPING_AUTH_PASSWORD or SHIPPING_AUTH_PASSWORD_HASH in .env." >&2; exit 1
+fi
 # macOS may have an unregistered Homebrew JDK while /usr/bin/java is only a stub.
 if [[ -z "${JAVA_HOME:-}" ]]; then
   if [[ -x /usr/libexec/java_home ]]; then

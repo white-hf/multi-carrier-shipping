@@ -1,26 +1,31 @@
 package com.enterprise.shipping.auth.infrastructure;
 
 import com.enterprise.shipping.auth.api.ShippingAuthController;
-import com.enterprise.shipping.auth.application.GuestSessionTokenService;
+import com.enterprise.shipping.auth.application.AccountAuthenticator;
+import com.enterprise.shipping.auth.application.AuthTrafficGuard;
+import com.enterprise.shipping.auth.application.SessionTokenService;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import java.io.IOException;
-import java.net.URI;
-import java.util.Optional;
-import java.util.Set;
+
 import org.slf4j.MDC;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.UrlPathHelper;
+
+import java.io.IOException;
+import java.net.URI;
+import java.util.Optional;
+import java.util.Set;
 
 /**
- * Enforces same-origin writes and fingerprint-bound token authentication.
- * The shared tracing filter runs first so rejected requests retain diagnostic context.
+ * Enforces same-origin writes and fingerprint-bound token authentication. The shared tracing filter
+ * runs first so rejected requests retain diagnostic context.
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 20)
@@ -28,19 +33,20 @@ public class ShippingAuthenticationFilter extends OncePerRequestFilter {
 
     public static final String AUTHENTICATED_USER_ATTR = "shipping.authenticatedUserId";
 
-    private final GuestSessionTokenService tokens;
-    private final boolean requireToken;
+    private final SessionTokenService tokens;
+    private final AccountAuthenticator accounts;
+    private final AuthTrafficGuard traffic;
 
     public ShippingAuthenticationFilter(
-            GuestSessionTokenService tokens,
-            @Value("${shipping.auth.require-token:true}") boolean requireToken) {
+            SessionTokenService tokens, AccountAuthenticator accounts, AuthTrafficGuard traffic) {
         this.tokens = tokens;
-        this.requireToken = requireToken;
+        this.accounts = accounts;
+        this.traffic = traffic;
     }
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith("/api/");
+        return !path(request).startsWith("/api/");
     }
 
     @Override
@@ -58,8 +64,9 @@ public class ShippingAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        // 2. Allow the guest token issuance endpoint to proceed after same-origin check
-        if ("/api/auth/guest".equals(request.getRequestURI())) {
+        // 2. Only explicit login/logout POSTs bypass token validation
+        if ("POST".equals(request.getMethod())
+                && Set.of("/api/auth/login", "/api/auth/logout").contains(path(request))) {
             chain.doFilter(request, response);
             return;
         }
@@ -77,21 +84,40 @@ public class ShippingAuthenticationFilter extends OncePerRequestFilter {
             }
         }
 
-        boolean credentialsPresented =
-                request.getHeader("Authorization") != null
-                        || request.getHeader("X-Client-Fingerprint") != null
-                        || token != null;
+        Optional<String> verifiedUser = tokens.verifyAndResolveUser(token, fingerprint);
+        if (verifiedUser.isEmpty() || !accounts.containsUser(verifiedUser.get())) {
+            writeJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, "UNAUTHORIZED", id);
+            return;
+        }
+        request.setAttribute(AUTHENTICATED_USER_ATTR, verifiedUser.get());
 
-        if (credentialsPresented || requireToken) {
-            Optional<String> verifiedUser = tokens.verifyAndResolveUser(token, fingerprint);
-            if (verifiedUser.isEmpty()) {
-                writeJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, "UNAUTHORIZED", id);
-                return;
+        // Count admitted requests before any database/provider work, including label downloads.
+        String path = path(request);
+        String operation = null;
+        if ("POST".equals(request.getMethod()) && "/api/quotes".equals(path)) {
+            operation = "quotes";
+        } else if ("POST".equals(request.getMethod()) && "/api/bookings".equals(path)) {
+            operation = "bookings";
+        } else if (("GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod()))
+                && path.matches("/api/bookings/[^/]+/label")) {
+            operation = "labels";
+        }
+        try {
+            if (operation != null) {
+                traffic.business(operation, verifiedUser.get(), request.getRemoteAddr());
             }
-            request.setAttribute(AUTHENTICATED_USER_ATTR, verifiedUser.get());
+        } catch (AuthTrafficGuard.Limited limited) {
+            response.setHeader("Retry-After", Long.toString(limited.retryAfter()));
+            writeJsonError(response, 429, limited.code(), id);
+            return;
         }
 
         chain.doFilter(request, response);
+    }
+
+    private static String path(HttpServletRequest request) {
+        // Match MVC's decoded path so percent encoding or matrix parameters cannot bypass quotas.
+        return UrlPathHelper.defaultInstance.getPathWithinApplication(request);
     }
 
     private String extractBearerToken(HttpServletRequest request) {

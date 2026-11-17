@@ -1,6 +1,7 @@
 package com.enterprise.shipping.auth.application;
 
 import com.enterprise.shipping.shared.domain.ShippingException;
+
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
@@ -11,16 +12,17 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.Optional;
 import java.util.regex.Pattern;
+
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 /**
  * Issues and verifies stateless HMAC-SHA256 session tokens bound to a client fingerprint.
  *
- * Unifies guest and future authenticated user principals under one token format so
- * downstream controllers and services remain agnostic to how the session was established.
+ * <p>Resolves authenticated account principals under one token format so downstream controllers and
+ * services remain agnostic to how the session was established.
  */
-public final class GuestSessionTokenService {
+public final class SessionTokenService {
 
     private static final String HMAC_ALGORITHM = "HmacSHA256";
     private static final Pattern SAFE_IDENTIFIER = Pattern.compile("[A-Za-z0-9._:-]{8,128}");
@@ -29,7 +31,7 @@ public final class GuestSessionTokenService {
     private final Duration tokenTtl;
     private final Clock clock;
 
-    public GuestSessionTokenService(String secretKey, Duration tokenTtl, Clock clock) {
+    public SessionTokenService(String secretKey, Duration tokenTtl, Clock clock) {
         if (secretKey == null || secretKey.isBlank()) {
             throw new IllegalArgumentException("A non-blank token secret is required");
         }
@@ -41,26 +43,7 @@ public final class GuestSessionTokenService {
         this.clock = clock;
     }
 
-    /**
-     * Derives a privacy-safe guest user ID from the client seed and signs a fingerprint-bound token.
-     */
-    public IssuedToken issueGuestToken(String clientId, String fingerprint) {
-        if (clientId == null || !SAFE_IDENTIFIER.matcher(clientId.strip()).matches()) {
-            throw ShippingException.invalidInput("INVALID_CLIENT_ID");
-        }
-        if (fingerprint == null || !SAFE_IDENTIFIER.matcher(fingerprint.strip()).matches()) {
-            throw ShippingException.invalidInput("INVALID_CLIENT_FINGERPRINT");
-        }
-
-        // Derive a deterministic, non-reversible guest identity so raw client tokens are never
-        // exposed
-        String derivedUserId = deriveGuestUserId(clientId.strip());
-        return issueTokenForUser(derivedUserId, fingerprint.strip());
-    }
-
-    /**
-     * Issues a fingerprint-bound token for a resolved user identity.
-     */
+    /** Issues a fingerprint-bound token for a resolved user identity. */
     public IssuedToken issueTokenForUser(String userId, String fingerprint) {
         if (userId == null || userId.isBlank() || userId.contains("|")) {
             throw new IllegalArgumentException("Invalid user ID");
@@ -81,7 +64,7 @@ public final class GuestSessionTokenService {
         String signature =
                 Base64.getUrlEncoder()
                         .withoutPadding()
-                        .encodeToString(hmac("token:" + encodedPayload));
+                        .encodeToString(hmac("account-token-v1:" + encodedPayload));
 
         return new IssuedToken(
                 encodedPayload + "." + signature,
@@ -90,9 +73,7 @@ public final class GuestSessionTokenService {
                 tokenTtl.toSeconds());
     }
 
-    /**
-     * Verifies the HMAC signature, 2-hour expiration window, and client fingerprint binding.
-     */
+    /** Verifies the HMAC signature, 2-hour expiration window, and client fingerprint binding. */
     public Optional<String> verifyAndResolveUser(String token, String presentedFingerprint) {
         if (token == null
                 || token.isBlank()
@@ -113,7 +94,7 @@ public final class GuestSessionTokenService {
         String presentedSignature = token.substring(dotIndex + 1);
 
         // 1. Constant-time verification of the HMAC-SHA256 signature
-        byte[] expectedSigBytes = hmac("token:" + encodedPayload);
+        byte[] expectedSigBytes = hmac("account-token-v1:" + encodedPayload);
         byte[] presentedSigBytes;
         try {
             presentedSigBytes = Base64.getUrlDecoder().decode(presentedSignature);
@@ -160,11 +141,6 @@ public final class GuestSessionTokenService {
         }
 
         return Optional.of(userId);
-    }
-
-    public String deriveGuestUserId(String clientId) {
-        String hex = HexFormat.of().formatHex(hmac("guest-id:" + clientId));
-        return "guest-" + hex.substring(0, 24);
     }
 
     private String fingerprintHash(String fingerprint) {
