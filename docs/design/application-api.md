@@ -221,6 +221,8 @@ Save a versioned active operation before the POST: userId, providerId, providerQ
 
 Legacy entries with bookingId recover via status GET. Never use an old internal quoteId as providerQuoteId. An older record with neither bookingId nor valid provider identity must explicitly explain that automatic recovery is unavailable and advise verification/support; it must not create automatically. Expiry clears only unsubmitted selection, never unresolved operations. Polling caps, manual-review handling and label behavior remain intact.
 
+The browser records whether an operation has already attempted sending, before dispatch. Only a first initial-create response with a recognized pre-claim validation/date/provider rejection (400) or QUOTE_EXPIRED (409), and no booking locator, may clear that unsubmitted operation and return to fresh rates. A prior lost response, an older record without this marker, a retry of initial submission after no-row lookup, or an existing RETRYABLE booking must retain recovery identity even if a later request is rejected at admission. Starting another shipment clears the persisted active pointer, not the retained unresolved entries.
+
 ## Label: one automatic attempt, then manual retry
 
 `GET /api/bookings/{bookingId}/label` retrieves only the existing confirmed shipment's label:

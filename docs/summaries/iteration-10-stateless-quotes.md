@@ -40,3 +40,12 @@ During implementation, verification exposed a test Label constructor argument mi
 ## Explicit limitations
 
 No historical database import, provider-quote ownership proof, quote signing, cross-quote duplicate prevention, general task framework, production load rerun or real-provider acceptance is claimed. Local storage can be cleared and is intentionally removed on logout; it is not a durable server-side history feature.
+
+## PR review follow-up
+
+- Starting a new shipment now persists a null active pointer, while retaining unresolved operations in the query list. Reload remains on the new form after leaving confirmed, rejected, retryable or manual-review work. The browser regression failed on the original rejected-booking restoration before this fix.
+- A first initial-create response explicitly rejected before claim (validated 400 input/date/provider codes or 409 QUOTE_EXPIRED, without a booking locator) returns to the form and discards only that unsubmitted selection. A persisted `sendAttempted` marker distinguishes this from later attempts after a lost response; absent markers on older records are conservative. A later admission error or expired RETRYABLE quote does not erase the original recovery identity. Selecting an already-retained identity opens its existing operation instead of replacing it with a new one. Real backend date/expiry/validation cases reproduce the former UNKNOWN-state bug and now assert zero provider creates.
+- Packaged-test passwords and signing secrets are generated at runtime rather than hardcoded. GitGuardian's original finding concerned synthetic loopback-test credentials, not a real provider account; no scanner suppression or history rewrite is required by this change.
+- Browser acceptance now checks actual stylesheet response status/media type and workspace/sidebar computed styles. A separate injected CSS 404 must be rejected by the gate. Packaged acceptance fetches every linked stylesheet from the running JAR and checks nonempty CSS and application content. Previously passing interaction-only checks did not establish stylesheet availability. A transient/deployment-specific reported 404 is not considered reproduced merely because current origin probes return 200.
+
+Failure evidence preceding the review fixes is retained under `target/verification/20261117T041532Z-96804271` (reset pointer) and `20261117T042447Z-6e1d1678` (first admission failure). Use the final current-source report from the handoff for passing evidence; remote review/check results remain attached to their specific GitHub commit.

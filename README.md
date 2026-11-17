@@ -103,7 +103,7 @@ cp .env.example .env
 
 **I10 upgrade:** an old database may fail with `Applied migration checksum changed: V001__shipping_schema.sql`. Stop the app and run `./scripts/start-workflow.sh --reset-database` to **delete existing bookings and rebuild** the configured database plus WAL/SHM files. For deletion without startup, use `--reset-database-only`. Normal startup never silently resets data. To preserve the old file instead, run `SHIPPING_DATABASE_PATH=./data/stateless.db ./scripts/start-workflow.sh`; this explicit path overrides `.env`. See [upgrade/startup guidance](docs/runbooks/manual-acceptance.md#i10-upgrade-an-old-database-must-be-explicitly-rebuilt).
 
-Packaged-launcher acceptance (isolated database and loopback provider, no real carrier writes): `python3 tests/system/packaged-startup.py`. It builds/starts the actual JAR, verifies database override/reset, then exercises login, quotes, booking replay, status and PDF label. Evidence is written to `target/packaged-startup/`.
+Packaged-launcher acceptance (isolated database and loopback provider, no real carrier writes): `python3 tests/system/packaged-startup.py`. It builds/starts the actual JAR, verifies database override/reset and linked CSS resources, then exercises login, quotes, booking replay, status and PDF label. Browser acceptance additionally asserts computed application styles and rejects an injected stylesheet 404. Evidence is written to `target/packaged-startup/`.
 
 The launcher reads the ignored local `.env` file or exported environment variables. Configure `SHIPPING_PROVIDER_BASE_URL`, `SHIPPING_PROVIDER_USERNAME` and `SHIPPING_PROVIDER_PASSWORD`; keep credentials out of Git. Real provider shipment creation may be chargeable.
 

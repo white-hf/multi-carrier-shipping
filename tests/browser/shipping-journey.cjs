@@ -42,10 +42,41 @@ async function outcome(page, title) {
   await page.waitForFunction(value => document.getElementById('outcome-title').textContent === value, title);
 }
 
+function observeStyles(page) {
+  const responses = [];
+  page.on('response', response => {
+    if (response.request().resourceType() === 'stylesheet') {
+      responses.push({ url: response.url(), status: response.status(),
+        type: response.headers()['content-type'] || '' });
+    }
+  });
+  return responses;
+}
+
+async function assertLoadedStyles(page, responses) {
+  const links = await page.locator('link[rel="stylesheet"]').evaluateAll(nodes => nodes.map(node => node.href));
+  assert.ok(links.some(link => new URL(link).pathname === '/css/app.css'), 'Application stylesheet link is missing');
+  for (const link of links) {
+    const response = responses.findLast(item => item.url === link);
+    assert.ok(response, `Stylesheet did not load: ${link}`);
+    assert.strictEqual(response.status, 200, `Stylesheet ${link} returned ${response.status}`);
+    assert.ok(response.type.includes('text/css'), `Stylesheet has incorrect content type: ${link}`);
+  }
+  const styles = await page.evaluate(() => ({
+    shell: getComputedStyle(document.querySelector('.app-shell')).display,
+    sidebar: getComputedStyle(document.querySelector('.sidebar')).flexDirection,
+    palette: getComputedStyle(document.documentElement).getPropertyValue('--navy').trim()
+  }));
+  assert.strictEqual(styles.shell, 'flex', 'Application CSS must lay out the workspace');
+  assert.strictEqual(styles.sidebar, 'column', 'Application CSS must lay out the sidebar');
+  assert.ok(styles.palette, 'Application CSS palette must be applied');
+}
+
 (async () => {
   const browser = await chromium.launch();
   const context = await browser.newContext();
   const page = await context.newPage();
+  const stylesheetResponses = observeStyles(page);
   page.on('dialog', dialog => dialog.accept());
   if (evidenceDir) {
     fs.mkdirSync(evidenceDir, { recursive: true });
@@ -56,6 +87,17 @@ async function outcome(page, title) {
     await ctl('normal');
     await ctl('reset-counts');
     await page.goto(appUrl, { waitUntil: 'networkidle' });
+    await assertLoadedStyles(page, stylesheetResponses);
+    // Prove this gate rejects the reported failure, rather than passing an unstyled page.
+    const missingCssPage = await context.newPage();
+    try {
+      const missingResponses = observeStyles(missingCssPage);
+      await missingCssPage.route('**/css/app.css*', route => route.fulfill({ status: 404, body: '' }));
+      await missingCssPage.goto(appUrl, { waitUntil: 'networkidle' });
+      await assert.rejects(() => assertLoadedStyles(missingCssPage, missingResponses), /Stylesheet.*returned 404/);
+    } finally {
+      await missingCssPage.close();
+    }
     await page.waitForSelector('#login-modal[open]');
     await page.fill('#login-username', 'alpha');
     await page.fill('#login-password', 'incorrect');
@@ -156,6 +198,10 @@ async function outcome(page, title) {
     await outcome(page, 'Shipment rejected');
     assert.strictEqual(await page.isVisible('#retry-send-btn'), false);
     await page.click('#unknown-new');
+    await page.reload({ waitUntil: 'networkidle' });
+    assert.strictEqual(await page.isVisible('#step-1'), true,
+      'Leaving a rejected booking must persist the new-shipment view across reload');
+    assert.strictEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('shipping.activeBooking.v2')).active), null);
 
     // Unknown outcomes survive refresh and are never resent; manual review retains a query entry.
     await ctl('normal');
@@ -186,6 +232,11 @@ async function outcome(page, title) {
     await checkpoint(page, 'first-shipment');
     await page.click('#unknown-new');
     assert.ok(await page.locator('#saved-operations button').count());
+    await page.reload({ waitUntil: 'networkidle' });
+    assert.strictEqual(await page.isVisible('#step-1'), true,
+      'Starting another shipment must not reactivate an unresolved booking on reload');
+    assert.ok(await page.locator('#saved-operations button').count(), 'The unresolved recovery entry must remain');
+    assert.strictEqual((await ctl('stats')).createCalls, 1);
     await page.locator('#saved-operations button').first().click();
     await outcome(page, 'Manual review required');
     await page.click('#unknown-new');
@@ -195,6 +246,34 @@ async function outcome(page, title) {
       await context.tracing.stop({ path: traces[0] });
       await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
       traces.push(path.join(evidenceDir, 'browser-trace-2.zip'));
+    }
+
+    // Real backend admission errors happen before claim/dispatch, not in the provider.
+    await ctl('reset-counts');
+    for (const admission of [
+      { code: 'INVALID_SHIPPING_DATE', status: 400, change: body => { body.shippingInput.shippingDate = '2020-01-01'; } },
+      { code: 'QUOTE_EXPIRED', status: 409, change: body => { body.displaySnapshot.expiresAt = '2020-01-01T00:00:00Z'; } },
+      { code: 'INVALID_REQUEST', status: 400, change: body => { body.shippingInput.parcel.weight = 0; } }
+    ]) {
+      await ctl('normal');
+      await rates(page);
+      await review(page);
+      await page.route('**/api/bookings', async route => {
+        const body = route.request().postDataJSON();
+        admission.change(body);
+        const response = await route.fetch({ postData: JSON.stringify(body) });
+        assert.strictEqual(response.status(), admission.status);
+        assert.strictEqual((await response.json()).code, admission.code);
+        await route.fulfill({ response });
+      });
+      await page.click('#create-btn');
+      await page.waitForSelector('#step-1:not([hidden])');
+      assert.ok((await page.textContent('#notice')).includes('not submitted'), admission.code);
+      assert.ok(!(await active(page)), 'A definitively unsubmitted first attempt must not stay UNKNOWN');
+      assert.strictEqual((await ctl('stats')).createCalls, 0);
+      await page.unroute('**/api/bookings');
+      await page.reload({ waitUntil: 'networkidle' });
+      assert.strictEqual(await page.isVisible('#step-1'), true);
     }
 
     // Lost create response: GET lookup recovers the committed operation without sending again.
@@ -220,6 +299,9 @@ async function outcome(page, title) {
     await page.waitForSelector('#success-view:not([hidden])');
     assert.strictEqual((await ctl('stats')).createCalls, 1);
     await page.click('#new-shipment-btn');
+    await page.reload({ waitUntil: 'networkidle' });
+    assert.strictEqual(await page.isVisible('#step-1'), true,
+      'New shipment after confirmation must remain a new shipment after reload');
 
     // No-row recovery is read-only; an explicit initial retry keeps the same provider identity.
     await ctl('normal');
@@ -237,6 +319,17 @@ async function outcome(page, title) {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForSelector('#retry-initial-btn:not([hidden])');
     assert.strictEqual((await ctl('stats')).createCalls, 0);
+    // A later admission error says nothing about the earlier request whose response was lost.
+    await page.route('**/api/bookings', route => route.fulfill({ status: 400,
+      json: { code: 'INVALID_SHIPPING_DATE', message: 'INVALID SHIPPING DATE', fieldErrors: [] } }));
+    await page.click('#retry-initial-btn');
+    await outcome(page, 'Pending confirmation');
+    assert.strictEqual((await active(page)).providerQuoteId, unsaved.providerQuoteId);
+    assert.strictEqual((await active(page)).sendAttempted, true);
+    assert.strictEqual((await ctl('stats')).createCalls, 0);
+    await page.unroute('**/api/bookings');
+    await page.click('#check-status-btn');
+    await page.waitForSelector('#retry-initial-btn:not([hidden])');
     await page.click('#retry-initial-btn');
     await page.waitForSelector('#success-view:not([hidden])');
     assert.strictEqual((await active(page)).providerQuoteId, unsaved.providerQuoteId);
@@ -250,6 +343,7 @@ async function outcome(page, title) {
     await review(page);
     let creates = 0;
     let retries = 0;
+    let retryExpired = false;
     let holdStatus = false;
     let statusHeld;
     let releaseStatus;
@@ -270,6 +364,10 @@ async function outcome(page, title) {
     });
     await page.route('**/api/bookings/retry-ui/retry', async route => {
       retries++;
+      if (retryExpired) {
+        await route.fulfill({ status: 409, json: { code: 'QUOTE_EXPIRED', operation: { id: 'retry-ui' } } });
+        return;
+      }
       await route.fulfill({ json: { bookingId: 'retry-ui', status: 'CONFIRMED', shipmentId: 'ui-only' } });
     });
     await page.click('#create-btn');
@@ -278,18 +376,30 @@ async function outcome(page, title) {
     await outcome(page, 'Shipment not submitted');
     assert.strictEqual(creates, 1);
     assert.strictEqual(retries, 0);
+    retryExpired = true;
+    await page.click('#retry-send-btn');
+    await page.waitForFunction(() => document.getElementById('notice').textContent.includes('Quote is no longer available'));
+    assert.strictEqual(await page.textContent('#outcome-title'), 'Shipment not submitted');
+    assert.strictEqual((await active(page)).bookingId, 'retry-ui');
+    assert.strictEqual((await active(page)).status, 'RETRYABLE');
+    retryExpired = false;
+    await page.click('#unknown-new');
+    await page.reload({ waitUntil: 'networkidle' });
+    assert.strictEqual(await page.isVisible('#step-1'), true, 'Leaving RETRYABLE must clear only its active pointer');
+    await page.locator('#saved-operations button').filter({ hasText: 'retry-ui' }).click();
+    await outcome(page, 'Shipment not submitted');
     holdStatus = true;
     await page.reload({ waitUntil: 'domcontentloaded' });
     await statusStarted;
     await outcome(page, 'Shipment not submitted');
-    assert.strictEqual(retries, 0);
+    assert.strictEqual(retries, 1);
     await page.click('#retry-send-btn');
     await page.waitForSelector('#success-view:not([hidden])');
     releaseStatus();
     await page.waitForTimeout(100);
     assert.strictEqual(await page.isVisible('#success-view'), true, 'A late pre-retry GET cannot replace confirmation');
     assert.strictEqual(creates, 1);
-    assert.strictEqual(retries, 1);
+    assert.strictEqual(retries, 2);
     await page.unroute('**/api/bookings');
     await page.unroute('**/api/bookings/retry-ui');
     await page.unroute('**/api/bookings/retry-ui/retry');

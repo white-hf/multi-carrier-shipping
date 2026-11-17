@@ -777,9 +777,14 @@
     const identity = operationIdentity(state.operation);
     savedOperations = savedOperations.filter(op => operationIdentity(op) !== identity);
     savedOperations.push(state.operation);
-    localStorage.setItem(activeStorage, JSON.stringify({ version: 2,
-      userId: state.operation.userId, active: identity, operations: savedOperations }));
+    persistOperations(identity);
     renderSavedOperations();
+  }
+
+  function persistOperations(active) {
+    localStorage.setItem(activeStorage, JSON.stringify({ version: 2,
+      userId: cachedSession()?.userId || sessionStorage.getItem(ownerStorage),
+      active, operations: savedOperations }));
   }
 
   function operationIdentity(op) {
@@ -868,10 +873,38 @@
     return true;
   }
 
+  function handleInitialAdmissionFailure(error, firstInitialAttempt) {
+    if (!firstInitialAttempt || !(error instanceof HttpError)
+        || state.bookingId || error.payload?.operation) return false;
+    const invalidInput = error.status === 400
+      && ['INVALID_REQUEST', 'INVALID_SHIPPING_DATE', 'INVALID_PROVIDER_QUOTE'].includes(error.code);
+    const expiredQuote = error.status === 409 && error.code === 'QUOTE_EXPIRED';
+    if (!invalidInput && !expiredQuote) return false;
+
+    // Only this first, definitively unclaimed attempt can be discarded. A later 400/409
+    // cannot prove that an earlier lost request did not commit after a no-row lookup.
+    const identity = operationIdentity(state.operation);
+    savedOperations = savedOperations.filter(op => operationIdentity(op) !== identity);
+    clearActive();
+    reset();
+    renderSavedOperations();
+    showFieldErrors(error.fieldErrors.map(field => ({ ...field,
+      field: field.field?.replace(/^shippingInput\./, '') })));
+    notice('Shipment was not submitted. ' + errorText(error) + ' Review the details and request fresh rates.');
+    return true;
+  }
+
   function handleUnavailableQuote(error, returnToStep1 = false) {
     if (!(error instanceof HttpError)) return false;
-    if (!['QUOTE_EXPIRED', 'QUOTE_NOT_BOOKABLE', 'REQUEST_DATE_EXPIRED'].includes(error.code)) {
+    if (!['QUOTE_EXPIRED', 'QUOTE_NOT_BOOKABLE', 'REQUEST_DATE_EXPIRED', 'INVALID_SHIPPING_DATE'].includes(error.code)) {
       return false;
+    }
+    if (state.booking?.status === 'RETRYABLE') {
+      showRetryable(state.booking);
+      $('retry-send-btn').hidden = true;
+      $('outcome-explanation').textContent = 'This booking was not sent. Its quote or shipping date is no longer usable. The original booking is retained; request fresh rates for a different shipment.';
+      notice(errorText(error));
+      return true;
     }
     // Expiry is never evidence that an active booking was not created.
     if (state.operation) {
@@ -1389,8 +1422,15 @@
         serviceId: q.serviceId, serviceName: q.serviceName,
         total: q.total, expiresAt: q.expiresAt, expirySource: q.expirySource
       } };
-    state.operation = { version: 2, userId: cachedSession()?.userId,
-      providerId: q.providerId, providerQuoteId: q.providerQuoteId, payload, status: 'UNKNOWN' };
+    const operation = { version: 2, userId: cachedSession()?.userId,
+      providerId: q.providerId, providerQuoteId: q.providerQuoteId, payload,
+      status: 'UNKNOWN', sendAttempted: false };
+    const existing = savedOperations.find(op => operationIdentity(op) === operationIdentity(operation));
+    if (existing) {
+      restoreOperation(existing);
+      return;
+    }
+    state.operation = operation;
     try { saveActive(); } catch {
       state.operation = null;
       notice('Cannot save recovery information. Enable browser storage before submitting.');
@@ -1402,6 +1442,13 @@
   async function sendActive(retry) {
     if (!state.operation || state.creating) return;
     const operation = state.operation;
+    // Missing markers on older records are conservative: they may already have been sent.
+    const firstInitialAttempt = !retry && operation.sendAttempted === false && !state.bookingId;
+    operation.sendAttempted = true;
+    try { saveActive(); } catch {
+      notice('Cannot save recovery information. No request was sent. Enable browser storage before submitting.');
+      return;
+    }
     const sequence = ++bookingSequence;
     state.replaying = false;
     busy('check-status-btn', false);
@@ -1418,6 +1465,7 @@
       if (state.operation !== operation || sequence !== bookingSequence) return;
       if ( ['CONFIRMED', 'REJECTED'].includes((state.booking?.status || '').toUpperCase())) return;
       if (handleNotDispatched(err)) return;
+      if (handleInitialAdmissionFailure(err, firstInitialAttempt)) return;
       if (handleUnavailableQuote(err, false)) return;
       if (err instanceof HttpError && err.status === 422) {
         showRejected(err.payload);
@@ -1517,6 +1565,8 @@
   function reset() {
     localStorage.removeItem(draftStorage);
     if (state.operation) saveActive();
+    // Leave recovery entries available without restoring this operation on the next reload.
+    persistOperations(null);
     state.revision++;
     rateBusy = false;
     stopLoadingBanner();
