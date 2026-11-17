@@ -6,9 +6,11 @@
   const $ = id => document.getElementById(id);
   const $all = sel => [...document.querySelectorAll(sel)];
   const draftStorage = 'shipping.rateDraft.v1';
-  let rateOperation = null;
   let rateBusy = false;
-  const activeStorage = 'shipping.activeBooking.v1';
+  const activeStorage = 'shipping.activeBooking.v2';
+  const legacyActiveStorage = 'shipping.activeBooking.v1';
+  let savedOperations = [];
+  let bookingSequence = 0;
   const clientIdStorage = 'shipping.clientId.v1';
   const sessionKey = 'shipping.accountSession.v1';
   const ownerStorage = 'shipping.workspaceOwner.v1';
@@ -22,7 +24,7 @@
     quotes: [],
     selected: null,
     revision: 0,
-    key: null,
+    operation: null,
     bookingId: null,
     booking: null,
     creating: false,
@@ -214,7 +216,7 @@
       stopLoadingBanner();
       busy('get-rates-btn', false);
     }
-    if (state.quotes.length && !state.key) {
+    if (state.quotes.length) {
       state.quotes = [];
       state.selected = null;
     }
@@ -222,7 +224,7 @@
 
   $all('.unit-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (state.key) return;
+      if (state.operation) return;
       setUnitSystem(btn.dataset.unit);
     });
   });
@@ -318,7 +320,7 @@
     stepEl.addEventListener('click', () => {
       const targetStep = Number(stepEl.dataset.step);
       if (targetStep < state.step) {
-        if (state.key) {
+        if (state.operation) {
           showPending('Creation has already been submitted. You cannot change this booking.');
           return;
         }
@@ -491,6 +493,9 @@
     localStorage.removeItem(draftStorage);
     localStorage.removeItem(activeStorage);
     sessionStorage.removeItem(activeStorage);
+    sessionStorage.removeItem(legacyActiveStorage);
+    localStorage.removeItem(legacyActiveStorage);
+    savedOperations = [];
   }
 
   function expireSession() {
@@ -538,7 +543,7 @@
       $('login-modal').showModal();
       return;
     }
-    if ((state.key || state.creating || rateBusy) && !confirm(
+    if ((state.operation || savedOperations.length || state.creating || rateBusy) && !confirm(
         'An operation is active. Signing out clears its local recovery information. Sign out anyway?')) return;
     try {
       const res = await fetch('/api/auth/logout', { method: 'POST' });
@@ -587,16 +592,16 @@
 
   const delay = ms => new Promise(r => setTimeout(r, ms));
   const api = {
-    quotes: (data, key) => http('/api/quotes', {
-      method: 'POST', body: data, headers: { 'Idempotency-Key': key }
-    }),
-    booking: (quote, key) => http('/api/bookings', {
-      method: 'POST', body: { quoteId: quote }, headers: { 'Idempotency-Key': key }
-    }),
+    quotes: data => http('/api/quotes', { method: 'POST', body: data }),
+    booking: body => http('/api/bookings', { method: 'POST', body }),
+    retry: id => http(`/api/bookings/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
+    lookup: operation => http('/api/bookings/lookup?' + new URLSearchParams({
+      providerId: operation.providerId, providerQuoteId: operation.providerQuoteId
+    })),
     status: id => http(`/api/bookings/${encodeURIComponent(id)}`)
   };
 
-  const quoteId = q => q.quoteId;
+  const quoteId = q => JSON.stringify([q?.providerId, q?.providerQuoteId]);
   const total = q => q.total ?? q.totalCharge ?? null;
   const carrier = q => q.carrierName ?? q.carrier?.name ?? q.carrier ?? 'Carrier';
   const service = q => q.serviceName ?? q.service?.name ?? q.service ?? 'Shipping service';
@@ -640,7 +645,7 @@
       if (isFastest) tags.push('<span class="badge-fast">⚡ Fastest</span>');
       tags.push('<span>Tax &amp; fuel included</span>');
       if (q.expiresAt) {
-        tags.push(`<span>Valid until ${esc(new Date(q.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span>`);
+        tags.push(`<span>${q.expirySource === 'PROVIDER' ? 'Provider expiry' : 'Estimated expiry'} ${esc(new Date(q.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</span>`);
       }
 
       const transitText = q.transitDays == null
@@ -678,6 +683,10 @@
     document.querySelectorAll('.rate-card').forEach(el => {
       const select = () => {
         state.selected = state.quotes.find(q => quoteId(q) === el.dataset.quote);
+        if (!state.selected?.providerId || !state.selected?.providerQuoteId) {
+          state.selected = null;
+          notice('This offer has no usable provider quote identity. Request fresh rates.');
+        }
         renderQuotes();
       };
       el.onclick = select;
@@ -759,18 +768,42 @@
   }
 
   function saveActive() {
-    if (!state.key) return;
-    sessionStorage.setItem(activeStorage, JSON.stringify({
-      key: state.key,
-      quoteId: quoteId(state.selected),
-      bookingId: state.bookingId,
-      carrierName: carrier(state.selected),
-      serviceName: service(state.selected),
-      labelAttempted: state.labelAttempted,
-      status: state.booking?.status,
-      errorCode: state.booking?.errorCode,
-      userId: cachedSession()?.userId || sessionStorage.getItem(ownerStorage)
-    }));
+    if (!state.operation) return;
+    Object.assign(state.operation, {
+      bookingId: state.bookingId, labelAttempted: state.labelAttempted,
+      status: state.booking?.status || state.operation.status,
+      errorCode: state.booking?.errorCode
+    });
+    const identity = operationIdentity(state.operation);
+    savedOperations = savedOperations.filter(op => operationIdentity(op) !== identity);
+    savedOperations.push(state.operation);
+    localStorage.setItem(activeStorage, JSON.stringify({ version: 2,
+      userId: state.operation.userId, active: identity, operations: savedOperations }));
+    renderSavedOperations();
+  }
+
+  function operationIdentity(op) {
+    return JSON.stringify([op.userId, op.providerId || null, op.providerQuoteId || null,
+      op.providerQuoteId ? null : op.bookingId || 'legacy-unrecoverable']);
+  }
+
+  function renderSavedOperations() {
+    let list = $('saved-operations');
+    if (!list) {
+      list = document.createElement('section');
+      list.id = 'saved-operations';
+      $('notice').insertAdjacentElement('afterend', list);
+    }
+    list.replaceChildren();
+    for (const op of savedOperations) {
+      if (['CONFIRMED', 'REJECTED'].includes(op.status)) continue;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'button secondary';
+      button.textContent = `Inspect saved shipment: ${op.bookingId || op.providerQuoteId || 'older operation'} (${op.status || 'UNKNOWN'})`;
+      button.addEventListener('click', () => restoreOperation(op));
+      list.append(button);
+    }
   }
 
   function clearActive() {
@@ -783,12 +816,15 @@
     state.labelFile = null;
     state.labelBusy = false;
     state.labelAttempted = false;
-    sessionStorage.removeItem(activeStorage);
-    state.key = null;
+    bookingSequence++;
+    state.operation = null;
     state.bookingId = null;
     state.booking = null;
     state.creating = false;
     state.replaying = false;
+    state.watching = false;
+    busy('create-btn', false);
+    busy('check-status-btn', false);
     updateLabelActions();
   }
 
@@ -799,7 +835,7 @@
     }
     $('unknown-new').hidden = false;
     $('outcome-title').textContent = 'Pending confirmation';
-    $('outcome-explanation').textContent = 'The provider may have accepted this request. Keep the original operation identity; do not submit it again with a new key.';
+    $('outcome-explanation').textContent = 'The provider may have accepted this request. Check the original operation status before taking further action.';
     $('unknown-new').textContent = 'Start a different shipment';
     $('check-status-btn').hidden = false;
     $('check-status-btn').textContent = 'Check Status';
@@ -808,8 +844,10 @@
     $('review-view').hidden = true;
     $('success-view').hidden = true;
     $('unknown-view').hidden = false;
-    $('unknown-id').textContent = message || 'Creation outcome is not confirmed. Do not resubmit with a new key.';
-    $('check-status-btn').disabled = !(state.bookingId || (state.key && state.selected));
+    $('unknown-id').textContent = message || 'Creation outcome is not confirmed. Check status; do not resend automatically.';
+    $('check-status-btn').disabled = !(state.bookingId || state.operation?.providerQuoteId);
+    $('retry-send-btn').hidden = true;
+    $('retry-initial-btn').hidden = true;
   }
 
   function showRetryable(data) {
@@ -817,10 +855,9 @@
     if (data.bookingId) state.bookingId = data.bookingId;
     showPending(`Submission was not sent. ${state.bookingId ? 'Booking: ' + state.bookingId : ''}`);
     $('outcome-title').textContent = 'Shipment not submitted';
-    $('outcome-explanation').textContent = 'Local capacity protection stopped this attempt before it was sent. Retry the same shipment with its original key.';
-    $('check-status-btn').textContent = 'Retry shipment';
-    $('check-status-btn').dataset.original = 'Retry shipment';
-    $('check-status-btn').disabled = !(state.key && state.selected) || state.replaying;
+    $('outcome-explanation').textContent = 'This attempt was definitely not sent. Retry sending explicitly using this booking’s saved details.';
+    $('retry-send-btn').hidden = false;
+    $('retry-send-btn').disabled = !state.bookingId || state.replaying;
     pollToken++;
     saveActive();
   }
@@ -836,11 +873,11 @@
     if (!['QUOTE_EXPIRED', 'QUOTE_NOT_BOOKABLE', 'REQUEST_DATE_EXPIRED'].includes(error.code)) {
       return false;
     }
-    if (error.code === 'REQUEST_DATE_EXPIRED') {
-      rateOperation = null;
-      saveDraft();
+    // Expiry is never evidence that an active booking was not created.
+    if (state.operation) {
+      showPending(errorText(error) + ' The original operation is retained; check its status.');
+      return true;
     }
-    clearActive();
     state.selected = null;
     state.quotes = [];
     state.creating = false;
@@ -865,7 +902,10 @@
     $('outcome-explanation').textContent = 'We could not confirm whether the provider created this shipment. Do not submit it again. Contact support with the booking reference to verify the shipment before taking further action.';
     $('unknown-id').textContent = `Booking reference: ${state.bookingId}. Reason: ${data.errorCode || 'AUTOMATIC_RECOVERY_UNAVAILABLE'}.`;
     $('check-status-btn').hidden = true;
-    $('unknown-new').hidden = true;
+    $('unknown-new').hidden = false;
+    $('unknown-new').textContent = 'Start a different shipment';
+    $('retry-send-btn').hidden = true;
+    $('retry-initial-btn').hidden = true;
   }
 
   // Label retrieval is read-only: one automatic attempt, then an explicit user retry.
@@ -1097,7 +1137,7 @@
     // CONTENDED is a response-only claim-loss signal, not a persisted DB state.
     state.booking = { ...data, status: status === 'CONTENDED' ? 'PENDING_CONFIRMATION' : (data.status || 'PENDING_CONFIRMATION') };
     saveActive();
-    showPending(`Pending confirmation (${status || 'UNKNOWN'}). ${state.bookingId ? 'Booking: ' + state.bookingId : 'Response lost; original key retained.'}`);
+    showPending(`Pending confirmation (${status || 'UNKNOWN'}). ${state.bookingId ? 'Booking: ' + state.bookingId : 'Response lost; provider quote identity retained.'}`);
     if (state.bookingId) poll();
   }
 
@@ -1107,16 +1147,16 @@
     state.watching = true;
     const token = ++pollToken;
     const bookingId = state.bookingId;
-    const key = state.key;
+    const operation = state.operation;
     try {
-      for (let n = 0; n < 5 && token === pollToken && state.bookingId === bookingId && state.key === key; n++) {
+      for (let n = 0; n < 5 && token === pollToken && state.bookingId === bookingId && state.operation === operation; n++) {
         try {
           const reply = await api.status(bookingId);
-          if (token !== pollToken || state.bookingId !== bookingId || state.key !== key) break;
+          if (token !== pollToken || state.bookingId !== bookingId || state.operation !== operation) break;
           handleStatus(reply.data);
           if (['CONFIRMED', 'REJECTED', 'MANUAL_REVIEW', 'RETRYABLE'].includes((reply.data.status || '').toUpperCase())) break;
         } catch (e) {
-          if (token !== pollToken || state.bookingId !== bookingId || state.key !== key) break;
+          if (token !== pollToken || state.bookingId !== bookingId || state.operation !== operation) break;
           if (!['CONFIRMED', 'REJECTED'].includes((state.booking?.status || '').toUpperCase())) {
             notice('Status check unavailable: ' + errorText(e));
           }
@@ -1124,7 +1164,7 @@
         if (n < 4 && token === pollToken) await delay(Math.min(1200 * 2 ** n, 8000));
       }
     } finally {
-      state.watching = false;
+      if (token === pollToken) state.watching = false;
     }
   }
 
@@ -1143,9 +1183,7 @@
     }
   }
 
-  // Local drafts improve navigation only. The backend owns the durable customer request;
-  // neither browser storage nor a third-party provider is our business system of record.
-  // Do not store credentials, labels or booking responses in this draft.
+  // Drafts restore inputs only; rates have no persisted execution to resume.
   function saveDraft() {
     const fields = {};
     for (const field of $('shipping-form').elements) {
@@ -1158,11 +1196,10 @@
         savedAt: Date.now(),
         userId: cachedSession()?.userId || sessionStorage.getItem(ownerStorage),
         unitSystem: state.unitSystem,
-        fields,
-        operation: rateOperation
+        fields
       }));
     } catch {
-      // Storage may be disabled; server-side request idempotency still applies.
+      // Input drafts are optional. Active submission persistence is required before dispatch.
     }
   }
 
@@ -1181,15 +1218,10 @@
         if (field.type === 'checkbox') field.checked = !!value;
         else field.value = value;
       }
-      rateOperation = draft.operation;
       setUnitSystem(draft.unitSystem);
     } catch {
       localStorage.removeItem(draftStorage);
     }
-  }
-
-  function isCurrentRateOperation(operation, rev) {
-    return rev === state.revision && rateOperation === operation;
   }
 
   function disableExpiredSelection() {
@@ -1203,39 +1235,9 @@
     }
   }
 
-  function acceptRateResponse(data, operation, req) {
+  function acceptRateResponse(data, req) {
     if (!data || typeof data !== 'object') {
       throw new Error('Invalid /api/quotes response');
-    }
-    if (data.requestId) {
-      operation.requestId = data.requestId;
-      saveDraft();
-    }
-
-    const requestState = String(data.state || '').toUpperCase();
-    if (requestState === 'RATING' || requestState === 'CONTENDED') {
-      notice('Rates are still being retrieved. Click Get Rates again to check or retry safely.', 'info');
-      return;
-    }
-
-    if (requestState === 'RATE_FAILED') {
-      if (!state.key && state.requestId === operation.requestId) {
-        disableExpiredSelection();
-      }
-      notice('Rates could not be retrieved. Click Get Rates to retry the saved request.', 'info');
-      return;
-    }
-
-    if (requestState === 'QUOTES_EXPIRED') {
-      if (!state.key) {
-        disableExpiredSelection();
-      }
-      notice('These rates have expired. Click Get Rates to refresh them.', 'info');
-      return;
-    }
-
-    if (requestState !== 'READY' && requestState !== 'NO_RATES') {
-      throw new Error(`Unsupported quote state: ${requestState || 'UNKNOWN'}`);
     }
     if (!Array.isArray(data.quotes)) {
       throw new Error('Invalid /api/quotes response: quotes[] missing');
@@ -1253,13 +1255,13 @@
     }
 
     state.request = req;
-    state.requestId = data.requestId;
-    state.quotes = requestState === 'NO_RATES' ? [] : data.quotes;
+    state.request.shippingDate = data.shippingDate;
+    state.quotes = data.quotes;
     state.selected = null;
     routes();
     renderQuotes();
     go(2);
-    if (requestState === 'NO_RATES' || !state.quotes.length) {
+    if (!state.quotes.length) {
       notice('No shipping rates available. Please edit shipment details.', 'info');
     }
   }
@@ -1273,7 +1275,7 @@
       stopLoadingBanner();
       busy('get-rates-btn', false);
     }
-    if (state.quotes.length && !state.key) {
+    if (state.quotes.length) {
       state.quotes = [];
       state.selected = null;
     }
@@ -1282,7 +1284,7 @@
 
   $('shipping-form').addEventListener('submit', async e => {
     e.preventDefault();
-    if (state.key) {
+    if (state.operation) {
       notice('A shipment submission is already active; resolve it before starting another.');
       return;
     }
@@ -1295,29 +1297,14 @@
     startRateLoadingBanner();
     try {
       const req = inputPayload(form);
-      // Save identity before sending: a lost HTTP response must reuse the same key.
-      const signature = JSON.stringify(req);
-      if (!rateOperation || rateOperation.signature !== signature) {
-        const key = crypto.randomUUID
-            ? crypto.randomUUID()
-            : `rate-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-        rateOperation = { key, signature, requestId: null };
-      }
-      const operation = rateOperation;
       saveDraft();
-      const response = await api.quotes(req, operation.key);
-      if (!isCurrentRateOperation(operation, rev)) return;
-      acceptRateResponse(response.data, operation, req);
+      const response = await api.quotes(req);
+      if (rev !== state.revision) return;
+      acceptRateResponse(response.data, req);
     } catch (err) {
       if (rev === state.revision) {
         if (err instanceof HttpError) {
           showFieldErrors(err.fieldErrors);
-          if (rateOperation && err.payload?.operation?.id) {
-            rateOperation.requestId = err.payload.operation.id;
-          }
-          if (err.code === 'REQUEST_DATE_EXPIRED') {
-            rateOperation = null;
-          }
           saveDraft();
         }
         notice(errorText(err));
@@ -1384,7 +1371,7 @@
   // Step 3 Create Shipment
   $('create-btn').addEventListener('click', async () => {
     if (!state.selected || state.creating) return;
-    if (state.key) {
+    if (state.operation) {
       showPending('Existing submission detected. Check status; do not create again.');
       return;
     }
@@ -1395,18 +1382,40 @@
       return;
     }
 
-    const submissionKey = crypto.randomUUID ? crypto.randomUUID() : `shipment-${Date.now()}-${Math.random()}`;
-    state.key = submissionKey;
-    saveActive();
+    const q = state.selected;
+    const payload = { providerId: q.providerId, providerQuoteId: q.providerQuoteId,
+      shippingInput: state.request, displaySnapshot: {
+        carrierId: q.carrierId, carrierName: q.carrierName,
+        serviceId: q.serviceId, serviceName: q.serviceName,
+        total: q.total, expiresAt: q.expiresAt, expirySource: q.expirySource
+      } };
+    state.operation = { version: 2, userId: cachedSession()?.userId,
+      providerId: q.providerId, providerQuoteId: q.providerQuoteId, payload, status: 'UNKNOWN' };
+    try { saveActive(); } catch {
+      state.operation = null;
+      notice('Cannot save recovery information. Enable browser storage before submitting.');
+      return;
+    }
+    await sendActive(false);
+  });
+
+  async function sendActive(retry) {
+    if (!state.operation || state.creating) return;
+    const operation = state.operation;
+    const sequence = ++bookingSequence;
+    state.replaying = false;
+    busy('check-status-btn', false);
     state.creating = true;
     busy('create-btn', true, 'Creating shipment…');
-    startBookingLoadingBanner(carrier(state.selected), service(state.selected));
+    $('retry-send-btn').disabled = true;
+    $('retry-initial-btn').disabled = true;
+    startBookingLoadingBanner(carrier(state.selected || {}), service(state.selected || {}));
     try {
-      const resp = await api.booking(quoteId(state.selected), submissionKey);
-      if (state.key !== submissionKey) return;
+      const resp = retry ? await api.retry(state.bookingId) : await api.booking(operation.payload);
+      if (state.operation !== operation || sequence !== bookingSequence) return;
       handleBooking(resp.data);
     } catch (err) {
-      if (state.key !== submissionKey) return;
+      if (state.operation !== operation || sequence !== bookingSequence) return;
       if ( ['CONFIRMED', 'REJECTED'].includes((state.booking?.status || '').toUpperCase())) return;
       if (handleNotDispatched(err)) return;
       if (handleUnavailableQuote(err, false)) return;
@@ -1414,54 +1423,67 @@
         showRejected(err.payload);
         return;
       }
-      if (err instanceof HttpError && err.code === 'SHIPMENT_ALREADY_SUBMITTED' && err.payload?.booking) {
-        handleBooking(err.payload.booking);
-        return;
-      }
       if (err instanceof HttpError && err.status === 409) {
         showPending(`Conflict: ${errorText(err)}. Original submission preserved.`);
         return;
       }
-      showPending(`Creation outcome uncertain (${errorText(err)}). Original Idempotency-Key preserved. Never submit with a new key.`);
+      showPending(`Creation outcome uncertain (${errorText(err)}). Original provider quote identity retained. Check status before any further action.`);
     } finally {
-      stopLoadingBanner();
-      state.creating = false;
-      busy('create-btn', false);
+      if (state.operation === operation && sequence === bookingSequence) {
+        stopLoadingBanner();
+        state.creating = false;
+        busy('create-btn', false);
+        $('retry-send-btn').disabled = false;
+        $('retry-initial-btn').disabled = false;
+      }
     }
+  }
+
+  $('check-status-btn').addEventListener('click', recoverReadOnly);
+  $('retry-send-btn').addEventListener('click', () => {
+    if (state.booking?.status === 'RETRYABLE' && state.bookingId) sendActive(true);
+  });
+  $('retry-initial-btn').addEventListener('click', () => {
+    if (!state.bookingId && state.operation?.payload && state.operation?.noRecord) sendActive(false);
   });
 
-  $('check-status-btn').addEventListener('click', () => {
-    if (state.booking?.status === 'RETRYABLE') recoverByReplay();
-    else if (state.bookingId) poll();
-    else if (state.key && state.selected) recoverByReplay();
-  });
-
-  async function recoverByReplay() {
-    if (!state.key || !state.selected || state.replaying || state.watching) return;
+  async function recoverReadOnly() {
+    if (!state.operation || state.replaying || state.creating) return;
+    if (!state.bookingId && !state.operation.providerQuoteId) {
+      showPending('This older operation has no usable recovery identity. Contact support; do not assume it was not submitted.');
+      return;
+    }
     pollToken++;
-    const submissionKey = state.key;
+    const operation = state.operation;
+    const sequence = ++bookingSequence;
     state.replaying = true;
     busy('check-status-btn', true, 'Checking…');
     try {
-      const r = await api.booking(quoteId(state.selected), submissionKey);
-      if (state.key !== submissionKey) return;
+      const r = state.bookingId ? await api.status(state.bookingId) : await api.lookup(operation);
+      if (state.operation !== operation || sequence !== bookingSequence) return;
       state.replaying = false;
       busy('check-status-btn', false);
-      handleBooking(r.data);
+      operation.noRecord = false;
+      handleStatus(r.data);
     } catch (e) {
-      if (state.key !== submissionKey) return;
+      if (state.operation !== operation || sequence !== bookingSequence) return;
       state.replaying = false;
       busy('check-status-btn', false);
-      if (['CONFIRMED', 'REJECTED'].includes((state.booking?.status || '').toUpperCase())) return;
-      if (handleNotDispatched(e)) return;
-      if (handleUnavailableQuote(e, true)) return;
-      if (!canAcceptBookingUpdate('PENDING_CONFIRMATION')) return;
-      state.booking = { bookingId: state.bookingId, status: 'PENDING_CONFIRMATION' };
-      saveActive();
-      showPending('Could not confirm creation: ' + errorText(e) + '. Retry with the SAME key only.');
+      if (e instanceof HttpError && e.status === 404 && !state.bookingId) {
+        operation.noRecord = true;
+        saveActive();
+        showPending('No booking is visible yet. An earlier request may still arrive. Your original quote identity is retained.');
+        $('retry-initial-btn').hidden = !operation.payload;
+        if (!operation.payload) notice('Saved submission details are unavailable. Contact support before resubmitting.');
+      } else {
+        notice('Status check unavailable: ' + errorText(e));
+      }
     } finally {
-      state.replaying = false;
-      busy('check-status-btn', false);
+      if (state.operation === operation && sequence === bookingSequence) {
+        state.replaying = false;
+        state.watching = false;
+        busy('check-status-btn', false);
+      }
     }
   }
 
@@ -1493,8 +1515,11 @@
   });
 
   function reset() {
-    rateOperation = null;
     localStorage.removeItem(draftStorage);
+    if (state.operation) saveActive();
+    state.revision++;
+    rateBusy = false;
+    stopLoadingBanner();
     pollToken++;
     clearActive();
     state.request = null;
@@ -1519,7 +1544,7 @@
 
   $all('[data-back]').forEach(el => {
     el.addEventListener('click', () => {
-      if (state.key) {
+      if (state.operation) {
         showPending('Creation has already been submitted. You cannot change this booking.');
         return;
       }
@@ -1534,51 +1559,49 @@
     saveDraft();
   }));
 
-  function refreshRestoredStatus() {
-    if (!state.bookingId) return;
-    const token = ++pollToken;
-    const bookingId = state.bookingId;
-    const key = state.key;
-    api.status(bookingId)
-      .then(reply => {
-        if (token !== pollToken || state.replaying || state.bookingId !== bookingId || state.key !== key) return;
-        handleStatus(reply.data);
-      })
-      .catch(error => {
-        if (token !== pollToken || state.replaying || state.bookingId !== bookingId || state.key !== key) return;
-        notice(errorText(error));
-      });
+  function restoreOperation(operation) {
+    if (state.operation) saveActive();
+    clearActive();
+    state.operation = operation;
+    state.bookingId = operation.bookingId || null;
+    state.labelAttempted = !!operation.labelAttempted;
+    state.selected = operation.payload?.displaySnapshot || null;
+    state.savedService = operation.payload?.displaySnapshot?.serviceName || 'Saved shipment';
+    if (operation.status === 'MANUAL_REVIEW') {
+      showManualReview({ bookingId: state.bookingId, status: operation.status, errorCode: operation.errorCode });
+    } else if (operation.status === 'RETRYABLE') {
+      showRetryable({ bookingId: state.bookingId, status: 'RETRYABLE' });
+    } else {
+      showPending('Restored shipment. Checking its status without sending creation.');
+    }
+    recoverReadOnly();
   }
 
   // Restore only real operations owned by the signed-in account.
   renderAccount();
   try {
-    const previous = JSON.parse(sessionStorage.getItem(activeStorage) || 'null');
-    if (cachedSession() && previous?.userId === cachedSession().userId
-        && previous.mock !== true && previous?.key && previous?.quoteId) {
-      state.labelAttempted = !!previous.labelAttempted;
-      state.key = previous.key;
-      state.bookingId = previous.bookingId || null;
-      state.selected = {
-        quoteId: previous.quoteId,
-        carrierName: previous.carrierName,
-        serviceName: previous.serviceName
-      };
-      state.savedService = `${previous.carrierName || ''} · ${previous.serviceName || ''}`;
-      if (previous.status === 'RETRYABLE') {
-        showRetryable({ bookingId: state.bookingId });
-        refreshRestoredStatus();
-      } else if (previous.status === 'MANUAL_REVIEW') {
-        showManualReview({ bookingId: state.bookingId, status: 'MANUAL_REVIEW', errorCode: previous.errorCode });
-        // One fresh read may discover a late confirmation; do not restart polling.
-        refreshRestoredStatus();
-      } else {
-        showPending(`Restored active shipment submission. ${state.bookingId ? 'Booking: ' + state.bookingId : 'Click Check Status to replay with the original key.'}`);
-        if (state.bookingId) poll();
+    const userId = cachedSession()?.userId;
+    let stored = JSON.parse(localStorage.getItem(activeStorage) || 'null');
+    if (!stored && userId) {
+      const legacy = JSON.parse(sessionStorage.getItem(legacyActiveStorage)
+        || localStorage.getItem(legacyActiveStorage) || 'null');
+      if (legacy && legacy.userId === userId && !legacy.mock) {
+        const migrated = { version: 2, userId, bookingId: legacy.bookingId || null,
+          status: legacy.status || 'UNKNOWN', labelAttempted: legacy.labelAttempted,
+          errorCode: legacy.errorCode };
+        stored = { version: 2, userId, active: operationIdentity(migrated), operations: [migrated] };
+        localStorage.setItem(activeStorage, JSON.stringify(stored));
+        sessionStorage.removeItem(legacyActiveStorage);
+        localStorage.removeItem(legacyActiveStorage);
       }
-    } else {
-      go(1);
     }
+    if (userId && stored?.version === 2 && stored.userId === userId) {
+      savedOperations = (stored.operations || []).filter(op => op.userId === userId);
+      renderSavedOperations();
+      const active = savedOperations.find(op => operationIdentity(op) === stored.active);
+      if (active) restoreOperation(active);
+      else go(1);
+    } else go(1);
   } catch {
     go(1);
   }

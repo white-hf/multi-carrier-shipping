@@ -1,582 +1,243 @@
 package com.enterprise.shipping.booking;
 
-import com.enterprise.shipping.booking.application.ShipmentApplicationService;
-import com.enterprise.shipping.booking.api.ShippingBookingController;
-import com.enterprise.shipping.booking.api.ShippingBookingController.BookingResponse;
-import org.springframework.http.HttpStatus;
+import com.enterprise.shipping.booking.application.BookingCommand;
 import com.enterprise.shipping.booking.domain.BookingStatus;
 import com.enterprise.shipping.booking.infrastructure.persistence.JdbcShipmentStore;
-import com.enterprise.shipping.booking.port.*;
-import com.enterprise.shipping.quote.contract.QuoteSelectionPort;
+import com.enterprise.shipping.booking.port.ShipmentNotDispatchedException;
+import com.enterprise.shipping.booking.port.ShipmentProviderPort;
+import com.enterprise.shipping.booking.port.ShipmentStore;
 import com.enterprise.shipping.shared.domain.ShippingException;
 import com.enterprise.shipping.shared.infrastructure.persistence.ShippingMigrations;
 import com.enterprise.shipping.shared.infrastructure.persistence.SqliteDataSources;
+import com.enterprise.shipping.support.BookingFixtures;
 import com.zaxxer.hikari.HikariDataSource;
 import java.nio.file.Path;
-import java.time.*;
-import java.util.concurrent.*;
+import java.time.Clock;
+import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.Mockito.*;
-import static org.mockito.ArgumentMatchers.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.spy;
 
-/** Real SQLite constraints/CAS across concurrent services and reopened connections. */
 class ShipmentAdmissionRetryTest {
     @TempDir
-     Path directory;
+    Path directory;
     HikariDataSource source;
     JdbcShipmentStore store;
-    final Clock clock = Clock.fixed(Instant.parse("2026-10-25T12:00:00Z"), ZoneOffset.UTC);
-    final AtomicInteger dispatches = new AtomicInteger();
-    final QuoteSelectionPort.Selection selection =
-            new QuoteSelectionPort.Selection(
-                    "request-1",
-                    "quote-1",
-                    "sandbox",
-                    "account",
-                    "provider-quote",
-                    "14",
-                    "ground",
-                    2735,
-                    "CAD",
-                    clock.millis() + 60000);
-    final LabelProviderPort labels =
-            new LabelProviderPort() {
-                public Label fetch(Identity identity) {
-                    return null;
-                }
-
-                public boolean allowedUrl(String url) {
-                    return false;
-                }
-            };
+    final AtomicInteger calls = new AtomicInteger();
 
     @BeforeEach
     void open() {
-        source =
-                SqliteDataSources.open(
-                        directory.resolve("retry.db").toString(),
-                        "retry-test",
-                        4,
-                        3000,
-                        "db/shipping/bootstrap.sql");
+        source = SqliteDataSources.open(directory.resolve("test.db").toString(), "booking", 4, 3000,
+                "db/shipping/bootstrap.sql");
         ShippingMigrations.migrate(source, "V001__shipping_schema.sql");
         store = new JdbcShipmentStore(new JdbcTemplate(source));
     }
 
     @AfterEach
     void close() {
-        if (source != null) {
-            source.close();
-        }
-    }
-
-    ShipmentApplicationService service(
-            ShipmentStore storage, ShipmentProviderPort provider, Clock time) {
-        return new ShipmentApplicationService(
-                storage,
-                (user, quote) -> {
-                    if (selection.expiresAt() <= time.millis() + 5000) {
-                        throw ShippingException.conflict("QUOTE_EXPIRED");
-                    }
-                    return selection;
-                },
-                provider,
-                labels,
-                time,
-                Duration.ofSeconds(1),
-                (operation, outcome, elapsed) -> {
-                });
-    }
-
-    ShipmentProviderPort.Outcome accept() {
-        dispatches.incrementAndGet();
-        return ShipmentProviderPort.Outcome.confirmed("shipment-1", "tracking-1", null);
-    }
-
-    ShipmentStore.Record unsent() {
-        assertThatThrownBy(
-                        () ->
-                                service(
-                                                store,
-                                                submission -> {
-                                                    throw new ShipmentNotDispatchedException(
-                                                            ShipmentNotDispatchedException.Reason
-                                                                    .BULKHEAD_FULL);
-                                                },
-                                                clock)
-                                        .create("user", "same-key", "quote-1"))
-                .isInstanceOfSatisfying(
-                        ShippingException.class,
-                        e -> assertThat(e.code()).isEqualTo("SHIPMENT_SUBMISSION_NOT_DISPATCHED"));
-        var row = store.byKey("user", "same-key").orElseThrow();
-        assertThat(row.status()).isEqualTo(BookingStatus.RETRYABLE);
-        assertThat(store.overdue(Long.MAX_VALUE, -1, "", 100)).isEmpty();
-        assertThat(dispatches).hasValue(0);
-        return row;
-    }
-
-    @Test
-    void retryClaimLoserDoesNotReadOrDispatchAgain() {
-        var original = unsent();
-        var storage = spy(store);
-        doReturn(false).when(storage).claimRetry(any(), anyLong(), anyLong());
-        var result =
-                service(storage, submission -> accept(), clock)
-                        .create("user", "same-key", "quote-1");
-        assertThat(result.disposition()).isEqualTo(ShipmentApplicationService.Disposition.PENDING);
-        assertThat(result.booking().status()).isEqualTo("CONTENDED");
-        assertThat(result.booking().bookingId()).isEqualTo(original.id());
-        verify(storage, times(1)).byKey("user", "same-key");
-        verify(storage, times(1)).claimRetry(any(), anyLong(), anyLong());
-        verify(storage, never()).byId(anyString(), anyString());
-        verify(storage, never()).complete(any(), any(), anyLong());
-        assertThat(dispatches).hasValue(0);
-    }
-
-    @Test
-    void bookingContentionResponseProvidesIdentityWithoutAFabricatedReceipt() {
-        var row = unsent();
-        var storage = spy(store);
-        doReturn(false).when(storage).claimRetry(any(), anyLong(), anyLong());
-        var controller =
-                new ShippingBookingController(
-                        service(storage, submission -> accept(), clock), () -> "user");
-        var response =
-                controller.create("same-key", new ShippingBookingController.Create("quote-1"));
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
-        assertThat(response.getHeaders().getLocation().getPath())
-                .isEqualTo("/api/bookings/" + row.id());
-        assertThat(response.getHeaders().getFirst("Retry-After")).isEqualTo("2");
-        assertThat(response.getBody())
-                .isInstanceOfSatisfying(
-                        BookingResponse.class,
-                        body -> {
-                            assertThat(body.bookingId()).isEqualTo(row.id());
-                            assertThat(body.status()).isEqualTo("CONTENDED");
-                            assertThat(body.shipmentId()).isNull();
-                            assertThat(body.labelUrl()).isNull();
-                        });
-        assertThat(dispatches).hasValue(0);
-    }
-
-    @Test
-    void insertLoserReportsUnsentWinnerWithoutRetrying() {
-        var original = unsent();
-        var storage = spy(store);
-        doReturn(java.util.Optional.empty(), java.util.Optional.of(original))
-                .when(storage)
-                .byKey("user", "same-key");
-        assertThatThrownBy(
-                        () ->
-                                service(storage, submission -> accept(), clock)
-                                        .create("user", "same-key", "quote-1"))
-                .isInstanceOfSatisfying(
-                        ShippingException.class,
-                        error ->
-                                assertThat(error.code())
-                                        .isEqualTo("SHIPMENT_SUBMISSION_NOT_DISPATCHED"));
-        verify(storage, times(2)).byKey("user", "same-key");
-        verify(storage, never()).claimRetry(any(), anyLong(), anyLong());
-        assertThat(dispatches).hasValue(0);
-    }
-
-    @Test
-    void insertLoserReturnsConfirmedWinnerAndChecksFingerprint() {
-        var confirmed =
-                service(store, submission -> accept(), clock).create("user", "same-key", "quote-1");
-        var original = store.byKey("user", "same-key");
-        var storage = spy(store);
-        doReturn(java.util.Optional.empty(), original).when(storage).byKey("user", "same-key");
-        var result =
-                service(storage, submission -> accept(), clock)
-                        .create("user", "same-key", "quote-1");
-        assertThat(result.booking()).isEqualTo(confirmed.booking());
-        assertThat(result.disposition()).isEqualTo(ShipmentApplicationService.Disposition.EXISTING);
-        verify(storage, never()).claimRetry(any(), anyLong(), anyLong());
-        assertThat(dispatches).hasValue(1);
-
-        doReturn(java.util.Optional.empty(), original).when(storage).byKey("user", "same-key");
-        assertThatThrownBy(
-                        () ->
-                                service(storage, submission -> accept(), clock)
-                                        .create("user", "same-key", "different-quote"))
-                .isInstanceOfSatisfying(
-                        ShippingException.class,
-                        error -> assertThat(error.code()).isEqualTo("IDEMPOTENCY_CONFLICT"));
-        assertThat(dispatches).hasValue(1);
-    }
-
-    @Test
-    void retrySurvivesRestartAndKeepsTheOriginalIdentity() {
-        var original = unsent();
         source.close();
-        open();
-        var result =
-                service(store, submission -> accept(), clock).create("user", "same-key", "quote-1");
-        assertThat(result.disposition()).isEqualTo(ShipmentApplicationService.Disposition.CREATED);
-        assertThat(result.booking().bookingId()).isEqualTo(original.id());
-        var row = store.byKey("user", "same-key").orElseThrow();
-        assertThat(row.version()).isEqualTo(original.version() + 2);
-        assertThat(row.errorCode()).isNull();
-        assertThat(dispatches).hasValue(1);
+    }
+
+    ShipmentProviderPort.Outcome confirm() {
+        calls.incrementAndGet();
+        return ShipmentProviderPort.Outcome.confirmed("123", "TRACK", null);
     }
 
     @Test
-    void concurrentRetriesHaveExactlyOneDispatchWinnerAndFenceStaleWrites() throws Exception {
-        var original = unsent();
-        var raced = spy(store);
-        var barrier = new CyclicBarrier(8);
-        doAnswer(
-                        call -> {
-                            barrier.await(5, TimeUnit.SECONDS);
-                            return call.callRealMethod();
-                        })
-                .when(raced)
-                .claimRetry(any(), anyLong(), anyLong());
-        var entered = new CountDownLatch(1);
-        var release = new CountDownLatch(1);
-        var service =
-                service(
-                        raced,
-                        submission -> {
-                            entered.countDown();
-                            try {
-                                if (!release.await(5, TimeUnit.SECONDS)) {
-                                    throw new AssertionError("release not signalled");
-                                }
-                            } catch (InterruptedException e) {
-                                Thread.currentThread().interrupt();
-                                throw new AssertionError(e);
-                            }
-                            return accept();
-                        },
-                        clock);
-        var executor = Executors.newFixedThreadPool(8);
+    void concurrentInitialSubmissionsCommitOneBookingAndOneDispatch() throws Exception {
+        var service = BookingFixtures.service(store, submission -> confirm(), Clock.systemUTC());
+        var pool = Executors.newFixedThreadPool(8);
+        var start = new CountDownLatch(1);
         try {
-            var futures = new java.util.ArrayList<Future<ShipmentApplicationService.Submission>>();
-            for (int i = 0; i < 8; i++) {
-                futures.add(executor.submit(() -> service.create("user", "same-key", "quote-1")));
+            var futures = new ArrayList<java.util.concurrent.Future<String>>();
+            for (int n = 0; n < 8; n++) {
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    return service.create("user", BookingFixtures.command("Same/Quote")).booking().bookingId();
+                }));
             }
-            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-            // A late outcome from the previous version cannot overwrite the new attempt.
-            var stale = original.restore();
-            stale.prepareRetry();
-            stale.markNotDispatched();
-            assertThat(store.complete(original, stale, clock.millis()).applied()).isFalse();
-            release.countDown();
+            start.countDown();
+            var ids = new java.util.HashSet<String>();
             for (var future : futures) {
-                var result = future.get(10, TimeUnit.SECONDS);
-                assertThat(result.booking().bookingId()).isEqualTo(original.id());
-                assertThat(result.disposition())
-                        .isIn(
-                                ShipmentApplicationService.Disposition.EXISTING,
-                                ShipmentApplicationService.Disposition.CREATED,
-                                ShipmentApplicationService.Disposition.PENDING);
+                ids.add(future.get(10, TimeUnit.SECONDS));
             }
-            assertThat(dispatches).hasValue(1);
-            assertThat(store.byKey("user", "same-key").orElseThrow().status())
-                    .isEqualTo(BookingStatus.CONFIRMED);
+            assertThat(ids).hasSize(1);
+            assertThat(calls).hasValue(1);
+            assertThat(new JdbcTemplate(source).queryForObject("SELECT count(*) FROM shipment_bookings", Integer.class)).isEqualTo(1);
         } finally {
-            release.countDown();
-            executor.shutdownNow();
+            pool.shutdownNow();
         }
     }
 
     @Test
-    void conflictingKeysPayloadsAndExpiredQuotesNeverDispatch() {
-        var row = unsent();
-        var service = service(store, submission -> accept(), clock);
-        assertThatThrownBy(() -> service.create("user", "same-key", "other-quote"))
-                .isInstanceOfSatisfying(
-                        ShippingException.class,
-                        e -> assertThat(e.code()).isEqualTo("IDEMPOTENCY_CONFLICT"));
-        assertThat(service.create("user", "other-key", "quote-1").disposition())
-                .isEqualTo(ShipmentApplicationService.Disposition.CONFLICT);
-        var expired =
-                service(store, submission -> accept(), Clock.offset(clock, Duration.ofMinutes(2)));
-        assertThatThrownBy(() -> expired.create("user", "same-key", "quote-1"))
-                .isInstanceOfSatisfying(
-                        ShippingException.class,
-                        e -> assertThat(e.code()).isEqualTo("QUOTE_EXPIRED"));
-        assertThat(store.claimRetry(row, row.selection().expiresAt(), Long.MAX_VALUE)).isFalse();
-        assertThat(dispatches).hasValue(0);
+    void duplicatePayloadIsIgnoredAndUserQuoteAndCaseScopesAreIndependent() {
+        var service = BookingFixtures.service(store, submission -> confirm(), Clock.systemUTC());
+        var original = service.create("user", BookingFixtures.command("Case"));
+        var row = store.byQuote("user", "sandbox", "Case").orElseThrow();
+        var replay = service.create("user", new BookingCommand("sandbox", "Case", null, null));
+        assertThat(replay.booking().bookingId()).isEqualTo(original.booking().bookingId());
+        assertThat(store.byQuote("user", "sandbox", "Case").orElseThrow()).isEqualTo(row);
+        service.create("user", BookingFixtures.command("case"));
+        service.create("other-user", BookingFixtures.command("Case"));
+        assertThat(calls).hasValue(3);
+        assertThatThrownBy(() -> service.get("foreign", row.id())).isInstanceOf(ShippingException.class);
     }
 
     @Test
-    void retryThatLosesItsResponseCannotRetryAgain() {
-        unsent();
-        var service =
-                service(
-                        store,
-                        submission -> {
-                            accept();
-                            throw new IllegalStateException(
-                                    "Injected lost response after acceptance");
-                        },
-                        clock);
-        assertThat(service.create("user", "same-key", "quote-1").disposition())
-                .isEqualTo(ShipmentApplicationService.Disposition.PENDING);
-        assertThat(service.create("user", "same-key", "quote-1").disposition())
-                .isEqualTo(ShipmentApplicationService.Disposition.PENDING);
-        assertThat(store.byKey("user", "same-key").orElseThrow().status())
-                .isEqualTo(BookingStatus.PENDING_INQUIRY);
-        assertThat(dispatches).hasValue(1);
+    void providerScopeIsPartOfDatabaseUniqueness() {
+        var command = BookingFixtures.command("q");
+        var input = command.shippingInput().dated(java.time.LocalDate.now());
+        var selection = command.selection("account", input);
+        var first = ShipmentStore.Record.pending("user", "a", selection, Long.MAX_VALUE);
+        var other = new com.enterprise.shipping.booking.domain.BookingSelection("other-provider", "account",
+                "q", selection.carrierId(), selection.serviceId(), selection.acceptedMinor(),
+                selection.currency(), null, input, null, null, null);
+        assertThat(store.claim(first, 1)).isTrue();
+        assertThat(store.claim(ShipmentStore.Record.pending("user", "b", other, Long.MAX_VALUE), 1)).isTrue();
+        assertThat(store.byQuote("user", "sandbox", "q")).isPresent();
+        assertThat(store.byQuote("user", "other-provider", "q")).isPresent();
     }
 
     @Test
-    void crashAfterRetryClaimStaysUnknownRatherThanRedispatching() {
-        var original = unsent();
-        var interrupted = spy(store);
-        doAnswer(
-                        call -> {
-                            call.callRealMethod();
-                            throw new AssertionError("Injected crash after retry claim");
-                        })
-                .when(interrupted)
-                .claimRetry(any(), anyLong(), anyLong());
-        assertThatThrownBy(
-                        () ->
-                                service(interrupted, submission -> accept(), clock)
-                                        .create("user", "same-key", "quote-1"))
-                .isInstanceOf(AssertionError.class);
-        source.close();
-        open();
-        var replay =
-                service(store, submission -> accept(), clock).create("user", "same-key", "quote-1");
-        assertThat(replay.disposition()).isEqualTo(ShipmentApplicationService.Disposition.PENDING);
-        assertThat(replay.booking().bookingId()).isEqualTo(original.id());
-        assertThat(store.byKey("user", "same-key").orElseThrow().status())
-                .isEqualTo(BookingStatus.PENDING);
-        assertThat(dispatches).hasValue(0);
+    void storageFailureAndInvalidProviderNeverDispatch() {
+        var broken = spy(store);
+        doThrow(new DataAccessResourceFailureException("unavailable")).when(broken).claim(any(), anyLong());
+        var service = BookingFixtures.service(broken, submission -> confirm(), Clock.systemUTC());
+        assertThatThrownBy(() -> service.create("user", BookingFixtures.command("q")))
+                .isInstanceOf(DataAccessResourceFailureException.class);
+        assertThatThrownBy(() -> service.create("user", new BookingCommand("forbidden", "q", null, null)))
+                .isInstanceOf(ShippingException.class);
+        assertThat(calls).hasValue(0);
     }
 
     @Test
-    void successfulSubmissionReturnsTheCommittedReceiptWithoutReadingById() {
-        var storage = spy(store);
-        doThrow(new AssertionError("Successful submission must not reread its committed result"))
-                .when(storage)
-                .byId(anyString(), anyString());
-        var result =
-                service(storage, submission -> accept(), clock).create("user", "key", "quote-1");
-        assertThat(result.disposition()).isEqualTo(ShipmentApplicationService.Disposition.CREATED);
-        assertThat(result.booking().shipmentId()).isEqualTo("shipment-1");
-        var committed = store.byKey("user", "key").orElseThrow();
-        assertThat(committed.status()).isEqualTo(BookingStatus.CONFIRMED);
-        assertThat(committed.version()).isEqualTo(1);
-        verify(storage, never()).byId(anyString(), anyString());
-        assertThat(dispatches).hasValue(1);
-    }
-
-    @Test
-    void quoteRevalidationFailureDoesNotClaimOrDispatchAndRetainsBookingLocator() {
-        var original = unsent();
-        var quotes = mock(QuoteSelectionPort.class);
-        when(quotes.resolve("user", "quote-1"))
-                .thenThrow(ShippingException.conflict("REQUEST_DATE_EXPIRED"));
-        var service =
-                new ShipmentApplicationService(
-                        store,
-                        quotes,
-                        submission -> accept(),
-                        labels,
-                        clock,
-                        Duration.ofSeconds(1),
-                        (a, b, c) -> {
-                        });
-        assertThatThrownBy(() -> service.create("user", "same-key", "quote-1"))
-                .isInstanceOfSatisfying(
-                        ShippingException.class,
-                        error -> {
-                            assertThat(error.code()).isEqualTo("REQUEST_DATE_EXPIRED");
-                            assertThat(error.operation().id()).isEqualTo(original.id());
-                        });
-        assertThat(store.byKey("user", "same-key").orElseThrow()).isEqualTo(original);
-        assertThat(dispatches).hasValue(0);
-        verify(quotes, times(1)).resolve("user", "quote-1");
-    }
-
-    @Test
-    void domainErrorsAfterProviderReturnAreNotMisclassifiedAsUnknownResponses() {
-        var invalid = mock(ShipmentProviderPort.Outcome.class);
-        when(invalid.status()).thenReturn(ShipmentProviderPort.Outcome.Status.CONFIRMED);
-        // Deliberately bypass the port record's constructor validation to exercise the domain
-        // boundary.
-        assertThatThrownBy(
-                        () ->
-                                service(store, submission -> invalid, clock)
-                                        .create("user", "key", "quote-1"))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThat(store.byKey("user", "key").orElseThrow().status())
-                .isEqualTo(BookingStatus.PENDING);
-    }
-
-    ShipmentStore.Record pending() {
-        var row =
-                ShipmentStore.Record.pending(
-                        "user", "booking-1", "key", "hash", selection, clock.millis() + 10000);
-        assertThat(store.claim(row, clock.millis())).isTrue();
-        return row;
-    }
-
-    com.enterprise.shipping.booking.domain.ShipmentBooking confirmed(ShipmentStore.Record row) {
-        var booking = row.restore();
-        booking.confirm(
-                new com.enterprise.shipping.booking.domain.CarrierReceipt(
-                        "booking-" + row.id(), "shipment-1", "tracking-1", "/label"));
-        return booking;
-    }
-
-    @Test
-    void completionReturnsTheExactSavedSnapshotWithoutASelect() {
-        var row = pending();
-        var storage = spy(store);
-        var result = storage.complete(row, confirmed(row), clock.millis());
-        assertThat(result.applied()).isTrue();
-        assertThat(result.current()).isEqualTo(store.byId(row.userId(), row.id()).orElseThrow());
-        verify(storage, never()).byId(anyString(), anyString());
-    }
-
-    @Test
-    void lateConfirmationResolvesManualReviewAndPreservesTheOriginalIdentity() {
-        var row = pending();
-        assertThat(store.markUnknown(row, clock.millis())).isTrue();
-        var unknown = store.byId(row.userId(), row.id()).orElseThrow();
-        var manual = unknown.restore();
-        manual.requireManualReview();
-        assertThat(store.complete(unknown, manual, clock.millis()).applied()).isTrue();
-        var result = store.complete(row, confirmed(row), clock.millis());
-        assertThat(result.applied()).isTrue();
-        assertThat(result.current().status()).isEqualTo(BookingStatus.CONFIRMED);
-        assertThat(result.current().version()).isEqualTo(3);
-        assertThat(result.current().errorCode()).isNull();
-        assertThat(result.current().id()).isEqualTo(row.id());
-        assertThat(result.current()).isEqualTo(store.byId(row.userId(), row.id()).orElseThrow());
-    }
-
-    @Test
-    void staleNonSuccessCannotDowngradeUncertaintyOrOverwriteAnotherConfirmation() {
-        var row = pending();
-        assertThat(store.markUnknown(row, clock.millis())).isTrue();
-        var stale = row.restore();
-        stale.reject(com.enterprise.shipping.booking.domain.RejectionReason.CARRIER_REJECTED);
-        var conflict = store.complete(row, stale, clock.millis());
-        assertThat(conflict.applied()).isFalse();
-        assertThat(conflict.current().status()).isEqualTo(BookingStatus.PENDING_INQUIRY);
-        assertThat(store.complete(row, confirmed(row), clock.millis()).applied()).isTrue();
-        var replacement = row.restore();
-        replacement.confirm(
-                new com.enterprise.shipping.booking.domain.CarrierReceipt(
-                        "booking-" + row.id(), "other", null, null));
-        var ignored = store.complete(row, replacement, clock.millis());
-        assertThat(ignored.applied()).isFalse();
-        assertThat(ignored.current().providerShipmentId()).isEqualTo("shipment-1");
-    }
-
-    @Test
-    void secondCompletionConflictReturnsCurrentStateWithoutAnUnboundedLoop() {
-        var row = pending();
-        assertThat(store.markUnknown(row, clock.millis())).isTrue();
-        var updates = new AtomicInteger();
-        var jdbc =
-                new JdbcTemplate(source) {
-                    @Override
-                    public int update(String sql, Object... args) {
-                        if (sql.contains("SET status = ?, provider_shipment_id")
-                                && updates.incrementAndGet() == 2) {
-                            var current = store.byId(row.userId(), row.id()).orElseThrow();
-                            var manual = current.restore();
-                            manual.requireManualReview();
-                            assertThat(store.complete(current, manual, clock.millis()).applied())
-                                    .isTrue();
-                        }
-                        return super.update(sql, args);
-                    }
-                };
-        var result = new JdbcShipmentStore(jdbc).complete(row, confirmed(row), clock.millis());
-        assertThat(result.applied()).isFalse();
-        assertThat(result.current().status()).isEqualTo(BookingStatus.MANUAL_REVIEW);
-        assertThat(updates).hasValue(2);
-    }
-
-    @Test
-    void baselineReapplicationPreservesExistingOutcomesAndUniqueIndexes() {
-        try (var legacy =
-                SqliteDataSources.open(
-                        directory.resolve("baseline.db").toString(),
-                        "baseline-test",
-                        2,
-                        3000,
-                        "db/shipping/bootstrap.sql")) {
-            ShippingMigrations.migrate(legacy, "V001__shipping_schema.sql");
-            var storage = new JdbcShipmentStore(new JdbcTemplate(legacy));
-            var confirmed =
-                    service(storage, submission -> accept(), clock)
-                            .create("user-a", "key", "quote-1");
-            var unknown =
-                    service(
-                                    storage,
-                                    submission -> {
-                                        throw new IllegalStateException("Response lost");
-                                    },
-                                    clock)
-                            .create("user-b", "key", "quote-1");
-            var prior = storage.byKey("user-a", "key").orElseThrow();
-            ShippingMigrations.migrate(legacy, "V001__shipping_schema.sql");
-            ShippingMigrations.migrate(legacy, "V001__shipping_schema.sql");
-            assertThat(storage.byKey("user-a", "key").orElseThrow()).isEqualTo(prior);
-            assertThat(storage.byId("user-b", unknown.booking().bookingId()).orElseThrow().status())
-                    .isEqualTo(BookingStatus.PENDING_INQUIRY);
-            assertThat(storage.claim(prior, clock.millis())).isFalse();
-            assertThat(
-                            service(storage, submission -> accept(), clock)
-                                    .create("user-a", "different-key", "quote-1")
-                                    .disposition())
-                    .isEqualTo(ShipmentApplicationService.Disposition.CONFLICT);
-            var jdbc = new JdbcTemplate(legacy);
-            assertThat(jdbc.queryForObject("SELECT count(*) FROM shipment_bookings", Integer.class))
-                    .isEqualTo(2);
-            assertThat(
-                            jdbc.queryForList(
-                                    "SELECT name FROM sqlite_master WHERE type='index'",
-                                    String.class))
-                    .contains("idx_shipping_unresolved");
-            assertThat(confirmed.booking().status()).isEqualTo("CONFIRMED");
+    void ordinaryCreateAndRecoveryNeverResendRetryableBooking() {
+        var service = BookingFixtures.service(store, submission -> {
+            calls.incrementAndGet();
+            throw new ShipmentNotDispatchedException(ShipmentNotDispatchedException.Reason.BULKHEAD_FULL);
+        }, Clock.systemUTC());
+        assertThatThrownBy(() -> service.create("user", BookingFixtures.command("q")))
+                .isInstanceOf(ShippingException.class);
+        var row = store.byQuote("user", "sandbox", "q").orElseThrow();
+        for (int n = 0; n < 3; n++) {
+            assertThat(service.create("user", BookingFixtures.command("q")).booking().status()).isEqualTo("RETRYABLE");
+            assertThat(service.lookup("user", "sandbox", "q").status()).isEqualTo("RETRYABLE");
+            service.get("user", row.id());
         }
+        assertThat(store.byId("user", row.id()).orElseThrow()).isEqualTo(row);
+        assertThat(calls).hasValue(1);
     }
 
     @Test
-    void unsupportedDevelopmentHistoryFailsWithoutDeletingRows() {
-        var original = unsent();
-        var jdbc = new JdbcTemplate(source);
-        jdbc.update("UPDATE schema_migrations SET version='pre-release-development'");
+    void explicitConcurrentRetryUsesOneVersionClaimAndSavedSnapshot() throws Exception {
+        var unsent = BookingFixtures.service(store, submission -> {
+            throw new ShipmentNotDispatchedException(ShipmentNotDispatchedException.Reason.CIRCUIT_OPEN);
+        }, Clock.systemUTC());
+        assertThatThrownBy(() -> unsent.create("user", BookingFixtures.command("Original"))).isInstanceOf(ShippingException.class);
+        var original = store.byQuote("user", "sandbox", "Original").orElseThrow();
+        var gate = new CountDownLatch(1);
+        var entered = new CountDownLatch(1);
+        var service = BookingFixtures.service(store, submission -> {
+            assertThat(submission.providerQuoteId()).isEqualTo("Original");
+            assertThat(submission.accountAlias()).isEqualTo("account");
+            calls.incrementAndGet();
+            entered.countDown();
+            try {
+                gate.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException(error);
+            }
+            return ShipmentProviderPort.Outcome.confirmed("123", null, null);
+        }, Clock.systemUTC());
+        var pool = Executors.newSingleThreadExecutor();
         try {
-            assertThatThrownBy(
-                            () -> ShippingMigrations.migrate(source, "V001__shipping_schema.sql"))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("fresh database is required");
-            assertThat(store.byKey("user", "same-key").orElseThrow()).isEqualTo(original);
+            var result = pool.submit(() -> service.retry("user", original.id()));
+            assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThatThrownBy(() -> service.retry("user", original.id())).isInstanceOf(ShippingException.class);
+            gate.countDown();
+            assertThat(result.get(5, TimeUnit.SECONDS).booking().status()).isEqualTo("CONFIRMED");
+            assertThat(calls).hasValue(1);
+            assertThat(store.byId("user", original.id()).orElseThrow().selection()).isEqualTo(original.selection());
         } finally {
-            jdbc.update("UPDATE schema_migrations SET version='V001__shipping_schema.sql'");
+            gate.countDown();
+            pool.shutdownNow();
         }
     }
 
     @Test
-    void repeatedLocalRejectionKeepsTheSameRecordAndDoesNotCreateRecoveryTasks() {
-        var original = unsent();
-        var next = unsent();
-        assertThat(next.id()).isEqualTo(original.id());
-        assertThat(next.version()).isEqualTo(original.version() + 2);
-        var jdbc = new JdbcTemplate(source);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM shipment_bookings", Integer.class))
-                .isEqualTo(1);
-        assertThat(
-                        jdbc.queryForObject(
-                                "SELECT count(*) FROM booking_reconciliation_tasks", Integer.class))
-                .isZero();
+    void unknownOutcomeNeverBecomesRetryPermission() {
+        var service = BookingFixtures.service(store, submission -> {
+            calls.incrementAndGet();
+            throw new IllegalStateException("lost response");
+        }, Clock.systemUTC());
+        var result = service.create("user", BookingFixtures.command("q"));
+        assertThat(result.booking().status()).isEqualTo("PENDING_CONFIRMATION");
+        assertThatThrownBy(() -> service.retry("user", result.booking().bookingId())).isInstanceOf(ShippingException.class);
+        service.create("user", BookingFixtures.command("q"));
+        assertThat(calls).hasValue(1);
+        assertThat(store.byQuote("user", "sandbox", "q").orElseThrow().status()).isEqualTo(BookingStatus.PENDING_INQUIRY);
+    }
+
+    @Test
+    void twoObservedRetryableVersionsStillHaveOnlyOneCasWinner() throws Exception {
+        var unsent = BookingFixtures.service(store, submission -> {
+            throw new ShipmentNotDispatchedException(ShipmentNotDispatchedException.Reason.CIRCUIT_OPEN);
+        }, Clock.systemUTC());
+        assertThatThrownBy(() -> unsent.create("user", BookingFixtures.command("race"))).isInstanceOf(ShippingException.class);
+        var row = store.byQuote("user", "sandbox", "race").orElseThrow();
+        var barrier = new java.util.concurrent.CyclicBarrier(2);
+        var competing = spy(store);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            barrier.await(5, TimeUnit.SECONDS);
+            return invocation.callRealMethod();
+        }).when(competing).claimRetry(any(), anyLong(), anyLong());
+        var service = BookingFixtures.service(competing, submission -> confirm(), Clock.systemUTC());
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(() -> service.retry("user", row.id()));
+            var second = pool.submit(() -> service.retry("user", row.id()));
+            assertThat(first.get(10, TimeUnit.SECONDS).booking().bookingId()).isEqualTo(row.id());
+            assertThat(second.get(10, TimeUnit.SECONDS).booking().bookingId()).isEqualTo(row.id());
+            assertThat(calls).hasValue(1);
+            assertThat(store.byId("user", row.id()).orElseThrow().status()).isEqualTo(BookingStatus.CONFIRMED);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void anExpiredQuoteCannotEraseOrHideItsExistingBooking() {
+        var command = BookingFixtures.command("expires");
+        var clock = Clock.fixed(java.time.Instant.parse("2026-11-16T12:00:00Z"), java.time.ZoneOffset.UTC);
+        var display = command.displaySnapshot();
+        var dated = new BookingCommand(command.providerId(), command.providerQuoteId(), command.shippingInput(),
+                new BookingCommand.DisplaySnapshot(display.carrierId(), display.carrierName(), display.serviceId(),
+                        display.serviceName(), display.total(), clock.instant().plusSeconds(30), "LOCAL_ESTIMATE"));
+        var service = BookingFixtures.service(store, submission -> confirm(), clock);
+        String id = service.create("user", dated).booking().bookingId();
+        var expired = BookingFixtures.service(store, submission -> {
+            throw new AssertionError("Existing expired selection must not dispatch");
+        }, Clock.offset(clock, java.time.Duration.ofDays(1)));
+        var row = store.byId("user", id).orElseThrow();
+        assertThat(expired.create("user", dated).booking().bookingId()).isEqualTo(id);
+        assertThat(expired.lookup("user", "sandbox", "expires").status()).isEqualTo("CONFIRMED");
+        assertThat(expired.get("user", id).status()).isEqualTo("CONFIRMED");
+        assertThat(store.byId("user", id).orElseThrow()).isEqualTo(row);
+        assertThat(calls).hasValue(1);
     }
 }

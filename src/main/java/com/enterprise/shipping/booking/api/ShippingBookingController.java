@@ -1,12 +1,10 @@
 package com.enterprise.shipping.booking.api;
 
 import com.enterprise.shipping.booking.application.ShipmentApplicationService;
+import com.enterprise.shipping.booking.application.BookingCommand;
 import com.enterprise.shipping.shared.identity.UserContext;
 import com.enterprise.shipping.shared.api.ShippingLinks;
 import com.enterprise.shipping.shared.domain.ShippingException.Resource;
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
 import java.net.URI;
 import java.util.Map;
 import org.springframework.http.HttpHeaders;
@@ -19,6 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -37,23 +36,28 @@ public class ShippingBookingController {
         this.users = users;
     }
 
-    public record Create(@NotBlank @Size(max = 100) String quoteId) {}
-
-    /**
-     * Enforces an Idempotency-Key header on booking creation requests.
-     */
     @PostMapping
-    public ResponseEntity<?> create(
-            @RequestHeader("Idempotency-Key") String key, @RequestBody @Valid Create body) {
+    public ResponseEntity<?> create(@RequestBody BookingCommand body) {
+        return response(service.create(users.userId(), body));
+    }
 
-        var result = service.create(users.userId(), key, body.quoteId());
+    @PostMapping("/{id}/retry")
+    public ResponseEntity<?> retry(@PathVariable String id) {
+        return response(service.retry(users.userId(), id));
+    }
+
+    @GetMapping("/lookup")
+    public BookingResponse lookup(@RequestParam String providerId, @RequestParam String providerQuoteId) {
+        return BookingResponse.from(service.lookup(users.userId(), providerId, providerQuoteId));
+    }
+
+    private ResponseEntity<?> response(ShipmentApplicationService.Submission result) {
         HttpStatus status =
                 switch (result.disposition()) {
                     case CREATED -> HttpStatus.CREATED;
                     case EXISTING -> HttpStatus.OK;
                     case PENDING -> HttpStatus.ACCEPTED;
                     case REJECTED -> HttpStatus.UNPROCESSABLE_ENTITY;
-                    case CONFLICT -> HttpStatus.CONFLICT;
                 };
         var booking = BookingResponse.from(result.booking());
         var response = ResponseEntity.status(status).location(URI.create(booking.statusUrl()));
@@ -61,11 +65,6 @@ public class ShippingBookingController {
         // Suggest polling client to retry after 2 seconds on asynchronous accepted outcomes (202)
         if (status == HttpStatus.ACCEPTED) {
             response.header("Retry-After", "2");
-        }
-
-        // Return conflicts/errors wrapped in error structures if supplied
-        if (result.code() != null) {
-            return response.body(Map.of("code", result.code(), "booking", booking));
         }
 
         return response.body(booking);
@@ -78,6 +77,8 @@ public class ShippingBookingController {
 
     public record BookingResponse(
             String bookingId,
+            String providerId,
+            String providerQuoteId,
             String status,
             String shipmentId,
             String trackingNumber,
@@ -88,6 +89,8 @@ public class ShippingBookingController {
         static BookingResponse from(ShipmentApplicationService.View booking) {
             return new BookingResponse(
                     booking.bookingId(),
+                    booking.providerId(),
+                    booking.providerQuoteId(),
                     booking.status(),
                     booking.shipmentId(),
                     booking.trackingNumber(),

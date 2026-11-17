@@ -8,7 +8,8 @@ import com.enterprise.shipping.booking.port.LabelProviderPort;
 import com.enterprise.shipping.booking.port.ShipmentProviderPort;
 import com.enterprise.shipping.booking.port.ShipmentStore;
 import com.enterprise.shipping.booking.port.ShippingBookingObserver;
-import com.enterprise.shipping.quote.contract.QuoteSelectionPort;
+import jakarta.validation.Validator;
+import java.time.ZoneId;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
 import java.time.Duration;
@@ -34,14 +35,18 @@ public class ShippingBookingConfiguration {
     @Bean
     ShipmentApplicationService shipmentApplicationService(
             ShipmentStore store,
-            QuoteSelectionPort quotes,
+            Validator validator,
             ShipmentProviderPort provider,
             LabelProviderPort labels,
             Clock clock,
             @Value("${shipping.provider.create-timeout}") Duration timeout,
-            ShippingBookingObserver observer) {
+            ShippingBookingObserver observer,
+            @Value("${shipping.provider.provider-id}") String providerId,
+            @Value("${shipping.provider.account-alias}") String accountAlias,
+            @Value("${shipping.business-timezone:America/Toronto}") String zone) {
         return new ShipmentApplicationService(
-                store, quotes, provider, labels, clock, timeout, observer);
+                store, validator, provider, labels, clock, timeout, observer,
+                providerId, accountAlias, ZoneId.of(zone));
     }
 
     @Bean

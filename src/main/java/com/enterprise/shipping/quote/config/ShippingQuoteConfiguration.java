@@ -5,10 +5,8 @@ import com.enterprise.shipping.quote.application.QuoteApplicationService;
 import com.enterprise.shipping.quote.application.SingleProviderRateEngine;
 import com.enterprise.shipping.quote.infrastructure.monitoring.MicrometerQuoteObserver;
 import com.enterprise.shipping.quote.infrastructure.monitoring.MicrometerShippingQuoteObserver;
-import com.enterprise.shipping.quote.infrastructure.persistence.JdbcQuoteStore;
 import com.enterprise.shipping.quote.port.CarrierRatePort;
 import com.enterprise.shipping.quote.port.QuoteObserver;
-import com.enterprise.shipping.quote.port.QuoteStore;
 import com.enterprise.shipping.quote.port.RateComparisonPort;
 import com.enterprise.shipping.quote.port.RateProviderPort;
 import com.enterprise.shipping.quote.port.ShippingQuoteObserver;
@@ -20,15 +18,11 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.ZoneId;
 import java.util.List;
-import javax.sql.DataSource;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Wires the quote module, supporting both single-provider aggregator rating and
@@ -46,13 +40,6 @@ public class ShippingQuoteConfiguration {
     @Bean
     ShippingQuoteObserver shippingQuoteObserver(MeterRegistry metrics) {
         return new MicrometerShippingQuoteObserver(metrics);
-    }
-
-    @Bean
-    QuoteStore quoteStore(DataSource source) {
-        return new JdbcQuoteStore(
-                new JdbcTemplate(source),
-                new TransactionTemplate(new DataSourceTransactionManager(source)));
     }
 
     @Bean
@@ -85,13 +72,12 @@ public class ShippingQuoteConfiguration {
 
     @Bean
     QuoteApplicationService quoteApplicationService(
-            QuoteStore store,
             RateComparisonPort engine,
             Clock clock,
             @Value("${shipping.provider.rate-timeout}") Duration timeout,
             @Value("${shipping.business-timezone:America/Toronto}") String zone,
             ShippingQuoteObserver observer) {
         return new QuoteApplicationService(
-                store, engine, clock, timeout, ZoneId.of(zone), observer);
+                engine, clock, timeout, ZoneId.of(zone), observer);
     }
 }

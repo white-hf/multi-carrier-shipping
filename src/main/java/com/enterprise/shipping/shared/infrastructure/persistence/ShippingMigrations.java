@@ -41,7 +41,10 @@ public final class ShippingMigrations {
                 if (!previous.isEmpty()) {
                     if (!checksum.equals(previous.get(0))) {
                         throw new IllegalStateException(
-                                "Applied migration checksum changed: " + name);
+                                "Applied migration checksum changed: " + name
+                                        + ". Stop the application and run ./scripts/start-workflow.sh --reset-database "
+                                        + "to delete the configured old database and rebuild it (existing bookings are lost), "
+                                        + "or set SHIPPING_DATABASE_PATH to a fresh .db file. Do not edit schema_migrations.");
                     }
                     continue;
                 }

@@ -22,7 +22,6 @@ public class ShippingException extends RuntimeException {
     }
 
     public enum Resource {
-        QUOTE_REQUEST,
         BOOKING
     }
 
@@ -104,10 +103,6 @@ public class ShippingException extends RuntimeException {
 
     public Operation operation() {
         return operation;
-    }
-
-    public ShippingException forQuoteRequest(String id) {
-        return forOperation(Resource.QUOTE_REQUEST, id);
     }
 
     public ShippingException forBooking(String id) {

@@ -97,7 +97,7 @@ class OutboundDiagnosticsTest {
                             ShippingException.class);
             assertThat(failure.code()).isEqualTo("PROVIDER_UNAVAILABLE");
             assertThat(failure.getCause()).isSameAs(original);
-            var enriched = failure.forQuoteRequest("request-1");
+            var enriched = failure.forBooking("booking-1");
             assertThat(enriched.getCause()).isSameAs(original);
             var response = new ShippingExceptionHandler().shipping(enriched);
             assertThat(response.getStatusCode().value()).isEqualTo(502);

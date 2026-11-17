@@ -65,7 +65,7 @@ class ShippingExceptionHandlerTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"QUOTE_REQUEST,/api/quotes/operation-1", "BOOKING,/api/bookings/operation-1"})
+    @CsvSource({"BOOKING,/api/bookings/operation-1"})
     void buildsTheOriginalOperationLocatorOnlyAtTheApiBoundary(Resource resource, String path)
             throws Exception {
         mvc.perform(
@@ -94,11 +94,11 @@ class ShippingExceptionHandlerTest {
     @Test
     void attachingResourceIdentityDoesNotMutateTheOriginalExceptionOrChangeFailureClassification() {
         var original = ShippingException.dependencyTimeout("PROVIDER_TIMEOUT");
-        var quote = original.forQuoteRequest("quote-1");
-        var booking = quote.forBooking("booking-1");
+        var first = original.forBooking("booking-0");
+        var booking = first.forBooking("booking-1");
         assertThat(original.operation()).isNull();
-        assertThat(quote.operation())
-                .isEqualTo(new ShippingException.Operation(Resource.QUOTE_REQUEST, "quote-1"));
+        assertThat(first.operation())
+                .isEqualTo(new ShippingException.Operation(Resource.BOOKING, "booking-0"));
         assertThat(booking.operation())
                 .isEqualTo(new ShippingException.Operation(Resource.BOOKING, "booking-1"));
         assertThat(booking.category()).isEqualTo(Category.DEPENDENCY_TIMEOUT);
