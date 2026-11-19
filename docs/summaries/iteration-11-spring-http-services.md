@@ -80,3 +80,17 @@ The published development artifact includes pre-existing local configuration/UI 
 The I11 PR deliberately excludes those unrelated changes and the separate I9 harness work; its staged
 snapshot is verified independently. The deployed artifact SHA-256, not an unchanged HEAD identifier,
 identifies the running local build.
+
+## PR #16 review follow-up — deadline boundary
+
+The review identified an over-broad response-validation catch: an exhausted deadline before subscription
+was logged as PROTOCOL_ERROR with status 0, and creation additionally changed PROVIDER_TIMEOUT to
+SHIPMENT_OUTCOME_UNKNOWN. Rates, creation and labels now keep waiting/transport failures outside the
+ShippingException response-validation catches. Native decoding failures and received invalid bodies/receipts
+still receive protocol diagnostics; invalid creation receipts remain unknown outcomes. No retry permission
+is added: the booking layer still handles uncertain provider failures conservatively.
+
+SandboxDeadlineBoundaryTest deterministically exhausts the budget after actual guard admission without
+sleeping. For all three APIs it asserts zero reactive subscriptions, preserved PROVIDER_TIMEOUT/category,
+no false protocol/status-0 log, a timeout metric and released permits. All three cases failed before the fix;
+the retained reproduction report is `target/verification/20261119T173110Z-167e3a41/report.json`.

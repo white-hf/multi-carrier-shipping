@@ -12,6 +12,7 @@ import java.util.Objects;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /**
@@ -64,14 +65,18 @@ public class SandboxLabelOperation {
                         : status >= 200 && status < 300 ? OutboundDiagnostics.Classification.SUCCESS
                                 : OutboundDiagnostics.Classification.DEPENDENCY_FAILURE);
         return guard.execute("default", "labels", OutboundDeadline.after(readTimeout), effective -> {
+            ResponseEntity<byte[]> response;
             try {
-                return decoder.decode(OutboundDeadline.await(http.label(id).contextWrite(diagnostic::context), effective));
+                response = OutboundDeadline.await(http.label(id).contextWrite(diagnostic::context), effective);
             } catch (WebClientResponseException failure) {
                 int status = failure.getStatusCode().value();
                 if (status == 202 || status == 404) {
                     return null;
                 }
                 throw ProviderAccountContext.readFailure(status);
+            }
+            try {
+                return decoder.decode(response);
             } catch (ShippingException invalid) {
                 diagnostic.protocolError();
                 throw invalid;

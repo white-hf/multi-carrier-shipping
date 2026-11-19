@@ -27,6 +27,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.core.codec.DecodingException;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /**
@@ -88,14 +89,18 @@ public class SandboxRateOperation {
 
         // 2. Decode, validate and interpret provider status inside the circuit/permit scope.
         return guard.execute("default", "rates", deadline, effective -> {
+            ResponseEntity<RateApiResponse> response;
             try {
-                var response = OutboundDeadline.await(http.rates(request).contextWrite(diagnostic::context), effective);
-                return offers(response.getBody());
+                response = OutboundDeadline.await(http.rates(request).contextWrite(diagnostic::context), effective);
             } catch (WebClientResponseException failure) {
                 return ratesForStatus(failure.getStatusCode().value());
             } catch (DecodingException failure) {
                 diagnostic.protocolError();
                 throw OutboundJson.invalidResponse(failure);
+            }
+            // Waiting/transport failures are not evidence of an invalid provider response.
+            try {
+                return offers(response.getBody());
             } catch (ShippingException failure) {
                 diagnostic.protocolError();
                 throw failure;

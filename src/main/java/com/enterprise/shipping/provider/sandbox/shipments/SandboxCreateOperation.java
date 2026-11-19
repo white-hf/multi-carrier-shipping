@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.core.codec.DecodingException;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /**
@@ -68,16 +69,23 @@ public class SandboxCreateOperation {
                 status == 200 || status == 201 ? OutboundDiagnostics.Classification.SUCCESS
                         : OutboundDiagnostics.Classification.DEPENDENCY_FAILURE);
         return guard.execute("default", "shipments", OutboundDeadline.after(createTimeout), effective -> {
+            ResponseEntity<CreateShipmentResponse> response;
             try {
-                var response = OutboundDeadline.await(http.create(new CreateShipmentRequest(submission.providerQuoteId()))
+                response = OutboundDeadline.await(http.create(new CreateShipmentRequest(submission.providerQuoteId()))
                         .contextWrite(diagnostic::context), effective);
-                return confirmed(response.getBody());
             } catch (WebClientResponseException failure) {
                 if (failure.getStatusCode().value() == 400) {
                     return CreationOutcome.rejection();
                 }
                 throw ShippingException.outcomeUnknown("SHIPMENT_OUTCOME_UNKNOWN");
-            } catch (DecodingException | ShippingException invalid) {
+            } catch (DecodingException invalid) {
+                diagnostic.protocolError();
+                throw ShippingException.outcomeUnknown("SHIPMENT_OUTCOME_UNKNOWN");
+            }
+            // Preserve deadline failures; only a received invalid receipt becomes outcome unknown here.
+            try {
+                return confirmed(response.getBody());
+            } catch (ShippingException invalid) {
                 diagnostic.protocolError();
                 throw ShippingException.outcomeUnknown("SHIPMENT_OUTCOME_UNKNOWN");
             }
