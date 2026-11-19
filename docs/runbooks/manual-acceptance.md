@@ -61,6 +61,12 @@ Verify the settings without calling the provider:
 
 The script loads the local configuration, builds the application and starts it.
 
+For an already-built, verified artifact, use `./scripts/start-workflow.sh --run-jar /absolute/path/application.jar`.
+This loads the same local configuration and starts that JAR without rebuilding or resetting the database.
+For a long-running development service, copy the verified artifact to a dedicated release directory first,
+so later test/package runs do not replace the JAR used by the running process. Startup remains foreground;
+use the machine's process manager or a detached launcher with a retained log when publishing locally.
+
 Open <http://127.0.0.1:8080/> after startup. Sign in using the application account configured above. The workspace uses the backend API; there is no local demo mode.
 
 ## Try the workflow

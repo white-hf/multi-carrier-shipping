@@ -12,10 +12,10 @@ import com.enterprise.shipping.shared.domain.ShippingAddress;
 import com.enterprise.shipping.shared.domain.ShippingException;
 import com.enterprise.shipping.shared.domain.ShippingIntent;
 import com.enterprise.shipping.shared.domain.WeightUnit;
-import com.enterprise.shipping.shared.infrastructure.http.OutboundClient;
-import com.enterprise.shipping.shared.infrastructure.http.OutboundEndpoint;
-import com.enterprise.shipping.shared.infrastructure.http.ResponseDecoder;
-import com.enterprise.shipping.shared.infrastructure.http.StatusPolicy;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundGuard;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundDeadline;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundDiagnostics;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundJson;
 import com.enterprise.shipping.shared.infrastructure.monitoring.MonitorCarrierApi;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -26,6 +26,8 @@ import java.util.Objects;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
+import org.springframework.core.codec.DecodingException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /**
  * Self-contained rate-quoting API operation for the sandbox provider.
@@ -35,26 +37,8 @@ import org.springframework.stereotype.Component;
 public class SandboxRateOperation {
 
     private static final BigDecimal POUNDS_TO_KILOGRAMS = new BigDecimal("0.45359237");
-    private static final OutboundEndpoint<RateApiRequest, RateApiResponse> ENDPOINT =
-            OutboundEndpoint.post(
-                            "rates",
-                            "/rest/rates",
-                            RateApiRequest.class,
-                            RateApiResponse.class)
-                    .decoder(
-                            ResponseDecoder.json(RateApiResponse.class)
-                                    .validate(SandboxRateOperation::validateCurrency))
-                    .statusPolicy(
-                            StatusPolicy.<RateApiResponse>of(200)
-                                    .onExpected(404, RateApiResponse::empty)
-                                    .onError(
-                                            400,
-                                            () ->
-                                                    ShippingException.invalidInput(
-                                                            "PROVIDER_REQUEST_REJECTED"))
-                                    .otherwiseThrow(ProviderAccountContext::readFailure));
-
-    private final OutboundClient outbound;
+    private final SandboxRatesHttpService http;
+    private final OutboundGuard guard;
     private final ProviderAccountContext context;
     private final int collectionSeconds;
     private final int quoteLifetimeSeconds;
@@ -62,12 +46,14 @@ public class SandboxRateOperation {
 
     @Autowired
     public SandboxRateOperation(
-            @Qualifier("sandboxOutboundClient") OutboundClient outbound,
+            @Qualifier("sandboxRatesHttpService") SandboxRatesHttpService http,
+            @Qualifier("sandboxOutboundGuard") OutboundGuard guard,
             @Qualifier("sandboxAccountContext") ProviderAccountContext context,
             SandboxProviderProperties properties,
             Clock clock) {
         this(
-                outbound,
+                http,
+                guard,
                 context,
                 properties.collectionSeconds(),
                 properties.quoteLifetimeSeconds(),
@@ -75,27 +61,64 @@ public class SandboxRateOperation {
     }
 
     public SandboxRateOperation(
-            OutboundClient outbound,
+            SandboxRatesHttpService http,
+            OutboundGuard guard,
             ProviderAccountContext context,
             int collectionSeconds,
             int quoteLifetimeSeconds,
             Clock clock) {
-        this.outbound = Objects.requireNonNull(outbound, "outbound");
+        this.http = Objects.requireNonNull(http, "http");
+        this.guard = Objects.requireNonNull(guard, "guard");
         this.context = Objects.requireNonNull(context, "context");
         this.collectionSeconds = collectionSeconds;
         this.quoteLifetimeSeconds = quoteLifetimeSeconds;
         this.clock = Objects.requireNonNull(clock, "clock");
-        this.outbound.register(ENDPOINT);
+        guard.registerOperation("rates");
     }
 
     @MonitorCarrierApi(carrier = "shipping-provider")
     public List<RateOffer> fetchRates(ShippingIntent intent, long deadline) {
-        // 1. Convert units and invoke the self-contained /rest/rates endpoint
-        RateApiResponse response = outbound.invoke(ENDPOINT, toRateRequest(intent), deadline);
+        // 1. Preserve request conversion and the caller's absolute deadline.
+        var request = toRateRequest(intent);
+        var diagnostic = OutboundDiagnostics.call(context.providerId(), "rates", status -> switch (status) {
+            case 200 -> OutboundDiagnostics.Classification.SUCCESS;
+            case 404 -> OutboundDiagnostics.Classification.EXPECTED_BRANCH;
+            default -> OutboundDiagnostics.Classification.DEPENDENCY_FAILURE;
+        });
 
-        // 2. Map validated rate items into neutral rate offers
-        long expiresAt = clock.millis() + quoteLifetimeSeconds * 1000L;
-        return toRateOffers(response, context.providerId(), context.accountAlias(), expiresAt);
+        // 2. Decode, validate and interpret provider status inside the circuit/permit scope.
+        return guard.execute("default", "rates", deadline, effective -> {
+            try {
+                var response = OutboundDeadline.await(http.rates(request).contextWrite(diagnostic::context), effective);
+                return offers(response.getBody());
+            } catch (WebClientResponseException failure) {
+                return ratesForStatus(failure.getStatusCode().value());
+            } catch (DecodingException failure) {
+                diagnostic.protocolError();
+                throw OutboundJson.invalidResponse(failure);
+            } catch (ShippingException failure) {
+                diagnostic.protocolError();
+                throw failure;
+            }
+        });
+    }
+
+    private List<RateOffer> offers(RateApiResponse response) {
+        if (response == null) {
+            throw ShippingException.dependencyFailure("PROVIDER_INVALID_RESPONSE");
+        }
+        return toRateOffers(response, context.providerId(), context.accountAlias(),
+                clock.millis() + quoteLifetimeSeconds * 1000L);
+    }
+
+    private List<RateOffer> ratesForStatus(int status) {
+        if (status == 404) {
+            return List.of();
+        }
+        if (status == 400) {
+            throw ShippingException.invalidInput("PROVIDER_REQUEST_REJECTED");
+        }
+        throw ProviderAccountContext.readFailure(status);
     }
 
     public RateApiRequest toRateRequest(ShippingIntent intent) {

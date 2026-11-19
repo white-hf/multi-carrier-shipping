@@ -1,13 +1,16 @@
 package com.enterprise.shipping.provider.sandbox;
 
+
 import com.enterprise.shipping.provider.core.ProviderAccountContext;
 import com.enterprise.shipping.provider.sandbox.labels.LabelIdentity;
 import com.enterprise.shipping.provider.sandbox.labels.LabelResponseDecoder;
 import com.enterprise.shipping.provider.sandbox.labels.SandboxLabelOperation;
+import com.enterprise.shipping.provider.sandbox.labels.SandboxLabelsHttpConfiguration;
 import com.enterprise.shipping.provider.sandbox.rates.SandboxRateOperation;
-import com.enterprise.shipping.provider.sandbox.rates.dto.RateApiResponse;
+import com.enterprise.shipping.provider.sandbox.rates.SandboxRatesHttpConfiguration;
 import com.enterprise.shipping.provider.sandbox.shipments.CreateSubmission;
 import com.enterprise.shipping.provider.sandbox.shipments.SandboxCreateOperation;
+import com.enterprise.shipping.provider.sandbox.shipments.SandboxShipmentsHttpConfiguration;
 import com.enterprise.shipping.provider.sandbox.shipments.dto.CreateShipmentResponse;
 import com.enterprise.shipping.shared.domain.DimensionUnit;
 import com.enterprise.shipping.shared.domain.ShippingAddress;
@@ -16,9 +19,8 @@ import com.enterprise.shipping.shared.domain.ShippingIntent;
 import com.enterprise.shipping.shared.domain.WeightUnit;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundClientRegistry;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundDeadline;
-import com.enterprise.shipping.shared.infrastructure.http.OutboundEndpoint;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundProperties;
-import com.enterprise.shipping.shared.infrastructure.http.ResponseDecoder;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundJson;
 import com.sun.net.httpserver.HttpServer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.math.BigDecimal;
@@ -42,6 +44,14 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.core.ResolvableType;
+import org.springframework.core.io.buffer.DefaultDataBufferFactory;
+import org.springframework.http.codec.json.Jackson2JsonDecoder;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.reactive.function.client.support.WebClientAdapter;
+import org.springframework.web.service.annotation.GetExchange;
+import org.springframework.web.service.invoker.HttpServiceProxyFactory;
+import reactor.core.publisher.Mono;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -93,18 +103,26 @@ class SandboxProviderProtocolTest {
                 "{\"availableRates\":[{\"quoteId\":\"q1\",\"carrierId\":\"1\",\"serviceId\":\"1\",\"totalCharge\":{\"amount\":100,\"currency\":\"USD\"}}]}",
                 "{\"availableRates\":[{\"quoteId\":\"q1\",\"carrierId\":\"1\",\"serviceId\":\"1\",\"totalCharge\":{\"amount\":100,\"currency\":\"CAD\"},\"transitDays\":-1,\"transitUnit\":\"Days\"}]}"
             })
-    void rejectsMalformedOrInvalidRateResponses(String invalidPayload) {
-        var decoder =
-                ResponseDecoder.json(RateApiResponse.class)
-                        .validate(SandboxRateOperation::validateCurrency);
-        var response =
-                ResponseEntity.ok()
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(invalidPayload.getBytes(StandardCharsets.UTF_8));
-        assertThatThrownBy(() -> decoder.decode(response))
-                .isInstanceOfSatisfying(
-                        ShippingException.class,
-                        e -> assertThat(e.code()).isEqualTo("PROVIDER_INVALID_RESPONSE"));
+    void rejectsMalformedOrInvalidRateResponses(String invalidPayload) throws Exception {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/rest/rates", exchange -> {
+            byte[] bytes = invalidPayload.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        server.start();
+        try (var registry = new OutboundClientRegistry(new OutboundProperties(), new SimpleMeterRegistry())) {
+            var client = registry.registerClient("sandbox", "http://127.0.0.1:" + server.getAddress().getPort(), builder -> {
+            });
+            var operation = new SandboxRateOperation(new SandboxRatesHttpConfiguration().sandboxRatesHttpService(client), registry.guard("sandbox"),
+                    new ProviderAccountContext("sandbox", "account", Set.of()), 10, 300, Clock.systemUTC());
+            assertThatThrownBy(() -> operation.fetchRates(INTENT, OutboundDeadline.after(Duration.ofSeconds(3))))
+                    .isInstanceOfSatisfying(ShippingException.class,
+                            e -> assertThat(e.code()).isEqualTo("PROVIDER_INVALID_RESPONSE"));
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
@@ -159,21 +177,126 @@ class SandboxProviderProtocolTest {
                         e -> assertThat(e.code()).isEqualTo("PROVIDER_INVALID_RESPONSE"));
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "null", "{}", " ", "{\"labelUrl\":null}", "{\"labelUrl\":123}", "{\"labelUrl\":true}",
+        "{\"labelUrl\":\"https://labels.example.com/a.pdf\"} {}",
+        "{\"labelUrl\":\"https://evil.example.com/a.pdf\"}",
+        "{\"labelUrl\":\"https://user@labels.example.com/a.pdf\"}"
+    })
+    void strictLabelJsonStillRejectsInvalidBodies(String body) {
+        var context = new ProviderAccountContext("sandbox", "account", Set.of("labels.example.com"));
+        var decoder = new LabelResponseDecoder(context::allowedUrl);
+        var response = ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON)
+                .body(body.getBytes(StandardCharsets.UTF_8));
+        assertThatThrownBy(() -> decoder.decode(response))
+                .isInstanceOfSatisfying(ShippingException.class,
+                        failure -> assertThat(failure.code()).isEqualTo("PROVIDER_INVALID_RESPONSE"));
+    }
+
+    @Test
+    void malformedLabelIsRecordedInsideTheGuard(CapturedOutput output) throws Exception {
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/rest/shipments/123/label", exchange -> {
+            byte[] bytes = "{\"labelUrl\":123}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        server.start();
+        var metrics = new SimpleMeterRegistry();
+        try (var registry = new OutboundClientRegistry(new OutboundProperties(), metrics)) {
+            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+            var client = registry.registerClient("sandbox", baseUrl, builder -> {
+            });
+            var routes = new SandboxProviderConfig().sandboxHttpRouteResolver(
+                    new SandboxProviderProperties(baseUrl, "stub", java.util.UUID.randomUUID().toString(),
+                            "sandbox", "account", null, Duration.ofSeconds(90), Duration.ofSeconds(3),
+                            Duration.ofSeconds(3), 10, 300, Set.of()));
+            var operation = new SandboxLabelOperation(
+                    new SandboxLabelsHttpConfiguration().sandboxLabelsHttpService(client, routes),
+                    registry.guard("sandbox"), new ProviderAccountContext("sandbox", "account", Set.of("labels.example.com")),
+                    Duration.ofSeconds(3));
+            assertThatThrownBy(() -> operation.fetch(new LabelIdentity("sandbox", "account", "123")))
+                    .isInstanceOfSatisfying(ShippingException.class,
+                            failure -> assertThat(failure.code()).isEqualTo("PROVIDER_INVALID_RESPONSE"));
+            assertThat(metrics.get("shipping.outbound.duration").tag("operation", "labels")
+                    .tag("outcome", "failure").timer().count()).isEqualTo(1);
+            assertThat(metrics.get("shipping.outbound.inflight").gauge().value()).isZero();
+            assertThat(output.getOut()).contains("operation=labels", "classification=PROTOCOL_ERROR", "httpStatus=200");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"rates", "shipments"})
+    void expectedRejectionDoesNotOpenAvailabilityCircuit(String api) throws Exception {
+        var status = new AtomicInteger(400);
+        var calls = new AtomicInteger();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            calls.incrementAndGet();
+            exchange.getRequestBody().readAllBytes();
+            String body = api.equals("rates") ? "{\"availableRates\":[]}" : "{\"shipId\":123}";
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(status.get(), bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        server.start();
+        try (var registry = new OutboundClientRegistry(new OutboundProperties(), new SimpleMeterRegistry())) {
+            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+            var client = registry.registerClient("sandbox", baseUrl, builder -> {
+            });
+            var context = new ProviderAccountContext("sandbox", "account", Set.of());
+            var rates = new SandboxRateOperation(new SandboxRatesHttpConfiguration().sandboxRatesHttpService(client),
+                    registry.guard("sandbox"), context, 10, 300, Clock.systemUTC());
+            var routes = new SandboxProviderConfig().sandboxHttpRouteResolver(
+                    new SandboxProviderProperties(baseUrl, "stub", java.util.UUID.randomUUID().toString(),
+                            "sandbox", "account", null, Duration.ofSeconds(90), Duration.ofSeconds(3),
+                            Duration.ofSeconds(3), 10, 300, Set.of()));
+            var create = new SandboxCreateOperation(
+                    new SandboxShipmentsHttpConfiguration().sandboxShipmentsHttpService(client, routes),
+                    registry.guard("sandbox"), context, Duration.ofSeconds(3));
+            for (int attempt = 0; attempt < 8; attempt++) {
+                if (api.equals("rates")) {
+                    assertThatThrownBy(() -> rates.fetchRates(INTENT, OutboundDeadline.after(Duration.ofSeconds(3))))
+                            .isInstanceOfSatisfying(ShippingException.class,
+                                    failure -> assertThat(failure.code()).isEqualTo("PROVIDER_REQUEST_REJECTED"));
+                } else {
+                    assertThat(create.create(new CreateSubmission("sandbox", "account", "q")).rejected()).isTrue();
+                }
+            }
+            status.set(200);
+            if (api.equals("rates")) {
+                assertThat(rates.fetchRates(INTENT, OutboundDeadline.after(Duration.ofSeconds(3)))).isEmpty();
+            } else {
+                assertThat(create.create(new CreateSubmission("sandbox", "account", "q")).shipmentId()).isEqualTo("123");
+            }
+            assertThat(calls).hasValue(9);
+        } finally {
+            server.stop(0);
+        }
+    }
+
     @Test
     void createResponseCannotSpoofRejectedFlagFromJson() {
-        var decoder = ResponseDecoder.json(CreateShipmentResponse.class);
-        var parsed =
-                decoder.decode(
-                        ResponseEntity.status(201)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .body(
-                                        "{\"shipId\":123,\"rejected\":true}"
-                                                .getBytes(StandardCharsets.UTF_8)));
+        var decoder = new Jackson2JsonDecoder(OutboundJson.mapper());
+        var parsed = (CreateShipmentResponse) decoder.decode(DefaultDataBufferFactory.sharedInstance.wrap(
+                "{\"shipId\":123,\"rejected\":true}".getBytes(StandardCharsets.UTF_8)),
+                ResolvableType.forClass(CreateShipmentResponse.class), MediaType.APPLICATION_JSON, Map.of());
         assertThat(parsed.rejected()).isFalse();
         assertThat(parsed.shipmentId()).isEqualTo("123");
     }
 
     record UpsTrackResponse(String trackingNumber, String status) {}
+
+    interface UpsService {
+        @GetExchange("/ups/track/{trackingNumber}")
+        Mono<ResponseEntity<UpsTrackResponse>> track(@PathVariable("trackingNumber") String trackingNumber);
+    }
 
     @Test
     void independentApiOperationsAndSecondProviderShareProviderCoreCleanly(
@@ -230,17 +353,24 @@ class SandboxProviderProtocolTest {
 
             var rateOperation =
                     new SandboxRateOperation(
-                            sandboxClient,
+                            new SandboxRatesHttpConfiguration().sandboxRatesHttpService(sandboxClient),
+                            registry.guard("sandbox"),
                             context,
                             10,
                             300,
                             Clock.fixed(Instant.parse("2026-10-29T12:00:00Z"), ZoneOffset.UTC));
+            var properties = new SandboxProviderProperties(baseUrl, "stub", java.util.UUID.randomUUID().toString(),
+                    "sandbox", "local-account", "/custom/shipments", Duration.ofSeconds(90), Duration.ofSeconds(10),
+                    Duration.ofSeconds(10), 10, 300, Set.of("labels.example.com"));
+            var routes = new SandboxProviderConfig().sandboxHttpRouteResolver(properties);
             var createOperation =
                     new SandboxCreateOperation(
-                            sandboxClient, context, "/custom/shipments", Duration.ofSeconds(10));
+                            new SandboxShipmentsHttpConfiguration().sandboxShipmentsHttpService(sandboxClient, routes),
+                            registry.guard("sandbox"), context, Duration.ofSeconds(10));
             var labelOperation =
                     new SandboxLabelOperation(
-                            sandboxClient, context, "/custom/shipments", Duration.ofSeconds(10));
+                            new SandboxLabelsHttpConfiguration().sandboxLabelsHttpService(sandboxClient, routes),
+                            registry.guard("sandbox"), context, Duration.ofSeconds(10));
 
             assertThatThrownBy(
                             () ->
@@ -290,19 +420,12 @@ class SandboxProviderProtocolTest {
                             baseUrl,
                             builder -> {
                             });
-            var upsTrackEndpoint =
-                    OutboundEndpoint.<Void, UpsTrackResponse>get(
-                            "track",
-                            "/ups/track/{trackingNumber}",
-                            UpsTrackResponse.class);
-            upsClient.register(upsTrackEndpoint);
-
-            UpsTrackResponse tracked =
-                    upsClient.invoke(
-                            upsTrackEndpoint,
-                            Map.of("trackingNumber", "1Z999"),
-                            null,
-                            OutboundDeadline.after(Duration.ofSeconds(3)));
+            var upsHttp = HttpServiceProxyFactory.builderFor(WebClientAdapter.create(upsClient))
+                    .build().createClient(UpsService.class);
+            registry.guard("ups").registerOperation("track");
+            UpsTrackResponse tracked = registry.guard("ups").execute("default", "track",
+                    OutboundDeadline.after(Duration.ofSeconds(3)), effective ->
+                            OutboundDeadline.await(upsHttp.track("1Z999"), effective).getBody());
             assertThat(tracked).isEqualTo(new UpsTrackResponse("1Z999", "IN_TRANSIT"));
         } finally {
             registry.close();

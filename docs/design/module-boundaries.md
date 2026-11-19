@@ -71,7 +71,7 @@ For example, `booking.domain.ShipmentBooking` owns booking transitions; `Shipmen
 | --- | --- | --- |
 | `reconciliation` | `booking.contract.ShipmentRecoveryPort` | Discover and update unresolved bookings |
 
-External integrations follow the same separation: each business module owns a provider port and a thin adapter under `infrastructure/provider`. The adapter translates between business types and `provider.sandbox` operation models. **Provider code does not import business modules, and business cores do not import provider implementations.** Each API operation and consumer adapter self-registers in its own package without a central cross-API configuration file.
+External integrations follow the same separation: each business module owns a provider port and a thin adapter under `infrastructure/provider`. The adapter translates between business types and `provider.sandbox` operation models. **Provider code does not import business modules, and business cores do not import provider implementations.** Each API slice owns a pure Spring HTTP interface, its proxy bean configuration and its operation class, so adding an API does not modify a central cross-API configuration file. Operations inject the service interface and keep response interpretation inside the existing guard.
 
 Shared outbound infrastructure owns dependency-level transport and admission, with independent circuits for configured logical groups. Business services do not duplicate these mechanisms. `shared` does not depend on business modules or concrete providers.
 

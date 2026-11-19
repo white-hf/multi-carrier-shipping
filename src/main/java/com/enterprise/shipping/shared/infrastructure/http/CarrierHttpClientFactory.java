@@ -11,7 +11,6 @@ import reactor.netty.resources.ConnectionProvider;
 public final class CarrierHttpClientFactory {
     private static final Duration CONNECTION_ACQUIRE_TIMEOUT = Duration.ofMillis(25);
     private static final Duration CLIENT_WARMUP_TIMEOUT = Duration.ofSeconds(10);
-    private static final int MAX_RESPONSE_BYTES = 256 * 1024;
 
     public enum TransportRetry {
         ENABLED,
@@ -48,7 +47,6 @@ public final class CarrierHttpClientFactory {
         return WebClient.builder()
                 .baseUrl(baseUrl)
                 .clientConnector(new ReactorClientHttpConnector(http))
-                .codecs(config -> config.defaultCodecs().maxInMemorySize(MAX_RESPONSE_BYTES))
                 .build();
     }
 }

@@ -5,16 +5,17 @@ import com.enterprise.shipping.provider.sandbox.SandboxProviderProperties;
 import com.enterprise.shipping.provider.sandbox.shipments.dto.CreateShipmentRequest;
 import com.enterprise.shipping.provider.sandbox.shipments.dto.CreateShipmentResponse;
 import com.enterprise.shipping.shared.domain.ShippingException;
-import com.enterprise.shipping.shared.infrastructure.http.OutboundClient;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundGuard;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundDiagnostics;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundDeadline;
-import com.enterprise.shipping.shared.infrastructure.http.OutboundEndpoint;
-import com.enterprise.shipping.shared.infrastructure.http.StatusPolicy;
 import com.enterprise.shipping.shared.infrastructure.monitoring.MonitorCarrierApi;
 import java.time.Duration;
 import java.util.Objects;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
+import org.springframework.core.codec.DecodingException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /**
  * Self-contained shipment-creation API operation for the sandbox provider.
@@ -23,45 +24,30 @@ import org.springframework.stereotype.Component;
 @Component
 public class SandboxCreateOperation {
 
-    private final OutboundClient outbound;
+    private final SandboxShipmentsHttpService http;
+    private final OutboundGuard guard;
     private final ProviderAccountContext context;
     private final Duration createTimeout;
-    private final OutboundEndpoint<CreateShipmentRequest, CreateShipmentResponse> endpoint;
 
     @Autowired
     public SandboxCreateOperation(
-            @Qualifier("sandboxOutboundClient") OutboundClient outbound,
+            @Qualifier("sandboxShipmentsHttpService") SandboxShipmentsHttpService http,
+            @Qualifier("sandboxOutboundGuard") OutboundGuard guard,
             @Qualifier("sandboxAccountContext") ProviderAccountContext context,
             SandboxProviderProperties properties) {
-        this(outbound, context, properties.shipmentsPath(), properties.createTimeout());
+        this(http, guard, context, properties.createTimeout());
     }
 
     public SandboxCreateOperation(
-            OutboundClient outbound,
+            SandboxShipmentsHttpService http,
+            OutboundGuard guard,
             ProviderAccountContext context,
-            String shipmentsPath,
             Duration createTimeout) {
-        this.outbound = Objects.requireNonNull(outbound, "outbound");
+        this.http = Objects.requireNonNull(http, "http");
+        this.guard = Objects.requireNonNull(guard, "guard");
         this.context = Objects.requireNonNull(context, "context");
         this.createTimeout = Objects.requireNonNull(createTimeout, "createTimeout");
-        this.endpoint =
-                OutboundEndpoint.post(
-                                "shipments",
-                                shipmentsPath,
-                                CreateShipmentRequest.class,
-                                CreateShipmentResponse.class)
-                        .statusPolicy(
-                                StatusPolicy.<CreateShipmentResponse>of(200, 201)
-                                        .onHandledError(400, CreateShipmentResponse::rejection)
-                                        .otherwiseThrow(
-                                                status ->
-                                                        ShippingException.outcomeUnknown(
-                                                                "SHIPMENT_OUTCOME_UNKNOWN"))
-                                        .onDecodeFailure(
-                                                error ->
-                                                        ShippingException.outcomeUnknown(
-                                                                "SHIPMENT_OUTCOME_UNKNOWN")));
-        this.outbound.register(this.endpoint);
+        guard.registerOperation("shipments");
     }
 
     public Capabilities capabilities(String providerId, String accountAlias) {
@@ -77,26 +63,33 @@ public class SandboxCreateOperation {
         // 1. Verify provider and account routing context before external dispatch
         context.requireContext(submission.providerId(), submission.accountAlias());
 
-        // 2. Invoke the declarative shipment creation endpoint in quote-only mode
-        CreateShipmentResponse response =
-                outbound.invoke(
-                        endpoint,
-                        new CreateShipmentRequest(submission.providerQuoteId()),
-                        OutboundDeadline.after(createTimeout));
+        // 2. Status interpretation and receipt validation remain inside the guarded call.
+        var diagnostic = OutboundDiagnostics.call(context.providerId(), "shipments", status ->
+                status == 200 || status == 201 ? OutboundDiagnostics.Classification.SUCCESS
+                        : OutboundDiagnostics.Classification.DEPENDENCY_FAILURE);
+        return guard.execute("default", "shipments", OutboundDeadline.after(createTimeout), effective -> {
+            try {
+                var response = OutboundDeadline.await(http.create(new CreateShipmentRequest(submission.providerQuoteId()))
+                        .contextWrite(diagnostic::context), effective);
+                return confirmed(response.getBody());
+            } catch (WebClientResponseException failure) {
+                if (failure.getStatusCode().value() == 400) {
+                    return CreationOutcome.rejection();
+                }
+                throw ShippingException.outcomeUnknown("SHIPMENT_OUTCOME_UNKNOWN");
+            } catch (DecodingException | ShippingException invalid) {
+                diagnostic.protocolError();
+                throw ShippingException.outcomeUnknown("SHIPMENT_OUTCOME_UNKNOWN");
+            }
+        });
+    }
 
-        // 3. Map the creation outcome and filter any inline label URL through the allowlist
-        if (response.rejected()) {
-            return CreationOutcome.rejection();
+    private CreationOutcome confirmed(CreateShipmentResponse receipt) {
+        if (receipt == null) {
+            throw ShippingException.dependencyFailure("PROVIDER_INVALID_RESPONSE");
         }
-        String tracking =
-                response.trackingNumbers().isEmpty()
-                        ? null
-                        : response.trackingNumbers().get(0);
-        String url = response.labelUrl();
-        return new CreationOutcome(
-                response.shipmentId(),
-                tracking,
-                context.allowedUrl(url) ? url : null,
-                false);
+        String tracking = receipt.trackingNumbers().isEmpty() ? null : receipt.trackingNumbers().get(0);
+        return new CreationOutcome(receipt.shipmentId(), tracking,
+                context.allowedUrl(receipt.labelUrl()) ? receipt.labelUrl() : null, false);
     }
 }
