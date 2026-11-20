@@ -8,15 +8,14 @@ import com.enterprise.shipping.booking.port.ShipmentProviderPort;
 import com.enterprise.shipping.booking.port.ShipmentNotDispatchedException;
 import com.enterprise.shipping.booking.port.ShipmentStore;
 import com.enterprise.shipping.booking.port.ShippingBookingObserver;
-import com.enterprise.shipping.quote.contract.QuoteSelectionPort;
+import jakarta.validation.ConstraintViolationException;
+import jakarta.validation.Validator;
 import com.enterprise.shipping.shared.domain.ShippingException;
 import com.enterprise.shipping.shared.identity.TimeOrderedIds;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Duration;
-import java.util.HexFormat;
-import java.util.Optional;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,7 +40,10 @@ public class ShipmentApplicationService {
 
     private final ShippingBookingObserver observer;
     private final ShipmentStore store;
-    private final QuoteSelectionPort quotes;
+    private final Validator validator;
+    private final String providerId;
+    private final String accountAlias;
+    private final ZoneId zone;
     private final ShipmentProviderPort provider;
     private final LabelProviderPort labels;
     private final Clock clock;
@@ -49,14 +51,20 @@ public class ShipmentApplicationService {
 
     public ShipmentApplicationService(
             ShipmentStore store,
-            QuoteSelectionPort quotes,
+            Validator validator,
             ShipmentProviderPort provider,
             LabelProviderPort labels,
             Clock clock,
             Duration timeout,
-            ShippingBookingObserver observer) {
+            ShippingBookingObserver observer,
+            String providerId,
+            String accountAlias,
+            ZoneId zone) {
         this.store = store;
-        this.quotes = quotes;
+        this.validator = validator;
+        this.providerId = providerId;
+        this.accountAlias = accountAlias;
+        this.zone = zone;
         this.provider = provider;
         this.labels = labels;
         this.clock = clock;
@@ -65,50 +73,47 @@ public class ShipmentApplicationService {
     }
 
     /**
-     * Attempts to book a shipment under a unique user-scoped idempotency key.
+     * Attempts to book a shipment under its user-scoped provider quote identity.
      * Replays prior attempts identically and prevents concurrent duplicate dispatches.
      */
-    public Submission create(String user, String key, String quoteId) {
-        // 1. Enforce strict syntactic format on the incoming idempotency key
-        if (key == null || !key.matches("[A-Za-z0-9._:-]{1,64}")) {
-            throw ShippingException.invalidInput("INVALID_IDEMPOTENCY_KEY");
-        }
-
-        // 2. Perform a fast read optimized for common replay cases
-        String hash = fingerprint(quoteId);
-        Optional<ShipmentStore.Record> prior = store.byKey(user, key);
+    public Submission create(String user, BookingCommand command) {
+        // 1. Validate only identity before returning the original immutable booking.
+        validateIdentity(command.providerId(), command.providerQuoteId());
+        var prior = store.byQuote(user, command.providerId(), command.providerQuoteId());
         if (prior.isPresent()) {
-            return replay(prior.get(), hash);
+            return submission(prior.get(), ShippingBookingObserver.Operation.REPLAY, 0);
         }
 
-        // 3. Resolve and validate the quote selection owned by this user
-        var selection = quotes.resolve(user, quoteId);
+        // 2. New submissions alone require the full snapshot and current basic admission.
+        var violations = validator.validate(command);
+        if (!violations.isEmpty()) {
+            throw new ConstraintViolationException(violations);
+        }
+        LocalDate today = LocalDate.now(clock.withZone(zone));
+        var input = command.shippingInput();
+        input = input.dated(input.shippingDate() == null ? today : input.shippingDate());
+        if (!input.hasCurrentShippingDate(today)) {
+            throw ShippingException.invalidInput("INVALID_SHIPPING_DATE");
+        }
+        var selection = command.selection(accountAlias, input);
         String id = TimeOrderedIds.next();
         long now = clock.millis();
+        if (selection.expiresAt() != null && selection.expiresAt() <= now) {
+            throw ShippingException.conflict("QUOTE_EXPIRED");
+        }
 
         // 4. Commit a unique booking claim in its own short database transaction.
-        // If a concurrent thread or alternative key has already submitted this request_id,
-        // the unique index constraints will abort the insertion, protecting against race
-        // conditions.
+        // The unique provider quote identity chooses one sender across concurrent requests.
         var claim =
                 ShipmentStore.Record.pending(
-                        user, id, key, hash, selection, submissionDeadline(now));
+                        user, id, selection, submissionDeadline(now));
 
         if (!store.claim(claim, now)) {
             // Uniqueness conflict detected. Retrieve the winner to resolve whether it is a replay
             // or conflict.
-            var winner = store.byKey(user, key);
-            if (winner.isPresent()) {
-                requireMatching(winner.get(), hash);
-                return submission(winner.get(), ShippingBookingObserver.Operation.REPLAY, 0);
-            }
-
-            // Same request_id booked by a different key or quote is a terminal conflict.
-            var existing =
-                    store.byRequest(user, selection.requestId())
-                            .orElseThrow(() -> ShippingException.storageUnavailable());
-            return new Submission(
-                    view(existing), Disposition.CONFLICT, "SHIPMENT_ALREADY_SUBMITTED");
+            var winner = store.byQuote(user, command.providerId(), command.providerQuoteId())
+                    .orElseThrow(ShippingException::storageUnavailable);
+            return submission(winner, ShippingBookingObserver.Operation.REPLAY, 0);
         }
 
         return submit(claim, ShippingBookingObserver.Operation.SUBMIT);
@@ -173,53 +178,41 @@ public class ShipmentApplicationService {
         }
     }
 
-    private Submission replay(ShipmentStore.Record row, String hash) {
-        requireMatching(row, hash);
-
-        if (row.restore().canRetry()) {
-            return retry(row);
-        }
-        return submission(row, ShippingBookingObserver.Operation.REPLAY, 0);
-    }
-
-    private void requireMatching(ShipmentStore.Record row, String hash) {
-        if (!hash.equals(row.hash())) {
-            observer.record(
-                    ShippingBookingObserver.Operation.CONFLICT,
-                    ShippingBookingObserver.Outcome.ERROR,
-                    0);
-            throw ShippingException.conflict("IDEMPOTENCY_CONFLICT");
+    private void validateIdentity(String provider, String quote) {
+        if (!providerId.equals(provider) || quote == null || quote.isBlank()
+                || quote.length() > 255 || quote.chars().anyMatch(Character::isISOControl)) {
+            throw ShippingException.invalidInput("INVALID_PROVIDER_QUOTE");
         }
     }
 
-    private Submission retry(ShipmentStore.Record row) {
+    public Submission retry(String user, String id) {
+        // 1. Only a proven-unsent persisted booking may obtain sending rights.
+        var row = store.byId(user, id).orElseThrow(ShippingException::missing);
+        if (!row.restore().canRetry()) {
+            throw ShippingException.conflict("BOOKING_NOT_RETRYABLE").forBooking(id);
+        }
         var booking = row.restore();
         booking.prepareRetry();
-        // Quote owns current request/date/offer eligibility. Do not duplicate its expiry
-        // policy here; the retry SQL independently fences the persisted expiry at claim time.
-        try {
-            quotes.resolve(row.userId(), row.selection().quoteId());
-        } catch (ShippingException unavailable) {
-            throw unavailable.forBooking(row.id());
-        }
         long now = clock.millis();
+        if (row.selection().expiresAt() != null && row.selection().expiresAt() <= now) {
+            throw ShippingException.conflict("QUOTE_EXPIRED").forBooking(id);
+        }
+        if (!row.selection().shippingInput().hasCurrentShippingDate(LocalDate.now(clock.withZone(zone)))) {
+            throw ShippingException.conflict("INVALID_SHIPPING_DATE").forBooking(id);
+        }
+        // 2. The version/state fence, not this read, chooses the single sender.
         long deadline = submissionDeadline(now);
         if (!store.claimRetry(row, now, deadline)) {
             log.info("Shipment retry claim lost bookingId={} version={}", row.id(), row.version());
-            // No reread or second claim. Expiry can also reject this CAS, so do not assert
-            // a persisted PENDING state or imply that a provider call is running.
-            observer.record(
-                    ShippingBookingObserver.Operation.REPLAY,
-                    ShippingBookingObserver.Outcome.UNKNOWN,
-                    0);
-            return new Submission(
-                    new View(row.id(), "CONTENDED", null, null, null, null),
-                    Disposition.PENDING,
-                    null);
+            // Read the committed winner once; a lost fence never authorizes another claim.
+            return submission(store.byId(user, id).orElseThrow(ShippingException::missing),
+                    ShippingBookingObserver.Operation.REPLAY, 0);
         }
         log.info("Shipment retry claimed bookingId={} version={}", row.id(), row.version() + 1);
-        return submit(
+        var submitted = submit(
                 row.forClaimedRetry(booking, deadline), ShippingBookingObserver.Operation.RETRY);
+        return submitted.disposition() == Disposition.CREATED
+                ? new Submission(submitted.booking(), Disposition.EXISTING) : submitted;
     }
 
     private long submissionDeadline(long now) {
@@ -232,13 +225,14 @@ public class ShipmentApplicationService {
         observer.record(
                 operation, observedOutcome(row.status()), replay ? 0 : System.nanoTime() - started);
         var result = view(row);
-        if (row.restore().canRetry()) {
+        if (!replay && row.restore().canRetry()) {
             throw ShippingException.localCapacity("SHIPMENT_SUBMISSION_NOT_DISPATCHED")
                     .forBooking(row.id());
         }
         Disposition disposition =
                 replay
                         ? (row.status().isTerminal() || row.status() == BookingStatus.MANUAL_REVIEW
+                                || row.status() == BookingStatus.RETRYABLE
                                 ? Disposition.EXISTING
                                 : Disposition.PENDING)
                         : switch (row.status()) {
@@ -246,7 +240,7 @@ public class ShipmentApplicationService {
                             case FAILED -> Disposition.REJECTED;
                             default -> Disposition.PENDING;
                         };
-        return new Submission(result, disposition, null);
+        return new Submission(result, disposition);
     }
 
     private ShippingBookingObserver.Outcome observedOutcome(BookingStatus status) {
@@ -260,6 +254,11 @@ public class ShipmentApplicationService {
 
     public View get(String user, String id) {
         return view(store.byId(user, id).orElseThrow(ShippingException::missing));
+    }
+
+    public View lookup(String user, String provider, String quote) {
+        validateIdentity(provider, quote);
+        return view(store.byQuote(user, provider, quote).orElseThrow(ShippingException::missing));
     }
 
     /**
@@ -316,6 +315,8 @@ public class ShipmentApplicationService {
 
         return new View(
                 row.id(),
+                row.selection().providerId(),
+                row.selection().providerQuoteId(),
                 state,
                 row.providerShipmentId(),
                 row.trackingNumber(),
@@ -323,20 +324,11 @@ public class ShipmentApplicationService {
                 row.errorCode());
     }
 
-    private static String fingerprint(String id) {
-        try {
-            var digest =
-                    MessageDigest.getInstance("SHA-256")
-                            .digest(id.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(digest);
-        } catch (java.security.NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException(impossible);
-        }
-    }
-
     /** Business projection; API routes and response metadata are added by the controller. */
     public record View(
             String bookingId,
+            String providerId,
+            String providerQuoteId,
             String status,
             String shipmentId,
             String trackingNumber,
@@ -347,9 +339,8 @@ public class ShipmentApplicationService {
         CREATED,
         EXISTING,
         PENDING,
-        REJECTED,
-        CONFLICT
+        REJECTED
     }
 
-    public record Submission(View booking, Disposition disposition, String code) {}
+    public record Submission(View booking, Disposition disposition) {}
 }

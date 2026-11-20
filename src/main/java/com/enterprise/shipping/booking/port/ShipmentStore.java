@@ -1,17 +1,18 @@
 package com.enterprise.shipping.booking.port;
 
-import com.enterprise.shipping.quote.contract.QuoteSelectionPort.Selection;
-import com.enterprise.shipping.booking.domain.*;
-import java.util.*;
+import com.enterprise.shipping.booking.domain.BookingId;
+import com.enterprise.shipping.booking.domain.BookingSelection;
+import com.enterprise.shipping.booking.domain.BookingStatus;
+import com.enterprise.shipping.booking.domain.CarrierReceipt;
+import com.enterprise.shipping.booking.domain.ShipmentBooking;
+import java.util.Optional;
 
 /** Each mutation commits before returning; this store owns no quote or recovery tables. */
 public interface ShipmentStore {
     record Record(
             String userId,
             String id,
-            String key,
-            String hash,
-            Selection selection,
+            BookingSelection selection,
             BookingStatus status,
             String providerShipmentId,
             String trackingNumber,
@@ -23,9 +24,7 @@ public interface ShipmentStore {
         public static Record pending(
                 String user,
                 String id,
-                String key,
-                String hash,
-                Selection selection,
+                BookingSelection selection,
                 long deadline) {
             var booking =
                     ShipmentBooking.pending(
@@ -33,8 +32,6 @@ public interface ShipmentStore {
             return new Record(
                     user,
                     id,
-                    key,
-                    hash,
                     selection,
                     booking.status(),
                     null,
@@ -71,8 +68,6 @@ public interface ShipmentStore {
             return new Record(
                     userId,
                     id,
-                    key,
-                    hash,
                     selection,
                     booking.status(),
                     null,
@@ -91,8 +86,6 @@ public interface ShipmentStore {
             return new Record(
                     userId,
                     id,
-                    key,
-                    hash,
                     selection,
                     booking.status(),
                     receipt == null ? null : receipt.carrierBookingId(),
@@ -116,9 +109,7 @@ public interface ShipmentStore {
 
     record Completion(Record current, boolean applied) {}
 
-    Optional<Record> byKey(String userId, String key);
-
-    Optional<Record> byRequest(String userId, String requestId);
+    Optional<Record> byQuote(String userId, String providerId, String providerQuoteId);
 
     Optional<Record> byId(String userId, String id);
 

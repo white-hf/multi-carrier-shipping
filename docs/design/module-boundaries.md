@@ -2,6 +2,14 @@
 
 The application is a **modular monolith**: one Spring Boot process, organized by business capability. Ports and adapters keep business rules separate from persistence and external protocols.
 
+## I10 boundary change
+
+The [stateless-quote plan](../iterations/iteration-10-stateless-quotes.md) removes quote persistence and booking's `quote.contract.QuoteSelectionPort` dependency. Target `quote` validates and retrieves transient provider offers; target `booking` owns the submitted input/display snapshot, provider quote identity and durable lifecycle. There is no application-user-to-provider-quote ownership proof. Authenticated ownership remains mandatory for booking/label reads, lookup and retry.
+
+Target tables: booking owns `shipment_bookings`; reconciliation owns its existing `booking_reconciliation_tasks`; quote owns no tables. Existing provider isolation, shared HTTP protection and domain/state boundaries remain. Migration-only historical joins must be explicit and scoped; they do not authorize runtime cross-module joins.
+
+The package/contract/table listings below reflect I10. The obsolete quote-selection contract and stores are removed without a replacement identity/signature framework. Existing architectural fitness rules continue enforcing domain/provider isolation and published peer boundaries.
+
 ## Design Principles
 
 1. **Unidirectional Dependencies, Acyclic Dependencies Principle (ADP) & Dependency Inversion Principle (DIP)**
@@ -33,8 +41,8 @@ The application is a **modular monolith**: one Spring Boot process, organized by
 Root: `src/main/java/com/enterprise/shipping/`
 
 ```text
-auth/             Guest identity, token validation and HTTP authentication
-quote/            Shipping request snapshots, rate comparison and offers
+auth/             Account identity, token validation and HTTP authentication
+quote/            Stateless input validation, rate comparison and transient offers
 booking/          Idempotent shipment creation, booking state and labels
 reconciliation/   Overdue-booking discovery and recovery tasks
 provider/         External API protocols, isolated by provider and per-API vertical slices
@@ -61,16 +69,15 @@ For example, `booking.domain.ShipmentBooking` owns booking transitions; `Shipmen
 
 | Consumer | Published boundary | Purpose |
 | --- | --- | --- |
-| `booking` | `quote.contract.QuoteSelectionPort` | Resolve an owned, bookable quote |
 | `reconciliation` | `booking.contract.ShipmentRecoveryPort` | Discover and update unresolved bookings |
 
-External integrations follow the same separation: each business module owns a provider port and a thin adapter under `infrastructure/provider`. The adapter translates between business types and `provider.sandbox` operation models. **Provider code does not import business modules, and business cores do not import provider implementations.** Each API operation and consumer adapter self-registers in its own package without a central cross-API configuration file.
+External integrations follow the same separation: each business module owns a provider port and a thin adapter under `infrastructure/provider`. The adapter translates between business types and `provider.sandbox` operation models. **Provider code does not import business modules, and business cores do not import provider implementations.** Each API slice owns a pure Spring HTTP interface, its proxy bean configuration and its operation class, so adding an API does not modify a central cross-API configuration file. Operations inject the service interface and keep response interpretation inside the existing guard.
 
 Shared outbound infrastructure owns dependency-level transport and admission, with independent circuits for configured logical groups. Business services do not duplicate these mechanisms. `shared` does not depend on business modules or concrete providers.
 
 | Owner | Tables |
 | --- | --- |
-| `quote` | `shipment_requests`, `shipment_quotes` |
+| `quote` | None; all rate paths are nonpersistent |
 | `booking` | `shipment_bookings` |
 | `reconciliation` | `booking_reconciliation_tasks` |
 

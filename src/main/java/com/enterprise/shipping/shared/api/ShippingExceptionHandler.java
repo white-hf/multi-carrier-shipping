@@ -1,6 +1,7 @@
 package com.enterprise.shipping.shared.api;
 
 import com.enterprise.shipping.shared.domain.ShippingException;
+import jakarta.validation.ConstraintViolationException;
 import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -80,7 +81,15 @@ public class ShippingExceptionHandler {
 
     @ExceptionHandler(MissingRequestHeaderException.class)
     public ResponseEntity<?> header() {
-        return error(HttpStatus.BAD_REQUEST, "MISSING_IDEMPOTENCY_KEY", List.of());
+        return error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", List.of());
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<?> constraints(ConstraintViolationException exception) {
+        var fields = exception.getConstraintViolations().stream()
+                .map(v -> Map.of("field", v.getPropertyPath().toString(), "message", v.getMessage()))
+                .toList();
+        return error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", fields);
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

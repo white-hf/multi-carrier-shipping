@@ -3,17 +3,17 @@ package com.enterprise.shipping.provider.sandbox.labels;
 import com.enterprise.shipping.provider.core.ProviderAccountContext;
 import com.enterprise.shipping.provider.sandbox.SandboxProviderProperties;
 import com.enterprise.shipping.shared.domain.ShippingException;
-import com.enterprise.shipping.shared.infrastructure.http.OutboundClient;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundGuard;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundDiagnostics;
 import com.enterprise.shipping.shared.infrastructure.http.OutboundDeadline;
-import com.enterprise.shipping.shared.infrastructure.http.OutboundEndpoint;
-import com.enterprise.shipping.shared.infrastructure.http.StatusPolicy;
 import com.enterprise.shipping.shared.infrastructure.monitoring.MonitorCarrierApi;
 import java.time.Duration;
-import java.util.Map;
 import java.util.Objects;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 /**
  * Self-contained label-retrieval API operation for the sandbox provider.
@@ -22,39 +22,32 @@ import org.springframework.stereotype.Component;
 @Component
 public class SandboxLabelOperation {
 
-    private final OutboundClient outbound;
+    private final SandboxLabelsHttpService http;
+    private final OutboundGuard guard;
     private final ProviderAccountContext context;
     private final Duration readTimeout;
-    private final OutboundEndpoint<Void, LabelData> endpoint;
+    private final LabelResponseDecoder decoder;
 
     @Autowired
     public SandboxLabelOperation(
-            @Qualifier("sandboxOutboundClient") OutboundClient outbound,
+            @Qualifier("sandboxLabelsHttpService") SandboxLabelsHttpService http,
+            @Qualifier("sandboxOutboundGuard") OutboundGuard guard,
             @Qualifier("sandboxAccountContext") ProviderAccountContext context,
             SandboxProviderProperties properties) {
-        this(outbound, context, properties.shipmentsPath(), properties.readTimeout());
+        this(http, guard, context, properties.readTimeout());
     }
 
     public SandboxLabelOperation(
-            OutboundClient outbound,
+            SandboxLabelsHttpService http,
+            OutboundGuard guard,
             ProviderAccountContext context,
-            String shipmentsPath,
             Duration readTimeout) {
-        this.outbound = Objects.requireNonNull(outbound, "outbound");
+        this.http = Objects.requireNonNull(http, "http");
+        this.guard = Objects.requireNonNull(guard, "guard");
         this.context = Objects.requireNonNull(context, "context");
         this.readTimeout = Objects.requireNonNull(readTimeout, "readTimeout");
-        this.endpoint =
-                OutboundEndpoint.<Void, LabelData>get(
-                                "labels",
-                                shipmentsPath + "/{shipmentId}/label",
-                                LabelData.class)
-                        .decoder(new LabelResponseDecoder(context::allowedUrl))
-                        .statusPolicy(
-                                StatusPolicy.<LabelData>of2xx()
-                                        .onExpected(202, () -> null)
-                                        .onExpected(404, () -> null)
-                                        .otherwiseThrow(ProviderAccountContext::readFailure));
-        this.outbound.register(this.endpoint);
+        this.decoder = new LabelResponseDecoder(context::allowedUrl);
+        guard.registerOperation("labels");
     }
 
     @MonitorCarrierApi(carrier = "shipping-provider")
@@ -66,12 +59,29 @@ public class SandboxLabelOperation {
             throw ShippingException.dependencyFailure("PROVIDER_INVALID_RESPONSE");
         }
 
-        // 2. Invoke the declarative /rest/shipments/{shipmentId}/label endpoint
-        return outbound.invoke(
-                endpoint,
-                Map.of("shipmentId", id),
-                null,
-                OutboundDeadline.after(readTimeout));
+        // 2. Spring binds the path variable; decode PDF/URL data inside the read protection scope.
+        var diagnostic = OutboundDiagnostics.call(context.providerId(), "labels", status ->
+                status == 202 || status == 404 ? OutboundDiagnostics.Classification.EXPECTED_BRANCH
+                        : status >= 200 && status < 300 ? OutboundDiagnostics.Classification.SUCCESS
+                                : OutboundDiagnostics.Classification.DEPENDENCY_FAILURE);
+        return guard.execute("default", "labels", OutboundDeadline.after(readTimeout), effective -> {
+            ResponseEntity<byte[]> response;
+            try {
+                response = OutboundDeadline.await(http.label(id).contextWrite(diagnostic::context), effective);
+            } catch (WebClientResponseException failure) {
+                int status = failure.getStatusCode().value();
+                if (status == 202 || status == 404) {
+                    return null;
+                }
+                throw ProviderAccountContext.readFailure(status);
+            }
+            try {
+                return decoder.decode(response);
+            } catch (ShippingException invalid) {
+                diagnostic.protocolError();
+                throw invalid;
+            }
+        });
     }
 
     public boolean allowedUrl(String url) {

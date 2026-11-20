@@ -96,7 +96,8 @@ public class ShippingAuthenticationFilter extends OncePerRequestFilter {
         String operation = null;
         if ("POST".equals(request.getMethod()) && "/api/quotes".equals(path)) {
             operation = "quotes";
-        } else if ("POST".equals(request.getMethod()) && "/api/bookings".equals(path)) {
+        } else if ("POST".equals(request.getMethod())
+                && ("/api/bookings".equals(path) || path.matches("/api/bookings/[^/]+/retry"))) {
             operation = "bookings";
         } else if (("GET".equals(request.getMethod()) || "HEAD".equals(request.getMethod()))
                 && path.matches("/api/bookings/[^/]+/label")) {

@@ -1,5 +1,15 @@
 # Shipping Web Application — Delivery Plan
 
+## Current follow-up target (2026-11-16)
+
+[I11 — Replace custom declarative HTTP with Spring HTTP services](iteration-11-spring-http-services.md) is implemented and verified on `codex/spring-http-service-clients`; see the [I11 summary](../summaries/iteration-11-spring-http-services.md). It is an engineering refactor only and changes no product, schema, auth or booking semantics. Release and merge remain separate actions.
+
+[I10 — Stateless quotes and provider-quote booking deduplication](iteration-10-stateless-quotes.md) records the new user-approved business boundaries. Implementation is authorized; historical-data migration/old-table compatibility was subsequently removed from scope. It supersedes earlier quote durability/random-key/request-level deduplication requirements. Existing acceptance below remains historical evidence, not proof of I10 completion. Current account login is retained. See the [I10 summary](../summaries/iteration-10-stateless-quotes.md) for evidence boundaries.
+
+The revised I10 sequence is contract review → new database baseline → joint backend/frontend/storage/test implementation → current-source verification → separately authorized deployment. No automatic database reset or mixed old/new duplicate rules is allowed. Follow current repository verification instructions; the historical deferred-testing agreement below does not override them.
+
+## Historical delivery roadmap and acceptance
+
 **Version:** 1.3  
 **Status:** I1, I2 and I3 accepted for the agreed demo scope after independent review follow-up (2026-10-23)  
 **Design baseline:** [Backend technical design](../design/backend-design.md), including fixed demo user, user-based routing, core engineering challenges and the minimal HTML + Bootstrap 5 + Vanilla JavaScript frontend. External API names and the documentation reference are recorded in the design; detailed contracts stay in the supplied integration reference. Historical sandbox checks and current deterministic acceptance evidence are recorded separately in the acceptance report.

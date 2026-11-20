@@ -12,13 +12,15 @@ The project demonstrates three engineering choices:
 
 **Java 17 · Spring Boot 3.2 · Spring JDBC · SQLite · Resilience4j · Micrometer · HTML / CSS / Vanilla JavaScript**
 
+**I10:** [Stateless quotes and provider-quote booking deduplication](docs/iterations/iteration-10-stateless-quotes.md), with read-only recovery and separate explicit known-unsent retry. A fresh two-business-table database baseline is used; historical-data migration is out of scope. Deployment and real-provider verification are separate from local implementation.
+
 ## 1. System Overview
 
-The application runs as a **single-process modular monolith with one SQLite database**. The default quote path makes one call to an external multi-carrier aggregator; the application does not fan out to individual carriers on this path. Guest authentication establishes a user scope for requests and bookings.
+The application runs as a **single-process modular monolith with one SQLite database**. The default quote path makes one call to an external multi-carrier aggregator; it does not persist quotes/requests or fan out to individual carriers on this path. Account authentication establishes the booking owner scope.
 
 [![Shipping demo system architecture](docs/design/demo-architecture.svg)](docs/design/demo-architecture.svg)
 
-The diagram shows the implemented system structure, with shared infrastructure and observability alongside the business layers. Lines indicate structural connections, not execution order. Each business module owns its tables within the same SQLite database. See [module boundaries](docs/design/module-boundaries.md) for code dependency details.
+The diagram is the historical pre-I10 structure. The current [backend diagram](docs/design/backend-design.md#target-ownership-and-flow) removes quote persistence and booking-to-quote resolution. See [module boundaries](docs/design/module-boundaries.md) for current ownership.
 
 ## 2. Key Design Decisions
 
@@ -28,7 +30,7 @@ The diagram shows the implemented system structure, with shared infrastructure a
 
 **Decision:** bound outbound work through one shared component. Each provider/carrier owns its connection pool and zero-wait total admission limit; the sandbox default is **8 concurrent calls across rates, creation and labels**. Logical groups have independent circuits and optional smaller concurrency limits. The core workflow currently uses one default group: rate traffic can consume booking capacity, and a shared circuit can stop all three operations. Add a group for independently failing or lower-priority work; groups still share connections. Local overload returns `503 PROVIDER_CAPACITY_EXCEEDED`.
 
-**Implementation:** monotonic deadlines cover response headers and body consumption. A persisted request snapshot and content fingerprint coalesce same-key in-flight submissions; version-fenced updates allow failed or expired rate requests to retry without a second concurrent execution. The default breaker uses a 10-call window, a five-call minimum, a 50% failure threshold and a ten-second open interval. `shipping.outbound` inherits defaults through optional templates and dependency overrides; operation-level latency/outcome metrics guide tuning. Adaptive admission is reserved as an extension.
+**Implementation:** monotonic deadlines cover response headers and body consumption. Each valid rate query invokes the provider without business-table writes, a random key or a persisted execution lifecycle. The default breaker uses a 10-call window, a five-call minimum, a 50% failure threshold and a ten-second open interval. `shipping.outbound` inherits defaults through optional templates and dependency overrides; operation-level latency/outcome metrics guide tuning. Adaptive admission is reserved as an extension.
 
 `SingleProviderRateEngine` implements the default aggregator path. The optional `HighFanOutAggregationEngine` supports direct carrier adapters with asynchronous aggregation, per-carrier bounded executors (`SynchronousQueue`), a global deadline and cooperative cancellation. It is retained as an alternative implementation behind `RateComparisonPort`.
 
@@ -38,7 +40,7 @@ The diagram shows the implemented system structure, with shared infrastructure a
 
 **Decision:** commit a durable booking claim before dispatch, perform external I/O outside database transactions, then persist the result with a version-fenced update. This avoids holding scarce database connections during a slow provider call.
 
-**Implementation:** `UNIQUE(user_id, idempotency_key)` arbitrates same-key submissions; `UNIQUE(user_id, request_id)` also prevents different keys from booking the same request twice. The `ShipmentBooking` aggregate enforces transitions between pending, confirmed, rejected and uncertain outcomes. Confirmed or uncertain replays return the existing state without another creation request. A proven local admission rejection is stored as `RETRYABLE`; an explicit same-key retry must win a version-fenced claim before dispatching the original booking.
+**Implementation:** `UNIQUE(user_id, provider_id, provider_quote_id)` arbitrates initial submissions; only the committed insert winner dispatches. Different quotes may independently create shipments. Submitted input/display snapshots are not ownership proof or provider-confirmed prices. Ordinary create returns an existing booking without resending. GET status/quote-identity lookup are read-only. Only a separate explicit RETRYABLE retry can win a version-fenced claim and send using original saved facts. Provider quote uniqueness scope/reuse is an external-contract release gate; current configuration has one account per provider.
 
 **Recovery tradeoff:** the current provider has no documented authoritative reference lookup and its creation idempotency is unverified. Overdue uncertain bookings therefore become `MANUAL_REVIEW`, with a deduplicated paused recovery task, instead of automatic creation retries. Normal successful bookings create no recovery task. This protects against duplicate application submissions while retaining claims; it does not guarantee external success or end-to-end exactly-once processing.
 
@@ -48,14 +50,14 @@ Label retrieval is a separate read operation against an existing confirmed shipm
 
 **Failure scenario:** a transport timeout alone does not explain whether a rate request can retry or a booking requires manual review.
 
-**Decision and implementation:** request correlation IDs connect API logs to persisted request and booking IDs. Explicit error codes distinguish conflicts, provider timeouts and capacity failures. Spring AOP measures outbound transport latency; observer ports collect business outcomes and overdue-booking metrics without embedding Micrometer calls in domain logic. Provider configuration redacts credentials, and application event logs avoid shipment contact details.
+**Decision and implementation:** request correlation IDs connect API logs to provider calls and durable booking IDs. Explicit error codes distinguish conflicts, provider timeouts and capacity failures. Spring AOP measures outbound transport latency; observer ports collect business outcomes and overdue-booking metrics without embedding Micrometer calls in domain logic. Provider configuration redacts credentials, and application event logs avoid shipment contact details.
 
 ## 3. Module Boundaries and Evolution
 
 | Module | Responsibility and owned data | Published boundary |
 | --- | --- | --- |
-| `auth` | Guest identity and token validation | HTTP authentication boundary |
-| `quote` | Request snapshots and offers: `shipment_requests`, `shipment_quotes` | `QuoteSelectionPort` for booking; rate-provider ports for external I/O |
+| `auth` | Account identity and token validation | HTTP authentication boundary |
+| `quote` | Transient rate queries and offers; no owned business tables | Rate-provider ports for external I/O |
 | `booking` | Booking claims, state transitions and labels: `shipment_bookings` | `ShipmentRecoveryPort` for discovery and escalation |
 | `reconciliation` | Scheduled discovery and manual-review tasks: `booking_reconciliation_tasks` | Uses booking contracts and a provider-capability port |
 
@@ -67,16 +69,15 @@ There are no cross-module database joins or foreign keys. This reduces coupling 
 
 | Area | Evidence |
 | --- | --- |
-| Backend correctness | **167 tests passed**, covering API behavior, SQLite persistence, concurrency and architecture boundaries |
-| Browser workflow | Separate Playwright Chromium journey passed against local provider stubs |
+| Backend/browser correctness | Current I10 evidence belongs in its delivery summary; earlier test totals are not acceptance of the new contract |
 | Database scale | At commit `78c729e`: **3M requests, 15M quotes, 1.5M bookings and 150K recovery tasks**, using **9.67 GiB** |
 | Indexed reads | At that scale, warmed P95 was **0.31 ms** for booking-key lookup and **0.60 ms** for quote-ID lookup |
 | HTTP throughput | About **155 rate requests/s** and up to **61.4 confirmed rate-to-booking workflows/s** with a local provider stub |
-| Fault handling | Concurrent idempotency, payload conflicts, failed-rate retries and lost creation responses were checked |
+| Historical fault handling | Old key-based concurrency, payload conflicts, failed-rate retries and lost creation responses were checked before I10 |
 
 Performance tests used a **16 GiB RAM / 10 logical CPU Mac**. HTTP tests used a separate small database, a **20 ms local provider stub**, **4 rate / 2 create slots**, and **1–16 concurrent clients**, with three ten-second repetitions per scenario and level. Repository timings are not HTTP timings, and these short local tests do not establish production capacity.
 
-**Load-test follow-up:** the recorded run produced 3,173 `PENDING_INQUIRY` bookings, exposing local admission rejection being treated as an unknown external outcome. The backend now persists proven-unsent attempts as `RETRYABLE` and allows a same-key, version-fenced retry. Targeted regression tests cover this fix; the full load benchmark has not been rerun. HTTP `202 Accepted` remains pending, not confirmed creation.
+**Load-test follow-up:** the historical run exposed local admission rejection being treated as an unknown external outcome. Proven-unsent attempts now remain RETRYABLE, with a separate explicit version-fenced sending endpoint. I10 removes quote persistence and changes booking identity, so historical throughput/database figures are not measurements of current code. HTTP `202 Accepted` remains pending, not confirmed creation.
 
 Current automated tests use local stubs. Earlier live rate, booking and PDF checks are historical observations documented in the acceptance report.
 
@@ -100,7 +101,9 @@ cp .env.example .env
 ./scripts/start-workflow.sh
 ```
 
-New databases are initialized directly from `db/shipping/V001__shipping_schema.sql`, the consolidated first-release schema. When switching from an earlier development build, stop the application and remove its disposable local database file and any matching `-wal` / `-shm` files, then run the same launcher. No path change or historical migration is required. Subsequent starts retain data; files are never reset automatically.
+**I10 upgrade:** an old database may fail with `Applied migration checksum changed: V001__shipping_schema.sql`. Stop the app and run `./scripts/start-workflow.sh --reset-database` to **delete existing bookings and rebuild** the configured database plus WAL/SHM files. For deletion without startup, use `--reset-database-only`. Normal startup never silently resets data. To preserve the old file instead, run `SHIPPING_DATABASE_PATH=./data/stateless.db ./scripts/start-workflow.sh`; this explicit path overrides `.env`. See [upgrade/startup guidance](docs/runbooks/manual-acceptance.md#i10-upgrade-an-old-database-must-be-explicitly-rebuilt).
+
+Packaged-launcher acceptance (isolated database and loopback provider, no real carrier writes): `python3 tests/system/packaged-startup.py`. It builds/starts the actual JAR, verifies database override/reset and linked CSS resources, then exercises login, quotes, booking replay, status and PDF label. Browser acceptance additionally asserts computed application styles and rejects an injected stylesheet 404. Evidence is written to `target/packaged-startup/`.
 
 The launcher reads the ignored local `.env` file or exported environment variables. Configure `SHIPPING_PROVIDER_BASE_URL`, `SHIPPING_PROVIDER_USERNAME` and `SHIPPING_PROVIDER_PASSWORD`; keep credentials out of Git. Real provider shipment creation may be chargeable.
 
@@ -116,4 +119,4 @@ Open **http://127.0.0.1:8080/**. Application logs default to `logs/shipping.log`
 | Recovery discovery | [PendingShipmentDiscovery](src/main/java/com/enterprise/shipping/reconciliation/application/PendingShipmentDiscovery.java) |
 | Shared outbound resilience | [OutboundClientRegistry](src/main/java/com/enterprise/shipping/shared/infrastructure/http/OutboundClientRegistry.java) |
 
-[Module architecture](docs/design/module-boundaries.md) · [Backend design](docs/design/backend-design.md) · [Frontend API contract](docs/design/application-api.md) · [Delivery plan](docs/iterations/delivery-plan.md)
+[Data dictionary](docs/design/data-dictionary.md) · [Module architecture](docs/design/module-boundaries.md) · [Backend design](docs/design/backend-design.md) · [Frontend API contract](docs/design/application-api.md) · [Delivery plan](docs/iterations/delivery-plan.md)

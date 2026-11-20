@@ -3,7 +3,9 @@ package com.enterprise.shipping.booking.infrastructure.persistence;
 import com.enterprise.shipping.booking.domain.BookingStatus;
 import com.enterprise.shipping.booking.domain.ShipmentBooking;
 import com.enterprise.shipping.booking.port.ShipmentStore;
-import com.enterprise.shipping.quote.contract.QuoteSelectionPort.Selection;
+import com.enterprise.shipping.booking.domain.BookingSelection;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.enterprise.shipping.shared.infrastructure.persistence.UniqueConstraints;
 import com.enterprise.shipping.shared.domain.ShippingException;
 import org.slf4j.Logger;
@@ -24,28 +26,20 @@ public final class JdbcShipmentStore implements ShipmentStore {
     private static final Logger log = LoggerFactory.getLogger(JdbcShipmentStore.class);
 
     private static final String BOOKING_SELECT_COLUMNS =
-            "user_id, booking_id, idempotency_key, request_hash, request_id, quote_id, "
-                    + "provider_id, account_alias, provider_quote_id, carrier_id, service_id, "
-                    + "accepted_minor, currency, quote_expires_at, status, provider_shipment_id, "
+            "user_id, booking_id, submission_snapshot, status, provider_shipment_id, "
                     + "tracking_number, label_url, label_status, error_code, submission_deadline_at, version";
 
     private final JdbcTemplate jdbc;
+    private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
 
     public JdbcShipmentStore(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
     }
 
     @Override
-    public Optional<Record> byKey(String user, String key) {
-        // Enforce exact case-sensitive key matching in Java to guard against case-insensitive DB
-        // collations
-        return find("user_id = ? AND idempotency_key = ?", user, key)
-                .filter(r -> key.equals(r.key()));
-    }
-
-    @Override
-    public Optional<Record> byRequest(String user, String id) {
-        return find("user_id = ? AND request_id = ?", user, id);
+    public Optional<Record> byQuote(String user, String providerId, String quoteId) {
+        return find("user_id = ? AND provider_id = ? AND provider_quote_id = ?",
+                user, providerId, quoteId);
     }
 
     @Override
@@ -55,41 +49,30 @@ public final class JdbcShipmentStore implements ShipmentStore {
 
     private Optional<Record> find(String where, Object... args) {
         String sql = "SELECT " + BOOKING_SELECT_COLUMNS + " FROM shipment_bookings WHERE " + where;
-        return jdbc.query(sql, JdbcShipmentStore::map, args).stream().findFirst();
+        return jdbc.query(sql, this::map, args).stream().findFirst();
     }
 
     @Override
     public boolean claim(Record b, long now) {
         var q = b.selection();
 
-        // Standard ANSI INSERT guarded by UNIQUE(user_id, idempotency_key) and UNIQUE(user_id,
-        // request_id).
-        // Catching DuplicateKeyException avoids dialect-specific ON CONFLICT / INSERT IGNORE
-        // clauses.
+        // The database identity constraint, not the optimistic read, arbitrates dispatch rights.
         try {
             return jdbc.update(
                             """
                     INSERT INTO shipment_bookings (
-                        booking_id, user_id, idempotency_key, request_hash, request_id, quote_id,
-                        provider_id, account_alias, provider_quote_id, carrier_id, service_id,
-                        accepted_minor, currency, quote_expires_at, status, label_status,
+                        booking_id, user_id, provider_id, account_alias, provider_quote_id,
+                        submission_snapshot, quote_expires_at, status, label_status,
                         submission_deadline_at, created_at, updated_at, version
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'PENDING', ?, ?, ?, 0)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING', 'PENDING', ?, ?, ?, 0)
                     """,
                             b.id(),
                             b.userId(),
-                            b.key(),
-                            b.hash(),
-                            q.requestId(),
-                            q.quoteId(),
                             q.providerId(),
                             q.accountAlias(),
                             q.providerQuoteId(),
-                            q.carrierId(),
-                            q.serviceId(),
-                            q.acceptedMinor(),
-                            q.currency(),
+                            encode(q),
                             q.expiresAt(),
                             b.deadline(),
                             now,
@@ -111,7 +94,7 @@ public final class JdbcShipmentStore implements ShipmentStore {
                 SET status = 'PENDING', error_code = NULL, submission_deadline_at = ?,
                     updated_at = ?, version = version + 1
                 WHERE user_id = ? AND booking_id = ? AND status = 'RETRYABLE'
-                  AND version = ? AND quote_expires_at > ?
+                  AND version = ? AND (quote_expires_at IS NULL OR quote_expires_at > ?)
                 """,
                         deadline,
                         now,
@@ -220,7 +203,7 @@ public final class JdbcShipmentStore implements ShipmentStore {
                 LIMIT ?
                 """;
         return jdbc.query(
-                sql, JdbcShipmentStore::map, now, afterDeadline, afterDeadline, afterId, limit);
+                sql, this::map, now, afterDeadline, afterDeadline, afterId, limit);
     }
 
     @Override
@@ -235,24 +218,24 @@ public final class JdbcShipmentStore implements ShipmentStore {
                 == 1;
     }
 
-    private static Record map(ResultSet r, int ignored) throws SQLException {
-        var q =
-                new Selection(
-                        r.getString("request_id"),
-                        r.getString("quote_id"),
-                        r.getString("provider_id"),
-                        r.getString("account_alias"),
-                        r.getString("provider_quote_id"),
-                        r.getString("carrier_id"),
-                        r.getString("service_id"),
-                        r.getLong("accepted_minor"),
-                        r.getString("currency"),
-                        r.getLong("quote_expires_at"));
+    private String encode(BookingSelection selection) {
+        try {
+            return json.writeValueAsString(selection);
+        } catch (JsonProcessingException error) {
+            throw new IllegalStateException("Cannot encode booking snapshot", error);
+        }
+    }
+
+    private Record map(ResultSet r, int ignored) throws SQLException {
+        BookingSelection q;
+        try {
+            q = json.readValue(r.getString("submission_snapshot"), BookingSelection.class);
+        } catch (JsonProcessingException error) {
+            throw new SQLException("Invalid stored booking snapshot", error);
+        }
         return new Record(
                 r.getString("user_id"),
                 r.getString("booking_id"),
-                r.getString("idempotency_key"),
-                r.getString("request_hash"),
                 q,
                 BookingStatus.valueOf(r.getString("status")),
                 r.getString("provider_shipment_id"),

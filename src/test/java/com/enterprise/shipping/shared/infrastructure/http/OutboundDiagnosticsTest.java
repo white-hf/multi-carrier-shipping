@@ -31,6 +31,17 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 
 @ExtendWith(OutputCaptureExtension.class)
 class OutboundDiagnosticsTest {
+    interface DiagnosticService {
+        @org.springframework.web.service.annotation.GetExchange("/rates")
+        reactor.core.publisher.Mono<org.springframework.http.ResponseEntity<byte[]>> rates();
+    }
+
+    static DiagnosticService diagnosticService(org.springframework.web.reactive.function.client.WebClient client) {
+        var adapter = org.springframework.web.reactive.function.client.support.WebClientAdapter.create(client.mutate()
+                .defaultStatusHandler(status -> true, response -> reactor.core.publisher.Mono.empty()).build());
+        return org.springframework.web.service.invoker.HttpServiceProxyFactory.builderFor(adapter)
+                .build().createClient(DiagnosticService.class);
+    }
     static Stream<Arguments> reasons() {
         return Stream.of(
                 Arguments.of(new ConnectTimeoutException(), "CONNECT_TIMEOUT"),
@@ -97,7 +108,7 @@ class OutboundDiagnosticsTest {
                             ShippingException.class);
             assertThat(failure.code()).isEqualTo("PROVIDER_UNAVAILABLE");
             assertThat(failure.getCause()).isSameAs(original);
-            var enriched = failure.forQuoteRequest("request-1");
+            var enriched = failure.forBooking("booking-1");
             assertThat(enriched.getCause()).isSameAs(original);
             var response = new ShippingExceptionHandler().shipping(enriched);
             assertThat(response.getStatusCode().value()).isEqualTo(502);
@@ -137,23 +148,26 @@ class OutboundDiagnosticsTest {
         try (var registry =
                 new OutboundClientRegistry(new OutboundProperties(), new SimpleMeterRegistry())) {
             var client =
-                    registry.register(
+                    registry.registerClient(
                             "test",
                             "http://127.0.0.1:" + server.getAddress().getPort(),
-                            Set.of("rates"),
                             builder ->
                                     builder.defaultHeaders(
                                             headers ->
                                                     headers.setBasicAuth(
-                                                            "private-user", "private-password")));
+                                                             "private-user", "private-password")));
+            var http = diagnosticService(client);
+            var guard = registry.guard("test");
+            guard.registerOperation("rates");
+            var call = OutboundDiagnostics.call("test", "rates", status -> OutboundDiagnostics.Classification.DEPENDENCY_FAILURE);
             var failure =
                     catchThrowableOfType(
                             () ->
-                                    client.execute(
-                                            "rates",
+                                    guard.execute(
+                                            "default", "rates",
                                             OutboundDeadline.after(Duration.ofSeconds(3)),
-                                            exchange -> {
-                                                var response = exchange.get("/rates");
+                                            effective -> {
+                                                var response = OutboundDeadline.await(http.rates().contextWrite(call::context), effective);
                                                 assertThat(response.getStatusCode().value())
                                                         .isEqualTo(429);
                                                 throw ShippingException.dependencyFailure(
@@ -236,19 +250,22 @@ class OutboundDiagnosticsTest {
         properties.getDefaults().setMaxResponseBytes(64);
         try (var registry = new OutboundClientRegistry(properties, new SimpleMeterRegistry())) {
             var client =
-                    registry.register(
+                    registry.registerClient(
                             "test",
                             "http://127.0.0.1:" + server.getAddress().getPort(),
-                            Set.of("rates"),
                             builder -> {
                             });
+            var http = diagnosticService(client);
+            var guard = registry.guard("test");
+            guard.registerOperation("rates");
+            var call = OutboundDiagnostics.call("test", "rates", status -> OutboundDiagnostics.Classification.DEPENDENCY_FAILURE);
             assertThat(
                             catchThrowableOfType(
                                     () ->
-                                            client.execute(
-                                                    "rates",
+                                            guard.execute(
+                                                    "default", "rates",
                                                     OutboundDeadline.after(Duration.ofSeconds(3)),
-                                                    exchange -> exchange.get("/rates")),
+                                                    effective -> OutboundDeadline.await(http.rates().contextWrite(call::context), effective)),
                                     ShippingException.class))
                     .isNotNull();
             assertThat(output.getOut())

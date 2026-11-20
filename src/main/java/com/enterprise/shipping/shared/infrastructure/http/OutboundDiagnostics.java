@@ -21,6 +21,54 @@ import reactor.netty.http.client.PrematureCloseException;
 
 /** Backend-only diagnostics. Error bodies are filtered, redacted and bounded; headers stay private. */
 public final class OutboundDiagnostics {
+    /** Per-subscription instrumentation, carried in Reactor Context rather than provider headers. */
+    public static final class HttpCall {
+        private final String dependency;
+        private final String operation;
+        private final String requestId;
+        private final long started = System.nanoTime();
+        private final java.util.function.IntFunction<Classification> classification;
+        private volatile org.springframework.http.ResponseEntity<byte[]> received;
+
+        private HttpCall(
+                String dependency,
+                String operation,
+                java.util.function.IntFunction<Classification> classification) {
+            this.dependency = dependency;
+            this.operation = operation;
+            this.classification = classification;
+            this.requestId = org.slf4j.MDC.get("requestId");
+        }
+
+        public reactor.util.context.Context context(reactor.util.context.Context context) {
+            return context.put(HttpCall.class, this);
+        }
+
+        void received(org.springframework.http.ResponseEntity<byte[]> response) {
+            received = response;
+            OutboundDiagnostics.response(dependency, operation, response.getStatusCode().value(),
+                    started, requestId, response.getBody(), null, classification.apply(response.getStatusCode().value()));
+        }
+
+        void bodyFailure(int status, String hint) {
+            OutboundDiagnostics.response(dependency, operation, status, started, requestId, null,
+                    hint, Classification.BODY_READ_FAILURE);
+        }
+
+        public void protocolError() {
+            var response = received;
+            OutboundDiagnostics.response(dependency, operation,
+                    response == null ? 0 : response.getStatusCode().value(), started, requestId,
+                    response == null ? null : response.getBody(), null, Classification.PROTOCOL_ERROR);
+        }
+    }
+
+    public static HttpCall call(
+            String dependency,
+            String operation,
+            java.util.function.IntFunction<Classification> classification) {
+        return new HttpCall(dependency, operation, classification);
+    }
     public enum Classification {
         SUCCESS,
         EXPECTED_BRANCH,

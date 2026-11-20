@@ -2,6 +2,26 @@
 
 Requires Java 17+. Run commands from the repository root. No frontend build is needed.
 
+## I10 upgrade: an old database must be explicitly rebuilt
+
+**I10 changes V001 to the stateless-quote baseline. An existing database can fail startup with `Applied migration checksum changed: V001__shipping_schema.sql`. This is a schema mismatch, not an authentication/controller dependency problem.** Historical-data migration is out of scope by product decision.
+
+Stop the application first. To delete the configured old database **and all its bookings**, remove its WAL/SHM files and start with the new schema:
+
+```sh
+./scripts/start-workflow.sh --reset-database
+```
+
+To delete without starting, use `--reset-database-only`. The reset uses the effective `SHIPPING_DATABASE_PATH` after loading `.env`; when `lsof` is available it refuses files held by a running process. Normal startup never silently resets a database. Do not change `schema_migrations` checksums to bypass this failure.
+
+To preserve the old file and start separately instead:
+
+```sh
+SHIPPING_DATABASE_PATH=./data/stateless.db ./scripts/start-workflow.sh
+```
+
+An explicitly exported database-path override wins over `.env`. Other `.env` precedence remains unchanged. For direct `java -jar` startup, select the same intended database with `SHIPPING_DATABASE_PATH` or `--shipping.database-path`.
+
 ## Local configuration
 
 The launcher reads `.env` from the **project root**, beside `.env.example` and `pom.xml`.
@@ -25,7 +45,7 @@ SHIPPING_AUTH_TOKEN_SECRET='' # generate with: openssl rand -hex 32
 
 See [account access](account-access.md) for password hashes, multiple accounts, quotas and HTTPS/proxy setup. Application login credentials are separate from provider credentials.
 
-Use your provider's integration URL and credentials. Keep `.env` local; it is ignored by Git. The template also includes optional ports, database path and timeout settings. Existing exported variables work too; values defined in `.env` take precedence. For another local file, set `SHIPPING_ENV_FILE` to its absolute path.
+Use your provider's integration URL and credentials. Keep `.env` local; it is ignored by Git. The template also includes optional ports, database path and timeout settings. Values defined in `.env` take precedence except an explicit `SHIPPING_DATABASE_PATH` override. For another local file, set `SHIPPING_ENV_FILE` to its absolute path.
 
 Verify the settings without calling the provider:
 
@@ -40,6 +60,12 @@ Verify the settings without calling the provider:
 ```
 
 The script loads the local configuration, builds the application and starts it.
+
+For an already-built, verified artifact, use `./scripts/start-workflow.sh --run-jar /absolute/path/application.jar`.
+This loads the same local configuration and starts that JAR without rebuilding or resetting the database.
+For a long-running development service, copy the verified artifact to a dedicated release directory first,
+so later test/package runs do not replace the JAR used by the running process. Startup remains foreground;
+use the machine's process manager or a detached launcher with a retained log when publishing locally.
 
 Open <http://127.0.0.1:8080/> after startup. Sign in using the application account configured above. The workspace uses the backend API; there is no local demo mode.
 

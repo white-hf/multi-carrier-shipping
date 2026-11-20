@@ -1,5 +1,17 @@
 # Shipping workflow — requirements review
 
+## I11 engineering requirement — 2026-11-17
+
+Replace the project-owned declarative HTTP endpoint framework with the HTTP Service Interface support already supplied by Spring Framework 6.1 / Spring Boot 3.2. The outcome is less integration framework code to maintain, while retaining the existing product/API behavior and technical safeguards. This task does not authorize schema, authentication, booking identity, retry policy or frontend changes. The [Spring HTTP service design](../design/spring-http-services.md) and [I11 plan](../iterations/iteration-11-spring-http-services.md) own implementation choices and acceptance. The user explicitly authorized this replacement and a separate branch; provider contracts and behavior remain the acceptance baseline.
+
+## Decision update — 2026-11-16
+
+The [PRD v1.5](shipping-workflow.md) and [I10 plan](../iterations/iteration-10-stateless-quotes.md) supersede the historical discussion below. Existing account login remains; quotes are transient and have no random key, persisted task/history or status API. Booking deduplicates by authenticated user/provider/provider quote, saves its own submitted snapshots, and does not prove application-user quote ownership. Distinct quotes can produce separate shipments. Provider ID scope/reuse and create fields remain verification gates.
+
+Ordinary create returns an existing booking only. GET status/quote-identity lookup are read-only; only explicit RETRYABLE retry may send using the saved booking and state/version claim. Unknown outcomes never authorize resend. The user subsequently authorized implementation on a fresh baseline without historical-data/old-table migration. Browser legacy storage remains handled; current-source acceptance belongs in the I10 verification report, not this requirements discussion.
+
+## Historical pre-I10 requirements discussion
+
 Status: **for discussion**, based on PRD v1.3 and the supplied HTML prototype. This records product understanding and the existing implementation gap; it is not a technical design or implementation plan.
 
 ## Product outcome

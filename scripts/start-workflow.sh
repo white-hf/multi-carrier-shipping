@@ -3,10 +3,18 @@
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
+run_jar=""
 case "${1:-}" in
-  ""|--check-config) ;;
-  *) echo "Usage: ./scripts/start-workflow.sh [--check-config]" >&2; exit 2 ;;
+  ""|--check-config|--reset-database|--reset-database-only) ;;
+  --run-jar)
+    if [[ $# != 2 || ! -f "$2" ]]; then
+      echo "Usage: ./scripts/start-workflow.sh --run-jar <existing-application.jar>" >&2; exit 2
+    fi
+    run_jar="$2"
+    ;;
+  *) echo "Usage: ./scripts/start-workflow.sh [--check-config|--reset-database|--reset-database-only|--run-jar <file>]" >&2; exit 2 ;;
 esac
+database_override="${SHIPPING_DATABASE_PATH:-}"
 configuration_file="${SHIPPING_ENV_FILE:-$PROJECT_ROOT/.env}"
 if [[ -n "${SHIPPING_ENV_FILE:-}" && ! -f "$configuration_file" ]]; then
   echo "The specified SHIPPING_ENV_FILE does not exist." >&2; exit 1
@@ -16,6 +24,25 @@ if [[ -f "$configuration_file" ]]; then
   # This is a trusted local shell configuration, not an automatically downloaded file.
   source "$configuration_file"
   set +a
+fi
+# An explicit invocation override must win over a pre-existing .env path.
+if [[ -n "$database_override" ]]; then export SHIPPING_DATABASE_PATH="$database_override"; fi
+database_path="${SHIPPING_DATABASE_PATH:-./data/shipping.db}"
+if [[ "${1:-}" == --reset-database || "${1:-}" == --reset-database-only ]]; then
+  if [[ "$database_path" != *.db || -d "$database_path" ]]; then
+    echo "Refusing reset: SHIPPING_DATABASE_PATH must name a local .db file." >&2; exit 1
+  fi
+  for file in "$database_path" "$database_path-wal" "$database_path-shm"; do
+    if command -v lsof >/dev/null 2>&1 && lsof -t "$file" >/dev/null 2>&1; then
+      echo "Database is in use: $file. Stop the application before resetting it." >&2; exit 1
+    fi
+  done
+  printf 'Explicit reset: deleting %s and its WAL/SHM files. Existing bookings will be lost.\n' "$database_path"
+  rm -f -- "$database_path" "$database_path-wal" "$database_path-shm"
+  if [[ "${1:-}" == --reset-database-only ]]; then
+    echo "Database removed. The next startup will initialize the current schema."
+    exit 0
+  fi
 fi
 for setting in SHIPPING_PROVIDER_BASE_URL SHIPPING_PROVIDER_USERNAME SHIPPING_PROVIDER_PASSWORD SHIPPING_AUTH_TOKEN_SECRET SHIPPING_AUTH_USERNAME; do
   if [[ -z "${!setting:-}" ]]; then
@@ -54,10 +81,15 @@ if [[ "${1:-}" == --check-config ]]; then
 fi
 export SERVER_PORT="${SERVER_PORT:-8080}"
 export MANAGEMENT_SERVER_PORT="${MANAGEMENT_SERVER_PORT:-9091}"
-echo "Building the application (tests are run separately)..."
-./mvnw -q -Dmaven.test.skip=true package
-JAR_FILE=target/multi-courier-aggregation-service-1.0.0.jar
+if [[ -n "$run_jar" ]]; then
+  JAR_FILE="$run_jar"
+else
+  echo "Building the application (tests are run separately)..."
+  ./mvnw -q -Dmaven.test.skip=true package
+  JAR_FILE=target/multi-courier-aggregation-service-1.0.0.jar
+fi
 if [[ ! -f "$JAR_FILE" ]]; then echo "Application JAR was not produced." >&2; exit 1; fi
 printf 'Open http://127.0.0.1:%s/ after startup. Stop with Ctrl+C.\n' "$SERVER_PORT"
-echo "Starting the workflow profile; local SQLite state is retained between runs."
+printf 'Starting the workflow profile with database %s.\n' "$database_path"
+echo "State is retained between normal runs. For an incompatible old schema, stop the app and use --reset-database (deletes existing bookings)."
 exec java -jar "$JAR_FILE" --spring.profiles.active=workflow

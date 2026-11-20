@@ -1,6 +1,6 @@
 # Provider HTTP Error Handling
 
-Shared transport returns status, headers and bounded body bytes. The provider adapter interprets the documented operation contract before requiring a success body. It never blindly retries a write.
+Shared transport sends through native Spring HTTP service interfaces (`@HttpExchange` proxies over WebClient) and returns status, headers and bounded body bytes. Each provider operation interprets the documented contract before requiring a success body; Spring never retries a write. Non-success statuses are surfaced as typed `WebClientResponseException`s and translated inside the operation's guarded scope.
 
 | Operation | Status | Interpretation |
 | --- | --- | --- |
