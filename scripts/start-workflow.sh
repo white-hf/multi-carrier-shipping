@@ -3,9 +3,16 @@
 set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
+run_jar=""
 case "${1:-}" in
   ""|--check-config|--reset-database|--reset-database-only) ;;
-  *) echo "Usage: ./scripts/start-workflow.sh [--check-config|--reset-database|--reset-database-only]" >&2; exit 2 ;;
+  --run-jar)
+    if [[ $# != 2 || ! -f "$2" ]]; then
+      echo "Usage: ./scripts/start-workflow.sh --run-jar <existing-application.jar>" >&2; exit 2
+    fi
+    run_jar="$2"
+    ;;
+  *) echo "Usage: ./scripts/start-workflow.sh [--check-config|--reset-database|--reset-database-only|--run-jar <file>]" >&2; exit 2 ;;
 esac
 database_override="${SHIPPING_DATABASE_PATH:-}"
 configuration_file="${SHIPPING_ENV_FILE:-$PROJECT_ROOT/.env}"
@@ -74,9 +81,13 @@ if [[ "${1:-}" == --check-config ]]; then
 fi
 export SERVER_PORT="${SERVER_PORT:-8080}"
 export MANAGEMENT_SERVER_PORT="${MANAGEMENT_SERVER_PORT:-9091}"
-echo "Building the application (tests are run separately)..."
-./mvnw -q -Dmaven.test.skip=true package
-JAR_FILE=target/multi-courier-aggregation-service-1.0.0.jar
+if [[ -n "$run_jar" ]]; then
+  JAR_FILE="$run_jar"
+else
+  echo "Building the application (tests are run separately)..."
+  ./mvnw -q -Dmaven.test.skip=true package
+  JAR_FILE=target/multi-courier-aggregation-service-1.0.0.jar
+fi
 if [[ ! -f "$JAR_FILE" ]]; then echo "Application JAR was not produced." >&2; exit 1; fi
 printf 'Open http://127.0.0.1:%s/ after startup. Stop with Ctrl+C.\n' "$SERVER_PORT"
 printf 'Starting the workflow profile with database %s.\n' "$database_path"

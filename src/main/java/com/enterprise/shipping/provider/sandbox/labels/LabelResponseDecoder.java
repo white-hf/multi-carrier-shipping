@@ -2,7 +2,8 @@ package com.enterprise.shipping.provider.sandbox.labels;
 
 import com.enterprise.shipping.provider.sandbox.labels.dto.LabelUrlResponse;
 import com.enterprise.shipping.shared.domain.ShippingException;
-import com.enterprise.shipping.shared.infrastructure.http.ResponseDecoder;
+import com.enterprise.shipping.shared.infrastructure.http.OutboundJson;
+import java.io.IOException;
 import java.util.Objects;
 import java.util.function.Predicate;
 import org.springframework.http.MediaType;
@@ -11,17 +12,14 @@ import org.springframework.http.ResponseEntity;
 /**
  * Decodes label responses that may return empty pending bodies, binary PDFs, or allowlisted JSON URLs.
  */
-public final class LabelResponseDecoder implements ResponseDecoder<LabelData> {
+public final class LabelResponseDecoder {
 
     private final Predicate<String> allowedUrl;
-    private final ResponseDecoder<LabelUrlResponse> jsonDecoder =
-            ResponseDecoder.json(LabelUrlResponse.class);
 
     public LabelResponseDecoder(Predicate<String> allowedUrl) {
         this.allowedUrl = Objects.requireNonNull(allowedUrl, "allowedUrl");
     }
 
-    @Override
     public LabelData decode(ResponseEntity<byte[]> response) {
         if (response == null) {
             throw ShippingException.dependencyFailure("PROVIDER_INVALID_RESPONSE");
@@ -35,7 +33,15 @@ public final class LabelResponseDecoder implements ResponseDecoder<LabelData> {
             return new LabelData(bytes, "application/pdf", null);
         }
         if (content != null && MediaType.APPLICATION_JSON.isCompatibleWith(content)) {
-            LabelUrlResponse parsed = jsonDecoder.decode(response);
+            LabelUrlResponse parsed;
+            try {
+                parsed = OutboundJson.mapper().readValue(bytes, LabelUrlResponse.class);
+            } catch (IOException failure) {
+                throw OutboundJson.invalidResponse(failure);
+            }
+            if (parsed == null) {
+                throw ShippingException.dependencyFailure("PROVIDER_INVALID_RESPONSE");
+            }
             if (allowedUrl.test(parsed.labelUrl())) {
                 return new LabelData(null, null, parsed.labelUrl());
             }

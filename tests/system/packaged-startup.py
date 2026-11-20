@@ -6,6 +6,7 @@ import http.server
 import json
 import os
 import secrets
+import shutil
 from pathlib import Path
 import socket
 import sqlite3
@@ -34,6 +35,22 @@ def request(url, body=None, headers=None):
     with urllib.request.urlopen(req, timeout=10) as response:
         raw = response.read()
         return response.status, (json.loads(raw) if "json" in response.headers.get("Content-Type", "") else raw)
+
+
+def wait_ready(process, base):
+    deadline = time.monotonic() + 100
+    while True:
+        if process.poll() is not None:
+            raise AssertionError(f"Packaged launcher exited {process.returncode}; inspect {EVIDENCE}")
+        try:
+            status, page = request(base + "/")
+            if status == 200:
+                return page
+        except (OSError, urllib.error.URLError):
+            pass
+        if time.monotonic() > deadline:
+            raise AssertionError("Packaged application did not become ready")
+        time.sleep(0.2)
 
 
 class Provider(http.server.BaseHTTPRequestHandler):
@@ -151,19 +168,7 @@ def run():
                 process = subprocess.Popen(["bash", "scripts/start-workflow.sh"], cwd=ROOT,
                                            env=environment, stdout=log, stderr=subprocess.STDOUT)
                 base = f"http://127.0.0.1:{port}"
-                deadline = time.monotonic() + 100
-                while True:
-                    if process.poll() is not None:
-                        raise AssertionError(f"Packaged launcher exited {process.returncode}; see {EVIDENCE / 'launcher.log'}")
-                    try:
-                        status, page = request(base + "/")
-                        if status == 200:
-                            break
-                    except (OSError, urllib.error.URLError):
-                        pass
-                    if time.monotonic() > deadline:
-                        raise AssertionError("Packaged application did not become ready")
-                    time.sleep(0.2)
+                page = wait_ready(process, base)
                 stylesheets = check_stylesheets(base, page)
                 fingerprint = "fp-packaged-smoke-0001"
                 _, session = request(base + "/api/auth/login", {
@@ -196,14 +201,29 @@ def run():
                     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                     assert tables == {"shipment_bookings", "booking_reconciliation_tasks", "schema_migrations"}, tables
                 jar = ROOT / "target/multi-courier-aggregation-service-1.0.0.jar"
+                prebuilt = scratch / "application.jar"
+                shutil.copyfile(jar, prebuilt)
+                process.terminate()
+                process.wait(timeout=30)
+                with (EVIDENCE / "prebuilt-launcher.log").open("w") as prebuilt_log:
+                    process = subprocess.Popen(["bash", "scripts/start-workflow.sh", "--run-jar", str(prebuilt)],
+                                               cwd=ROOT, env=environment, stdout=prebuilt_log, stderr=subprocess.STDOUT)
+                    check_stylesheets(base, wait_ready(process, base))
+                    assert request(base + "/api/bookings/" + booking["bookingId"], headers=headers)[1]["status"] == "CONFIRMED"
+                assert "Building the application" not in (EVIDENCE / "prebuilt-launcher.log").read_text()
+                assert Provider.creates == 1 and Provider.rates == 1
+                process.terminate()
+                process.wait(timeout=30)
+                process = None
                 report = {"status": "passed", "artifact": jar.name,
                           "jar_sha256": hashlib.sha256(jar.read_bytes()).hexdigest(),
                           "launcher": "scripts/start-workflow.sh", "provider": "loopback simulation",
                           "rates": Provider.rates, "creates": Provider.creates,
                           "old_database_unchanged": True,
                           "explicit_reset_verified": True,
+                          "prebuilt_launcher_verified": True,
                           "stylesheets": stylesheets,
-                          "checks": ["explicit configured database reset", "JAR startup", "packaged stylesheet responses", "env database override", "login", "stateless rates",
+                          "checks": ["explicit configured database reset", "JAR startup", "prebuilt JAR restart", "packaged stylesheet responses", "env database override", "login", "stateless rates",
                                      "create", "duplicate replay", "read-only lookup/status", "PDF label"]}
                 (EVIDENCE / "report.json").write_text(json.dumps(report, indent=2) + "\n")
                 print(json.dumps(report, indent=2))

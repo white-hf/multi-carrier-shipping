@@ -113,7 +113,7 @@ public final class OutboundGuard {
           }
     }
 
-    void registerOperation(String operation) {
+    public void registerOperation(String operation) {
         if (operation == null
                 || !operation.matches("[a-zA-Z0-9_-]{1,64}")
                 || !operations.add(operation)) {
