@@ -2,8 +2,8 @@ package com.enterprise.shipping.shipping;
 
 import com.enterprise.shipping.Application;
 import com.enterprise.shipping.auth.application.SessionTokenService;
-import com.enterprise.shipping.reconciliation.application.PendingShipmentDiscovery;
-import com.enterprise.shipping.shared.infrastructure.http.OutboundClientRegistry;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import com.enterprise.shipping.reconciliation.RecoveryJob;
 import com.enterprise.shipping.support.BookingFixtures;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -77,8 +77,8 @@ class ShippingApiTest {
     static final AtomicReference<String> LABEL_TYPE = new AtomicReference<>("application/json");
     static final AtomicReference<byte[]> LABEL_BODY = new AtomicReference<>("{}".getBytes(StandardCharsets.UTF_8));
     static final AtomicReference<JdbcTemplate> JDBC = new AtomicReference<>();
-    static final AtomicReference<PendingShipmentDiscovery> DISCOVERY = new AtomicReference<>();
-    static final AtomicReference<OutboundClientRegistry> OUTBOUND = new AtomicReference<>();
+    static final AtomicReference<RecoveryJob> DISCOVERY = new AtomicReference<>();
+    static final AtomicReference<CircuitBreakerRegistry> OUTBOUND = new AtomicReference<>();
 
     static void normal() {
         int generation = GENERATION.incrementAndGet();
@@ -94,7 +94,7 @@ class ShippingApiTest {
         LABEL_TYPE.set("application/json");
         LABEL_BODY.set("{}".getBytes(StandardCharsets.UTF_8));
         if (OUTBOUND.get() != null) {
-            OUTBOUND.get().guard("sandbox").resetCircuitBreakers();
+            OUTBOUND.get().getAllCircuitBreakers().forEach(io.github.resilience4j.circuitbreaker.CircuitBreaker::reset);
         }
     }
 
@@ -206,9 +206,9 @@ class ShippingApiTest {
     @Autowired
     DataSource source;
     @Autowired
-    PendingShipmentDiscovery discovery;
+    RecoveryJob discovery;
     @Autowired
-    OutboundClientRegistry outbound;
+    CircuitBreakerRegistry outbound;
     @Autowired
     SessionTokenService tokens;
 
