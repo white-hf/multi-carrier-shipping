@@ -1,17 +1,17 @@
 package com.enterprise.shipping.provider.sandbox;
 
-import jakarta.validation.constraints.Max;
-import jakarta.validation.constraints.Min;
+import com.enterprise.shipping.shared.domain.ShippingException;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.DefaultValue;
 import org.springframework.validation.annotation.Validated;
 
+/** Cross-cutting provider identity and transport settings; per-API budgets live with each API. */
 @Validated
 @ConfigurationProperties("shipping.provider")
 public record SandboxProviderProperties(
@@ -20,15 +20,9 @@ public record SandboxProviderProperties(
         @NotBlank String password,
         @NotBlank String providerId,
         @NotBlank String accountAlias,
-        @NotBlank String shipmentsPath,
-        @NotNull Duration rateTimeout,
-        @NotNull Duration createTimeout,
-        @NotNull Duration readTimeout,
-        @Min(5) @Max(30) int collectionSeconds,
-        @Min(10) @Max(840) int quoteLifetimeSeconds,
-        Set<String> labelHosts) {
-
-    public static final String DEFAULT_SHIPMENTS_PATH = "/rest/shipments";
+        Set<String> labelHosts,
+        @DefaultValue("3s") Duration connectTimeout,
+        @DefaultValue("4194304") int maxResponseBytes) {
 
     @Override
     public String toString() {
@@ -50,30 +44,42 @@ public record SandboxProviderProperties(
                         "Provider URL must use HTTPS, except loopback HTTP test servers");
             }
         }
-        shipmentsPath =
-                shipmentsPath == null || shipmentsPath.isBlank()
-                        ? DEFAULT_SHIPMENTS_PATH
-                        : shipmentsPath;
-        if (!shipmentsPath.startsWith("/")
-                || shipmentsPath.contains("..")
-                || shipmentsPath.contains("?")) {
-            throw new IllegalArgumentException("Invalid shipment resource path");
-        }
         labelHosts =
                 labelHosts == null
                         ? Set.of()
                         : labelHosts.stream()
                                 .map(String::strip)
-                                .filter(v -> !v.isEmpty())
-                                .map(v -> v.toLowerCase(Locale.ROOT))
+                                .filter(value -> !value.isEmpty())
+                                .map(value -> value.toLowerCase(Locale.ROOT))
                                 .collect(Collectors.toUnmodifiableSet());
-        for (Duration duration : new Duration[] {rateTimeout, createTimeout, readTimeout}) {
-            if (duration != null && (duration.isNegative() || duration.isZero())) {
-                throw new IllegalArgumentException("Positive provider deadlines required");
-            }
+        connectTimeout = connectTimeout == null ? Duration.ofSeconds(3) : connectTimeout;
+        if (connectTimeout.isZero()
+                || connectTimeout.isNegative()
+                || connectTimeout.compareTo(Duration.ofSeconds(30)) > 0
+                || maxResponseBytes < 64
+                || maxResponseBytes > 16 * 1024 * 1024) {
+            throw new IllegalArgumentException("Invalid provider transport bounds");
         }
-        if (rateTimeout != null && rateTimeout.toSeconds() <= collectionSeconds) {
-            throw new IllegalArgumentException("Rate deadline must exceed collection window");
+    }
+
+    public void requireContext(String provider, String account) {
+        if (!providerId.equals(provider) || !accountAlias.equals(account)) {
+            throw ShippingException.integrationUnavailable("PROVIDER_CONTEXT_UNAVAILABLE");
+        }
+    }
+
+    public boolean allowedUrl(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        try {
+            URI uri = URI.create(value);
+            return "https".equals(uri.getScheme())
+                    && uri.getUserInfo() == null
+                    && uri.getHost() != null
+                    && labelHosts.contains(uri.getHost().toLowerCase(Locale.ROOT));
+        } catch (IllegalArgumentException invalid) {
+            return false;
         }
     }
 }

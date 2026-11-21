@@ -1,40 +1,57 @@
 # Module Boundaries and Code Organization
 
-The application is a **modular monolith**: one Spring Boot process, organized by business capability. Ports and adapters keep business rules separate from persistence and external protocols.
+The application is a **modular monolith**: one Spring Boot process organized by business
+capability. Ports and adapters keep business rules separate from persistence and external
+protocols.
 
-## I10 boundary change
+## I12 boundary change
 
-The [stateless-quote plan](../iterations/iteration-10-stateless-quotes.md) removes quote persistence and booking's `quote.contract.QuoteSelectionPort` dependency. Target `quote` validates and retrieves transient provider offers; target `booking` owns the submitted input/display snapshot, provider quote identity and durable lifecycle. There is no application-user-to-provider-quote ownership proof. Authenticated ownership remains mandatory for booking/label reads, lookup and retry.
+The [compact shipping design](compact-shipping.md) merges quote, booking and label behavior into
+one `shipping` feature, retires direct-carrier fan-out and removes generic outbound
+templates/dependency registration. It preserves dependency inversion, provider isolation and
+independent provider API slices.
 
-Target tables: booking owns `shipment_bookings`; reconciliation owns its existing `booking_reconciliation_tasks`; quote owns no tables. Existing provider isolation, shared HTTP protection and domain/state boundaries remain. Migration-only historical joins must be explicit and scoped; they do not authorize runtime cross-module joins.
-
-The package/contract/table listings below reflect I10. The obsolete quote-selection contract and stores are removed without a replacement identity/signature framework. Existing architectural fitness rules continue enforcing domain/provider isolation and published peer boundaries.
+`reconciliation` remains a separate module: background overdue discovery and manual-review tasks
+differ from request-driven rates/booking/labels and own a different table. It depends on shipping
+only through `shipping.contract.ShipmentRecovery`.
 
 ## Design Principles
 
-1. **Unidirectional Dependencies, Acyclic Dependencies Principle (ADP) & Dependency Inversion Principle (DIP)**
+1. **Unidirectional dependencies, acyclic dependencies (ADP) and dependency inversion (DIP)**
 
-   Keep module dependencies acyclic and technical dependencies directed inward. Application services depend on module-owned ports; infrastructure implements those ports, keeping persistence and external protocols outside business logic.
+   Module dependencies are acyclic and technical dependencies point inward. Application services
+   depend on consumer-owned capability ports; adapters implement those ports; provider protocol
+   code never depends on business modules.
 
-2. **Vertical Business-Capability Decomposition (High Intra-Module Cohesion)**
+2. **Vertical business-capability decomposition**
 
-   Organize `auth`, `quote`, `booking` and `reconciliation` by capability rather than global controller/service/repository layers. Keep each capability's business rules, state transitions and adapters together.
+   Organize by capability (`auth`, `shipping`, `reconciliation`), not by global controller/service/
+   repository layers. A capability's rules, use cases and adapters stay together.
 
-3. **Inter-Module Decoupling via Published Contracts**
+3. **Inter-module decoupling through published contracts**
 
-   Business modules use peer modules' `contract` interfaces and immutable types, never their internal domain, application or repository implementations. Contracts make dependencies explicit and limit the impact of internal changes.
+   Business modules use a peer's `contract` types only. Shipping publishes
+   `ShipmentRecovery`/`Candidate`/`ManualReviewReason`; reconciliation never imports shipping
+   application, persistence, provider or API internals.
 
-4. **Strict Database Table Ownership (No Cross-Module Joins)**
+4. **Strict table ownership**
 
-   Each business module exclusively accesses its own tables. Cross-module references use identifiers and contracts, without cross-module SQL joins or foreign keys. This reduces data coupling; cross-module consistency still requires explicit coordination.
+   Shipping owns `shipment_bookings`; reconciliation owns `booking_reconciliation_tasks`.
+   Cross-module access uses identifiers and the published contract, never SQL joins or foreign
+   keys.
 
-5. **Bidirectional External Provider Isolation (Ports & Adapters)**
+5. **Bidirectional provider isolation**
 
-   Business cores do not import concrete providers, and provider implementations do not import business modules. Consumer-owned adapters translate between module ports and provider models; `runtime` composes them. Shared infrastructure supplies transport and resilience mechanisms rather than business policy.
+   Shipping cores do not import concrete providers. Provider implementations do not import shipping
+   business modules. Consumer-owned adapters under `shipping/infrastructure/provider` translate
+   between capability ports and provider-owned models. Provider API slices are independent and are
+   organized by the vendor's API resources, not by our business capabilities.
 
-6. **Framework-Free Domain & Centralized HTTP Error Mapping**
+6. **Framework-free domain and centralized HTTP error mapping**
 
-   Domain objects hold business invariants without Spring, JDBC or HTTP framework dependencies. HTTP response mapping belongs at the API boundary. Shared errors carry semantic failure categories, error codes and resource identities. Controllers and exception handlers map these to HTTP statuses, links and response headers.
+   `shipping/model`, `shipping/port` and `shipping/contract` do not depend on Spring, JDBC or
+   Reactor. HTTP status, links and response metadata are mapped at `shipping/api` and the shared
+   exception handler.
 
 ## Code Organization
 
@@ -42,45 +59,48 @@ Root: `src/main/java/com/enterprise/shipping/`
 
 ```text
 auth/             Account identity, token validation and HTTP authentication
-quote/            Stateless input validation, rate comparison and transient offers
-booking/          Idempotent shipment creation, booking state and labels
-reconciliation/   Overdue-booking discovery and recovery tasks
-provider/         External API protocols, isolated by provider and per-API vertical slices
-  core/           Vendor-neutral ProviderAccountContext shared across all providers
-  sandbox/        Sandbox provider (SandboxProviderConfig, rates/, shipments/, labels/)
-shared/           Reusable types, HTTP guards, persistence helpers and tracing
+shipping/         Rates, booking lifecycle and labels (one capability)
+  api/            Controller and HTTP response projections
+  application/    Use-case orchestration and the published recovery implementation
+  contract/       Published recovery contract and reason vocabulary
+  model/          Business state, transitions and immutable values
+  port/           Consumer-owned capability ports
+  infrastructure/provider/  Sandbox adapters mapping provider types to business types
+  persistence/    Booking repository and expected-version facts
+  config/         Shipping composition root
+provider/         Provider-owned protocol, isolated per vendor and API resource
+  sandbox/
+    rate/         Rates HTTP interface, operation, DTOs
+    shipment/     Create HTTP interface, operation, DTOs
+    label/        Label HTTP interface, operation, decoder, DTOs
+reconciliation/   Overdue discovery, scheduling, review-task storage
+shared/           Value types, persistence helpers, transport mechanisms, tracing
+  infrastructure/transport/  Pool/WebClient, protection, diagnostics
 ```
 
-Business modules use the following packages where needed; small modules do not need every layer:
-
-| Package | Responsibility |
-| --- | --- |
-| `api` | HTTP controllers and request/response mapping |
-| `application` | Use-case orchestration and transaction coordination |
-| `domain` | Business rules, state transitions and value objects |
-| `port` | Interfaces the module uses for persistence, external calls and observation |
-| `contract` | Interfaces and immutable types published to other business modules |
-| `infrastructure` | Persistence, provider and monitoring adapters implementing ports |
-| `config` | Module-local Spring wiring |
-
-For example, `booking.domain.ShipmentBooking` owns booking transitions; `ShipmentApplicationService` coordinates the use case; `ShipmentStore` defines persistence access; `JdbcShipmentStore` implements it.
+Only `shipping/config` and `shipping/infrastructure/provider` may import provider implementations.
+A provider API slice may use only shared mechanisms; it never imports another provider slice or a
+business module.
 
 ## Dependency and Data Boundaries
 
 | Consumer | Published boundary | Purpose |
 | --- | --- | --- |
-| `reconciliation` | `booking.contract.ShipmentRecoveryPort` | Discover and update unresolved bookings |
-
-External integrations follow the same separation: each business module owns a provider port and a thin adapter under `infrastructure/provider`. The adapter translates between business types and `provider.sandbox` operation models. **Provider code does not import business modules, and business cores do not import provider implementations.** Each API slice owns a pure Spring HTTP interface, its proxy bean configuration and its operation class, so adding an API does not modify a central cross-API configuration file. Operations inject the service interface and keep response interpretation inside the existing guard.
-
-Shared outbound infrastructure owns dependency-level transport and admission, with independent circuits for configured logical groups. Business services do not duplicate these mechanisms. `shared` does not depend on business modules or concrete providers.
+| `reconciliation` | `shipping.contract.ShipmentRecovery` | Discover and update unresolved bookings without touching booking tables |
+| `shipping.application` | `shipping.port.*` | Invoke rates/create/labels without knowing vendor protocol |
+| `shipping.infrastructure.provider` | `shipping.port.*` + `provider.*` | Translate provider evidence into business outcomes |
+| `provider.*` | `shared.infrastructure.transport` | Reuse transport, protection and diagnostics mechanisms |
 
 | Owner | Tables |
 | --- | --- |
-| `quote` | None; all rate paths are nonpersistent |
-| `booking` | `shipment_bookings` |
+| `shipping` | `shipment_bookings` |
 | `reconciliation` | `booking_reconciliation_tasks` |
+| `auth` | None |
+| `shared` | None |
 
-[ModuleBoundariesTest](../../src/test/java/com/enterprise/shipping/shipping/ModuleBoundariesTest.java) checks selected source-level dependency rules. These are package conventions backed by tests, not separate build modules or database permissions. Future service extraction still requires remote contracts, deployment and data-consistency work.
+[ModuleBoundariesTest](../../src/test/java/com/enterprise/shipping/shipping/ModuleBoundariesTest.java)
+enforces selected source-level boundary rules. These are package conventions backed by
+tests, not separate build modules or database permissions. Future service extraction still requires
+remote contracts, deployment and data-consistency work.
 
-For transaction flows, recovery behavior and schema details, see [Backend Design](backend-design.md).
+For transaction flows, recovery behavior and schema details see [Backend Design](backend-design.md).

@@ -1,14 +1,17 @@
 package com.enterprise.shipping.support;
 
-import com.enterprise.shipping.booking.application.BookingCommand;
-import com.enterprise.shipping.booking.application.ShipmentApplicationService;
-import com.enterprise.shipping.booking.port.LabelProviderPort;
-import com.enterprise.shipping.booking.port.ShipmentProviderPort;
-import com.enterprise.shipping.booking.port.ShipmentStore;
 import com.enterprise.shipping.shared.domain.ShippingIntent;
+import com.enterprise.shipping.shipping.application.BookingCommand;
+import com.enterprise.shipping.shipping.application.BookingService;
+import com.enterprise.shipping.shipping.model.Label;
+import com.enterprise.shipping.shipping.persistence.BookingRepository;
+import com.enterprise.shipping.shipping.port.LabelProvider;
+import com.enterprise.shipping.shipping.port.ShipmentProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.validation.Validation;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.ZoneOffset;
@@ -35,14 +38,39 @@ public final class BookingFixtures {
         }
     }
 
-    public static ShipmentApplicationService service(
-            ShipmentStore store,
-            ShipmentProviderPort provider,
+    public static BookingService service(
+            BookingRepository store,
+            ShipmentProvider provider,
             Clock clock) {
-        var labels = new LabelProviderPort() {
+        return service(store, provider, labels(), clock);
+    }
+
+    public static BookingService service(
+            BookingRepository store,
+            ShipmentProvider provider,
+            LabelProvider labels,
+            Clock clock) {
+        return new BookingService(
+                store,
+                Validation.buildDefaultValidatorFactory().getValidator(),
+                provider,
+                labels,
+                clock,
+                Duration.ofMillis(500),
+                new SimpleMeterRegistry(),
+                "sandbox",
+                "account",
+                ZoneOffset.UTC);
+    }
+
+    public static LabelProvider labels() {
+        return new LabelProvider() {
             @Override
-            public Label fetch(Identity identity) {
-                return new Label("%PDF-test".getBytes(java.nio.charset.StandardCharsets.UTF_8), "application/pdf", null);
+            public Label fetch(LabelIdentity identity) {
+                return new Label(
+                        "%PDF-test".getBytes(StandardCharsets.UTF_8),
+                        "application/pdf",
+                        null);
             }
 
             @Override
@@ -50,9 +78,5 @@ public final class BookingFixtures {
                 return false;
             }
         };
-        return new ShipmentApplicationService(store,
-                Validation.buildDefaultValidatorFactory().getValidator(), provider, labels,
-                clock, Duration.ofMillis(500), (operation, outcome, elapsed) -> {
-                }, "sandbox", "account", ZoneOffset.UTC);
     }
 }

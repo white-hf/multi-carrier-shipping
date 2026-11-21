@@ -46,25 +46,7 @@ shipping:
     quotes-per-minute: ${SHIPPING_AUTH_QUOTES_PER_MINUTE:10}
     bookings-per-minute: ${SHIPPING_AUTH_BOOKINGS_PER_MINUTE:5}
     labels-per-minute: ${SHIPPING_AUTH_LABELS_PER_MINUTE:20}
-  # Defaults -> named template -> dependency overrides. States/resources are never shared across dependencies.
-  outbound:
-    defaults:
-      timeout: 30s
-      connect-timeout: 3s
-      concurrency: 8
-      window-size: 10
-      minimum-calls: 5
-      failure-rate: 50
-      open-duration: 10s
-    templates:
-      slow-provider:
-        timeout: 90s
-    dependencies:
-      sandbox:
-        template: slow-provider
-        timeout: ${SHIPPING_PROVIDER_RATE_TIMEOUT:90s}
-        concurrency: 8
-  # Operation timeouts below are caller budgets, capped by the outbound dependency policy.
+  # Each operation has an absolute budget, including response-body consumption.
   provider:
     base-url: ${SHIPPING_PROVIDER_BASE_URL:}
     username: ${SHIPPING_PROVIDER_USERNAME:}
@@ -78,6 +60,20 @@ shipping:
     collection-seconds: 30
     quote-lifetime-seconds: 780
     label-hosts: ${SHIPPING_PROVIDER_LABEL_HOSTS:}
+
+resilience4j:
+  bulkhead:
+    instances:
+      shipping-provider:
+        max-concurrent-calls: 8
+        max-wait-duration: 0
+  circuitbreaker:
+    instances:
+      shipping-provider:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
 
 management:
   server:

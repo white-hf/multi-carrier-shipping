@@ -1,5 +1,12 @@
 # Shipping workflow — requirements review
 
+## I12 approved simplification
+
+The user approved consolidating the aggregator workflow into one shipping feature and retiring the old
+direct-carrier fan-out and generic outbound template/group extension mechanisms. Existing user behavior,
+API/auth/data contracts and write safety remain required. See [compact design](../design/compact-shipping.md)
+and [I12 plan](../iterations/iteration-12-simplify-shipping.md); implementation evidence follows separately.
+
 ## I11 engineering requirement — 2026-11-17
 
 Replace the project-owned declarative HTTP endpoint framework with the HTTP Service Interface support already supplied by Spring Framework 6.1 / Spring Boot 3.2. The outcome is less integration framework code to maintain, while retaining the existing product/API behavior and technical safeguards. This task does not authorize schema, authentication, booking identity, retry policy or frontend changes. The [Spring HTTP service design](../design/spring-http-services.md) and [I11 plan](../iterations/iteration-11-spring-http-services.md) own implementation choices and acceptance. The user explicitly authorized this replacement and a separate branch; provider contracts and behavior remain the acceptance baseline.

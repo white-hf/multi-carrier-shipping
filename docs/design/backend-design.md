@@ -14,6 +14,17 @@ Current physical fields, keys, indexes and stored state values are documented in
 
 This section and the linked I10 plan **supersede the historical design below** wherever quote persistence, quote ownership proof, random keys, request-level uniqueness or retry/recovery behavior conflict. The user subsequently authorized implementation on a new baseline and removed historical-data migration. Historical sections explain prior design, not active requirements or current implementation evidence.
 
+### I12 code organization (current)
+
+The [compact shipping design](compact-shipping.md) supersedes module-level packaging and port names
+in this document. `quote`, `booking` and label behavior are one `shipping` feature;
+`reconciliation` remains a separate module with its own table and scheduling. Application services
+depend on consumer-owned `RateProvider`/`ShipmentProvider`/`LabelProvider` ports implemented by
+adapters. Provider protocol lives in a top-level `provider/sandbox` module whose API slices never
+import business code. Public API paths/status codes, schema, snapshot fields, state semantics and
+idempotency rules are unchanged. The diagrams below describe business behavior and may still use
+the former module names.
+
 ### Scope review and selected trade-off
 
 Requirement: quotes are transient display/selection data; only explicit booking submission needs durable business state. The simplest viable design uses existing provider calls, booking storage, uniqueness, CAS and manual-review discovery. Remove the quote store and execution lifecycle rather than replace them with generic tasks, submission identities or signed quote credentials.

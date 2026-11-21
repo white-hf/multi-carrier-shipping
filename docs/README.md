@@ -83,6 +83,7 @@ The supplied PRD/prototype headings and display branding were normalized to the 
 
 - [I10 implementation summary](summaries/iteration-10-stateless-quotes.md) — stateless rates, provider-quote booking uniqueness, read-only recovery, explicit retry and current verification boundaries.
 - [I11 implementation summary](summaries/iteration-11-spring-http-services.md) — Spring-native HTTP service interfaces replacing the custom declarative HTTP framework, with preserved provider behavior and current verification evidence.
+- [I12 implementation summary](summaries/iteration-12-simplify-shipping.md) — one shipping feature with capability ports, independent provider API slices, a separate reconciliation module and preserved API/data behavior.
 
 - [Data dictionary](design/data-dictionary.md) — all persisted fields, SQL constraints/indexes, module ownership and state semantics for the current SQLite baseline.
 
