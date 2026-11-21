@@ -104,6 +104,19 @@ class ModuleBoundariesTest {
     }
 
     @Test
+    void reconciliationUsesOnlyThePublishedShippingContract() throws Exception {
+        try (var files = Files.walk(ROOT.resolve("reconciliation"))) {
+            for (var file : files.filter(path -> path.toString().endsWith(".java")).toList()) {
+                String source = Files.readString(file)
+                        .replace("com.enterprise.shipping.shipping.contract.", "");
+                assertThat(source)
+                        .as("%s must import only shipping.contract", file)
+                        .doesNotContain("com.enterprise.shipping.shipping.");
+            }
+        }
+    }
+
+    @Test
     void tableOwnershipRemainsExplicit() throws Exception {
         assertThat(Files.readString(ROOT.resolve("shipping/persistence/BookingRepository.java")))
                 .doesNotContain("booking_reconciliation_tasks");

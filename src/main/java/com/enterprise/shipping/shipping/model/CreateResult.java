@@ -12,8 +12,6 @@ public record CreateResult(
         CONFIRMED, REJECTED, NOT_DISPATCHED, UNKNOWN
     }
 
-    public record Request(String providerId, String accountAlias, String providerQuoteId) {}
-
     public CreateResult {
         Objects.requireNonNull(status, "Submission outcome required");
         if (status == Status.CONFIRMED) {

@@ -50,16 +50,16 @@ Label retrieval is a separate read operation against an existing confirmed shipm
 
 **Failure scenario:** a transport timeout alone does not explain whether a rate request can retry or a booking requires manual review.
 
-**Decision and implementation:** request correlation IDs connect API logs to provider calls and durable booking IDs. Explicit error codes distinguish conflicts, provider timeouts and capacity failures. Spring AOP measures outbound transport latency; observer ports collect business outcomes and overdue-booking metrics without embedding Micrometer calls in domain logic. Provider configuration redacts credentials, and application event logs avoid shipment contact details.
+**Decision and implementation:** request correlation IDs connect API logs to provider calls and durable booking IDs. Explicit error codes distinguish conflicts, provider timeouts and capacity failures. `shared/infrastructure/transport` records outbound transport latency and admission outcomes; application services record business and recovery outcomes through `SafeMetrics` without embedding Micrometer calls in domain logic. Provider configuration redacts credentials, and application event logs avoid shipment contact details.
 
 ## 3. Module Boundaries and Evolution
 
 | Module | Responsibility and owned data | Published boundary |
 | --- | --- | --- |
 | `auth` | Account identity and token validation | HTTP authentication boundary |
-| `quote` | Transient rate queries and offers; no owned business tables | Rate-provider ports for external I/O |
-| `booking` | Booking claims, state transitions and labels: `shipment_bookings` | `ShipmentRecoveryPort` for discovery and escalation |
-| `reconciliation` | Scheduled discovery and manual-review tasks: `booking_reconciliation_tasks` | Uses booking contracts and a provider-capability port |
+| `shipping` | Rate queries, booking claims, state transitions and labels: `shipment_bookings` | `ShipmentRecovery` contract for reconciliation; provider capability ports |
+| `reconciliation` | Scheduled discovery and manual-review tasks: `booking_reconciliation_tasks` | Consumes the shipping recovery contract only |
+| `provider` | Provider protocol and independent API slices; no business tables | Implements consumer-owned provider adapters |
 
 Business modules use peer modules' published `contract` packages rather than their internal domain, application or infrastructure classes. `ModuleBoundariesTest` checks these dependency rules. Provider adapters implement consumer-owned ports; shared HTTP guards, persistence helpers and monitoring avoid duplicate infrastructure implementations.
 
@@ -113,10 +113,10 @@ Open **http://127.0.0.1:8080/**. Application logs default to `logs/shipping.log`
 
 | Topic | Entry point |
 | --- | --- |
-| Rate orchestration | [QuoteApplicationService](src/main/java/com/enterprise/shipping/quote/application/QuoteApplicationService.java) |
-| Booking orchestration | [ShipmentApplicationService](src/main/java/com/enterprise/shipping/booking/application/ShipmentApplicationService.java) |
-| Booking invariants | [ShipmentBooking](src/main/java/com/enterprise/shipping/booking/domain/ShipmentBooking.java) |
-| Recovery discovery | [PendingShipmentDiscovery](src/main/java/com/enterprise/shipping/reconciliation/application/PendingShipmentDiscovery.java) |
-| Shared outbound resilience | [OutboundClientRegistry](src/main/java/com/enterprise/shipping/shared/infrastructure/http/OutboundClientRegistry.java) |
+| Rate orchestration | [QuoteService](src/main/java/com/enterprise/shipping/shipping/application/QuoteService.java) |
+| Booking orchestration | [BookingService](src/main/java/com/enterprise/shipping/shipping/application/BookingService.java) |
+| Booking invariants | [ShipmentBooking](src/main/java/com/enterprise/shipping/shipping/model/ShipmentBooking.java) |
+| Recovery discovery | [RecoveryJob](src/main/java/com/enterprise/shipping/reconciliation/RecoveryJob.java) |
+| Shared outbound resilience | [OutboundProtection](src/main/java/com/enterprise/shipping/shared/infrastructure/transport/OutboundProtection.java) |
 
 [Data dictionary](docs/design/data-dictionary.md) · [Module architecture](docs/design/module-boundaries.md) · [Backend design](docs/design/backend-design.md) · [Frontend API contract](docs/design/application-api.md) · [Delivery plan](docs/iterations/delivery-plan.md)
